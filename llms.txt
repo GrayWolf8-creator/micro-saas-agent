@@ -1,0 +1,14 @@
+# GW8 Base Signal Agent API
+> Monetized AI Trading Signal Endpoint on Base Mainnet.
+
+## Service Details
+- URL: https://micro-saas-agent.onrender.com/api/agent
+- Method: POST
+- Header Required: x-402-payment (Base Tx Hash)
+- Price: 0.05 USDC
+- Pay To Wallet: 0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd
+- Network: Base Mainnet (Chain ID 8453)
+- Token Contract: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+
+## Response Format
+Returns live ETH/USD market analytics, 24h momentum change, algorithmic signal (BUY/HOLD/SELL), and confidence scores upon valid payment verification.

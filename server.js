@@ -2,6 +2,8 @@ import express from 'express';
 
 const app = express();
 app.use(express.json());
+app.use(express.static('.'));
+
 
 const PORT = process.env.PORT || 3000;
 const RECEIVING_WALLET = "0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd".toLowerCase();

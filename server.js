@@ -1,29 +1,18 @@
-const express = require('express');
-const { createPublicClient, http } = require('viem');
-const { base } = require('viem/chains');
+import express from 'express';
 
 const app = express();
 app.use(express.json());
 
-// Initialize public client connected to Base RPC
-const publicClient = createPublicClient({
-  chain: base,
-  transport: http()
-});
-
 // YOUR CONFIGURATION
 const RECEIVING_WALLET = "0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd".toLowerCase();
-const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".toLowerCase(); // Official USDC on Base Mainnet
+const BASE_USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".toLowerCase();
 const REQUIRED_PRICE_USDC = 0.05;
 
-// Memory cache for processed transaction hashes to prevent replay attacks
+// Memory cache for processed transaction hashes
 const processedHashes = new Set();
 
 /**
- * Verifies a transaction on Base Mainnet:
- * 1. Confirms the transaction succeeded on-chain.
- * 2. Verifies it hasn't been used before.
- * 3. Confirms it sent at least 0.05 USDC to your wallet address.
+ * Direct RPC Call to Base Mainnet to verify transaction receipt
  */
 async function verifyBasePayment(txHash) {
   if (processedHashes.has(txHash)) {
@@ -31,14 +20,25 @@ async function verifyBasePayment(txHash) {
   }
 
   try {
-    // 1. Get the transaction receipt
-    const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+    const response = await fetch("https://mainnet.base.org", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "eth_getTransactionReceipt",
+        params: [txHash]
+      })
+    });
 
-    if (receipt.status !== 'success') {
-      return { valid: false, reason: "Transaction failed on-chain." };
+    const data = await response.json();
+    const receipt = data.result;
+
+    if (!receipt || receipt.status !== '0x1') {
+      return { valid: false, reason: "Transaction failed or not found on-chain." };
     }
 
-    // 2. Scan logs for standard ERC-20 Transfer event
+    // Filter logs for USDC Transfer event topic
     const transferLogs = receipt.logs.filter(log => 
       log.address.toLowerCase() === BASE_USDC_ADDRESS
     );
@@ -46,11 +46,8 @@ async function verifyBasePayment(txHash) {
     let validPayment = false;
 
     for (const log of transferLogs) {
-      // Decode ERC-20 Transfer topics: [TransferSignature, FromAddress, ToAddress]
       if (log.topics.length === 3) {
         const toAddress = `0x${log.topics[2].slice(26)}`.toLowerCase();
-        
-        // Parse transfer amount (USDC uses 6 decimals)
         const rawAmount = BigInt(log.data);
         const amountUSDC = Number(rawAmount) / 1e6;
 
@@ -62,7 +59,7 @@ async function verifyBasePayment(txHash) {
     }
 
     if (validPayment) {
-      processedHashes.add(txHash); // Mark tx as consumed
+      processedHashes.add(txHash);
       return { valid: true };
     } else {
       return { valid: false, reason: "Payment amount or receiving address mismatch." };
@@ -89,7 +86,6 @@ app.post('/api/agent', async (req, res) => {
     });
   }
 
-  // Perform on-chain verification
   const verification = await verifyBasePayment(paymentHeader);
 
   if (!verification.valid) {
@@ -100,7 +96,6 @@ app.post('/api/agent', async (req, res) => {
     });
   }
 
-  // Success payload
   res.status(200).json({
     status: "success",
     signal: "BUY",

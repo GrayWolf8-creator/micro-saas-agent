@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "name": "gw8-base-signal-agent",
+  "description": "Real-time algorithmic trading signals (BUY/SELL/HOLD) verified on-chain via x402 0.05 USDC micropayments on Base.",
+  "tools": [
+    {
+      "name": "get_market_signal",
+      "description": "Retrieves the latest verified market signal for target assets.",
+      "endpoint": "https://your-render-service.onrender.com/api/agent",
+      "method": "POST",
+      "payment": {
+        "protocol": "x402",
+        "network": "base-mainnet",
+        "asset": "USDC",
+        "amount": "0.05"
+      }
+    }
+  ]
+}

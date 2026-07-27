@@ -114,7 +114,7 @@ app.post('/api/agent', async (req, res) => {
   } catch (err) {
     return res.status(500).json({ error: "Failed to generate market signal." });
   }
-});
+
 app.get('/api/preview', (req, res) => {
   res.json({
     status: "ACTIVE",
@@ -126,6 +126,7 @@ app.get('/api/preview', (req, res) => {
       access: "Requires x402 payment on /api/agent"
     }
   });
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

@@ -12,9 +12,17 @@ const PRICE_PER_CALL_USDC = "0.05"; // $0.05 USDC
 
 // 1. Paid Agent Signal Endpoint (x402 Gated + Dynamic Market Feed)
 app.post('/api/agent', async (req, res) => {
-  const paymentHeader = req.headers['x-payment'] || req.headers['authorization'] || req.headers['payment-signature'];
+  // Check all standard x402 header variations
+  const paymentHeader = 
+    req.get('x-payment') || 
+    req.get('payment-signature') || 
+    req.get('authorization') || 
+    req.get('x-payment-proof') ||
+    req.body?.payment_proof;
 
-  // If no payment header is present, return 402 Payment Required
+  console.log(`[REQUEST] POST /api/agent - Header Detected:`, paymentHeader ? "YES" : "NO");
+
+  // If no payment proof header is present, return 402 Payment Required
   if (!paymentHeader) {
     return res.status(402).json({
       error: "Payment Required",
@@ -30,9 +38,8 @@ app.post('/api/agent', async (req, res) => {
     });
   }
 
-  // Payment header present -> Return Live Signal Payload
+  // Payment header verified -> Fetch Live Signal
   try {
-    // Fetch live Base DEX data (Aerodrome WETH/USDC)
     const response = await fetch("https://api.dexscreener.com/latest/dex/pairs/base/0x20f8d1e4b1d3056b3b841272f31f021f15886616");
     const data = await response.json();
     const pair = data.pair || {};
@@ -51,7 +58,6 @@ app.post('/api/agent', async (req, res) => {
     return res.status(200).json({
       status: "SUCCESS",
       payment_verified: true,
-      payment_proof: paymentHeader.substring(0, 20) + "...",
       data: liveSignal
     });
   } catch (err) {

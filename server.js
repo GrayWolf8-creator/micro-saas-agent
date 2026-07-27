@@ -6,15 +6,15 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // CONFIGURATION
-const PAYOUT_WALLET = process.env.PAYOUT_WALLET || "0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd"; // Your linked Base wallet
+const PAYOUT_WALLET = process.env.PAYOUT_WALLET || "0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd"; // Your Base wallet
 const BASE_USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // Base Mainnet USDC
 const PRICE_PER_CALL_USDC = "0.05"; // $0.05 USDC
 
 // 1. Paid Agent Signal Endpoint (x402 Gated + Dynamic Market Feed)
 app.post('/api/agent', async (req, res) => {
-  const paymentHeader = req.headers['x-payment'] || req.headers['authorization'];
+  const paymentHeader = req.headers['x-payment'] || req.headers['authorization'] || req.headers['payment-signature'];
 
-  // Reject unpaid requests with HTTP 402 Payment Required
+  // If no payment header is present, return 402 Payment Required
   if (!paymentHeader) {
     return res.status(402).json({
       error: "Payment Required",
@@ -30,6 +30,7 @@ app.post('/api/agent', async (req, res) => {
     });
   }
 
+  // Payment header present -> Return Live Signal Payload
   try {
     // Fetch live Base DEX data (Aerodrome WETH/USDC)
     const response = await fetch("https://api.dexscreener.com/latest/dex/pairs/base/0x20f8d1e4b1d3056b3b841272f31f021f15886616");
@@ -50,6 +51,7 @@ app.post('/api/agent', async (req, res) => {
     return res.status(200).json({
       status: "SUCCESS",
       payment_verified: true,
+      payment_proof: paymentHeader.substring(0, 20) + "...",
       data: liveSignal
     });
   } catch (err) {

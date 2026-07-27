@@ -115,6 +115,17 @@ app.post('/api/agent', async (req, res) => {
     return res.status(500).json({ error: "Failed to generate market signal." });
   }
 });
+app.get('/api/preview', (req, res) => {
+  res.json({
+    status: "ACTIVE",
+    agent_id: "GW8-BASE-SIGNAL-01",
+    network: "Base Mainnet",
+    preview: {
+      market_condition: "RVOL_MOMENTUM_SURGE",
+      confidence: "88%",
+      access: "Requires x402 payment on /api/agent"
+    }
+  });
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

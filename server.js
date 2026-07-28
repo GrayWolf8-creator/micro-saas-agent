@@ -58,6 +58,184 @@ async function verifyBasePayment(txHash) {
   }
 }
 
+// 0. Public Web UI Landing Page
+app.get('/', (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GW8 Capital | Micro-SaaS Telemetry Gateway</title>
+    <style>
+        :root {
+            --bg: #090d16;
+            --card-bg: #111827;
+            --border: #1f293d;
+            --accent: #3b82f6;
+            --accent-glow: rgba(59, 130, 246, 0.25);
+            --text-main: #f3f4f6;
+            --text-sub: #9ca3af;
+            --green: #10b981;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            max-width: 850px;
+            width: 100%;
+        }
+        .header {
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 24px;
+            margin-bottom: 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .brand h1 {
+            margin: 0;
+            font-size: 1.8rem;
+            letter-spacing: -0.025em;
+            color: #fff;
+        }
+        .brand p {
+            margin: 4px 0 0 0;
+            color: var(--text-sub);
+            font-size: 0.95rem;
+        }
+        .status-badge {
+            background-color: rgba(16, 185, 129, 0.1);
+            color: var(--green);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--green);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--green);
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .card h3 {
+            margin-top: 0;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-sub);
+        }
+        .card .value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #fff;
+            margin-top: 8px;
+            word-break: break-all;
+        }
+        .section-title {
+            font-size: 1.2rem;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        pre {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            color: #38bdf8;
+            font-size: 0.9rem;
+        }
+        .endpoint-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            margin-right: 8px;
+        }
+        .post { background: #1e3a8a; color: #93c5fd; }
+        .get { background: #064e3b; color: #6ee7b7; }
+        footer {
+            margin-top: 48px;
+            text-align: center;
+            color: var(--text-sub);
+            font-size: 0.85rem;
+            border-top: 1px solid var(--border);
+            padding-top: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="brand">
+                <h1>GW8 Capital Agent Gateway</h1>
+                <p>Autonomous Telemetry & Signal Micro-SaaS Engine</p>
+            </div>
+            <div class="status-badge">
+                <div class="status-dot"></div>
+                GATEWAY ONLINE
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>Pricing Model</h3>
+                <div class="value">0.05 USDC / Call</div>
+            </div>
+            <div class="card">
+                <h3>Settlement Chain</h3>
+                <div class="value">Base Mainnet (8453)</div>
+            </div>
+            <div class="card">
+                <h3>Payment Protocol</h3>
+                <div class="value">x402 / On-Chain RPC</div>
+            </div>
+        </div>
+
+        <h2 class="section-title">API Endpoints</h2>
+        <div class="card" style="margin-bottom: 24px;">
+            <p><span class="endpoint-tag get">GET</span> <strong>/.well-known/agent.json</strong> - Standard Agent Discovery Manifest</p>
+            <p><span class="endpoint-tag get">GET</span> <strong>/api/preview</strong> - Public Free Signal Teaser & Metadata</p>
+            <p><span class="endpoint-tag post">POST</span> <strong>/api/agent</strong> - Gated Full Telemetry Endpoint (Requires x-payment hash or Bearer Auth)</p>
+        </div>
+
+        <h2 class="section-title">Recipient Address</h2>
+        <pre>0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd</pre>
+
+        <footer>
+            &copy; 2026 GW8 Capital. Built for autonomous agent systems.
+        </footer>
+    </div>
+</body>
+</html>
+  `);
+});
+
 // 1. Agent Manifest
 app.get('/.well-known/agent.json', (req, res) => {
   res.json({

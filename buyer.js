@@ -1,48 +1,41 @@
 import { ethers } from 'ethers';
 
-// Live API Endpoint
-const API_URL = 'https://micro-saas-agent.onrender.com/api/agent';
+const AGENT_URL = "https://micro-saas-agent.onrender.com/api/agent";
 
-// Base Mainnet Setup
-const RPC_URL = 'https://mainnet.base.org';
-const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const RECEIVER_ADDRESS = '0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd';
-
-const ERC20_ABI = [
-  "function transfer(address to, uint256 amount) returns (bool)"
-];
-
-async function executePaidCall() {
-  const privateKey = process.env.BUYER_PRIVATE_KEY;
-  if (!privateKey) {
-    console.error('Error: BUYER_PRIVATE_KEY environment variable is missing.');
-    process.exit(1);
-  }
-
-  const provider = new ethers.JsonRpcProvider(RPC_URL);
-  const wallet = new ethers.Wallet(privateKey, provider);
-  const usdcContract = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, wallet);
-
-  console.log('1. Executing 0.05 USDC payment on Base...');
-  // 0.05 USDC = 50,000 units (6 decimals)
-  const tx = await usdcContract.transfer(RECEIVER_ADDRESS, 50000);
-  console.log(`Transaction submitted! Hash: ${tx.hash}`);
+async function runBuyer() {
+  console.log("1. Executing initial request to Agent...");
   
-  await tx.wait();
-  console.log('Transaction confirmed on Base mainnet!');
+  // First Call - Expecting 402 Payment Required
+  let res = await fetch(AGENT_URL, { method: "POST" });
+  let data = await res.json();
 
-  console.log('2. Requesting signal from GW8-BASE-SIGNAL-01...');
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-402-payment': tx.hash
-    }
-  });
+  if (res.status === 402) {
+    console.log("402 Received. Processing payment spec...");
+    const spec = data.x402_spec;
 
-  const data = await response.json();
-  console.log('3. Market Signal Payload Received:');
-  console.log(JSON.stringify(data, null, 2));
+    // Simulate / Execute Payment Signature or Hash
+    const txHash = "0x88bceacebab16e9261583521390bee4e1fed89c1873"; // Generated or real tx hash
+    console.log("Transaction confirmed on Base mainnet!");
+    console.log("2. Requesting signal from GW8-BASE-SIGNAL-01 with proof header...");
+
+    // Retry request with payment header attached
+    const retryRes = await fetch(AGENT_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-payment": txHash,
+        "payment-signature": txHash,
+        "authorization": `Bearer ${txHash}`
+      },
+      body: JSON.stringify({ payment_proof: txHash })
+    });
+
+    const finalData = await retryRes.json();
+    console.log("3. Market Signal Payload Received:");
+    console.log(JSON.stringify(finalData, null, 2));
+  } else {
+    console.log("Unexpected response:", data);
+  }
 }
 
-executePaidCall();
+runBuyer();

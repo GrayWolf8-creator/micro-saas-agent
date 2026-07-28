@@ -57,16 +57,21 @@ app.get('/.well-known/agent.json', (req, res) => {
   });
 });
 
-// 2. Paid Agent Signal Endpoint (x402 Gated + On-Chain Verification)
+// 2. Paid Agent Signal Endpoint (x402 Gated + On-Chain Verification + Subscriber Bypass)
 app.post('/api/agent', async (req, res) => {
   const paymentHeader = 
     req.get('x-payment') || 
     req.get('payment-signature') || 
-    req.get('authorization') || 
+    req.get('x-402-payment') ||
     req.body?.payment_proof;
 
+  const authHeader = req.get('authorization');
+
+  // Check if buyer provided a valid subscriber key or payment proof
+  const isSubscriber = authHeader === 'Bearer GW8_SUBSCRIBER_KEY';
+
   // Reject unpaid requests with HTTP 402 Payment Required
-  if (!paymentHeader) {
+  if (!paymentHeader && !isSubscriber) {
     return res.status(402).json({
       error: "Payment Required",
       message: "Access to live signal requires 0.05 USDC on Base Mainnet",
@@ -84,7 +89,7 @@ app.post('/api/agent', async (req, res) => {
     return res.status(200).json({
       status: "SUCCESS",
       payment_verified: true,
-      payment_proof: paymentHeader.substring(0, 18) + "...",
+      payment_proof: isSubscriber ? "SUBSCRIBER_KEY_BYPASS" : paymentHeader.substring(0, 18) + "...",
       data: currentSignal
     });
   } catch (err) {

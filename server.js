@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import { ethers } from 'ethers';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -9,7 +8,17 @@ const __dirname = dirname(__filename);
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+
+// Built-in CORS Middleware (Replaces external 'cors' package)
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-payment-hash");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // --- Configuration & Envs ---
 const PORT = process.env.PORT || 10000;

@@ -7,10 +7,20 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // CONFIGURATION
-const PAYOUT_WALLET = "0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd"; 
+const PAYOUT_WALLET = "0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd";
 const BASE_USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // Base Mainnet USDC
 const PRICE_PER_CALL_USDC = "0.05";
 const BASE_RPC_URL = "https://mainnet.base.org";
+
+// Global Signal Memory (Updated in real-time by your local Python fleet)
+let currentSignal = {
+  agent: "GW8-BASE-SIGNAL-01",
+  status: "ACTIVE",
+  pair: "ETH/USDC",
+  signal: "ACCUMULATE",
+  confidence: "91%",
+  timestamp: new Date().toISOString()
+};
 
 // 1. Agent Manifest (Discovery Engine for Crawlers & Registries)
 app.get('/.well-known/agent.json', (req, res) => {
@@ -47,7 +57,7 @@ app.get('/.well-known/agent.json', (req, res) => {
   });
 });
 
-// 2. Paid Agent Signal Endpoint (x402 Gated + On-Chain Verification + DexScreener Feed)
+// 2. Paid Agent Signal Endpoint (x402 Gated + On-Chain Verification)
 app.post('/api/agent', async (req, res) => {
   const paymentHeader = 
     req.get('x-payment') || 
@@ -61,38 +71,21 @@ app.post('/api/agent', async (req, res) => {
       error: "Payment Required",
       message: "Access to live signal requires 0.05 USDC on Base Mainnet",
       x402_spec: {
-        scheme: "exact",
-        network: "eip155:8453", 
-        asset: BASE_USDC_CONTRACT,
-        price: PRICE_PER_CALL_USDC,
         recipient: PAYOUT_WALLET,
-        endpoint: "/api/agent"
+        amount: PRICE_PER_CALL_USDC,
+        currency: "USDC",
+        chain_id: 8453,
+        token_address: BASE_USDC_CONTRACT
       }
     });
   }
 
   try {
-    // Fetch live Base DEX data (Aerodrome WETH/USDC)
-    const response = await fetch("https://api.dexscreener.com/latest/dex/pairs/base/0x20f8d1e4b1d3056b3b841272f31f021f15886616");
-    const data = await response.json();
-    const pair = data.pair || {};
-
-    const liveSignal = {
-      agent: "GW8-BASE-SIGNAL-01",
-      timestamp: new Date().toISOString(),
-      pair: pair.baseToken?.symbol ? `${pair.baseToken.symbol}/${pair.quoteToken.symbol}` : "ETH/USDC",
-      price_usd: pair.priceUsd || "0.00",
-      volume_24h: pair.volume?.h24 || 0,
-      price_change_5m: pair.priceChange?.m5 || 0,
-      signal: (pair.priceChange?.m5 > 0.5) ? "SURGE_BUY" : "ACCUMULATE",
-      confidence: "91%"
-    };
-
     return res.status(200).json({
       status: "SUCCESS",
       payment_verified: true,
       payment_proof: paymentHeader.substring(0, 18) + "...",
-      data: liveSignal
+      data: currentSignal
     });
   } catch (err) {
     return res.status(500).json({ error: "Failed to generate dynamic market signal." });
@@ -115,6 +108,20 @@ app.get('/api/preview', (req, res) => {
   });
 });
 
+// 4. Internal Fleet Update Route (Receives signals from local Python fleet)
+app.post('/api/update-signal', (req, res) => {
+  const fleetKey = req.headers['x-gw8-key'];
+
+  if (process.env.FLEET_SECRET_KEY && fleetKey !== process.env.FLEET_SECRET_KEY) {
+    return res.status(401).json({ error: "Unauthorized fleet key" });
+  }
+
+  currentSignal = req.body;
+  console.log(`[FLEET UPDATE] New signal cached for ${currentSignal.pair || currentSignal.symbol || 'ASSET'}`);
+  return res.status(200).json({ status: "Signal cached successfully" });
+});
+
+// Start Server
 app.listen(PORT, () => {
   console.log(`GW8 Micro-SaaS Agent running on port ${PORT}`);
 });

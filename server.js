@@ -1,6 +1,11 @@
-const express = require('express');
-const cors = require('cors');
-const { ethers } = require('ethers');
+import express from 'express';
+import cors from 'cors';
+import { ethers } from 'ethers';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const app = express();
 app.use(express.json());
@@ -56,7 +61,7 @@ async function verifyPaymentOnChain(txHash, requiredAmount) {
   }
 }
 
-// --- Helper: Dual-Auth Check (Bearer Key OR On-Chain x-payment-hash) ---
+// --- Helper: Dual-Auth Check ---
 async function validateAccess(authHeader, paymentHash, price) {
   if (authHeader === `Bearer ${SUBSCRIBER_KEY}`) {
     return { authorized: true, method: "Subscriber Key" };
@@ -72,7 +77,7 @@ async function validateAccess(authHeader, paymentHash, price) {
 
 // 1. Landing Page
 app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/index.html');
+  res.sendFile(join(__dirname, 'index.html'));
 });
 
 // 2. Discovery Manifest
@@ -99,7 +104,7 @@ app.get('/api/preview', (req, res) => {
   });
 });
 
-// 4. Scout Ingestion Route (Receives data from local scout.py)
+// 4. Scout Ingestion Route
 app.post('/api/telemetry/update', (req, res) => {
   const authHeader = req.headers.authorization;
   if (authHeader !== `Bearer ${SUBSCRIBER_KEY}`) {

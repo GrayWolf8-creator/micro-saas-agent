@@ -1,20 +1,24 @@
+import express from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 
-// 1. Initialize MCP Server instance
+// 1. Initialize Express App
+const app = express();
+app.use(express.json());
+
+// 2. Initialize MCP Server Instance
 const mcp = new McpServer({
   name: "GW8 Wolf Pack Telemetry Gateway",
   version: "2.0.0"
 });
 
-// 2. Register Tool: Standard Telemetry ($0.05)
+// 3. Register Tool: Standard Telemetry ($0.05)
 mcp.tool(
   "get_wolf_pack_telemetry",
   "Fetches real-time prices, 24h performance, and telemetry for the Wolf Pack portfolio.",
   {},
   async () => {
-    // Returns current telemetry stored in your DB / memory
     const telemetry = typeof getLatestTelemetryStandard === 'function' 
       ? getLatestTelemetryStandard() 
       : { status: "active", note: "Standard Wolf Pack Telemetry Feed" };
@@ -25,7 +29,7 @@ mcp.tool(
   }
 );
 
-// 3. Register Tool: Pro Alpha Signals ($0.25)
+// 4. Register Tool: Pro Alpha Signals ($0.25)
 mcp.tool(
   "get_pro_alpha_signals",
   "Fetches technical setups, breakout triggers, and custom alpha indicators.",
@@ -41,8 +45,14 @@ mcp.tool(
   }
 );
 
-// 4. Expose the MCP Stream Endpoint (Gated by your x402 payment middleware)
+// 5. Expose the MCP Endpoint (Gated by your x402 payment middleware)
 app.post("/mcp", x402PaymentGatekeeper, async (req, res) => {
   const transport = new StreamableHTTPServerTransport(req, res);
   await mcp.connect(transport);
+});
+
+// 6. Start Server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`GW8 Telemetry Gateway running on port ${PORT}`);
 });

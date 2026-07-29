@@ -12,9 +12,11 @@
   "type": "module",
   "dependencies": {
     "@coinbase/agentkit": "^0.10.4",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@x402/express": "^2.19.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "viem": "^2.55.8"
+    "viem": "^2.55.8",
+    "zod": "^4.4.3"
   }
 }

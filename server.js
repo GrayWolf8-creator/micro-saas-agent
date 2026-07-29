@@ -1,183 +1,48 @@
-import express from 'express';
-import { ethers } from 'ethers';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js');
+const { StreamableHTTPServerTransport } = require('@modelcontextprotocol/sdk/server/streamableHttp.js');
+const { z } = require('zod');
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-const app = express();
-app.use(express.json());
-
-// Built-in CORS Middleware (Replaces external 'cors' package)
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-payment-hash");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
+// 1. Initialize MCP Server instance
+const mcp = new McpServer({
+  name: "GW8 Wolf Pack Telemetry Gateway",
+  version: "2.0.0"
 });
 
-// --- Configuration & Envs ---
-const PORT = process.env.PORT || 10000;
-const PAYOUT_WALLET = "0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd";
-const SUBSCRIBER_KEY = process.env.SUBSCRIBER_KEY || "SUB-GW8-CAPITAL-ALPHA-VIP";
-const BASE_RPC_URL = process.env.BASE_RPC_URL || "https://mainnet.base.org";
-
-// Base Mainnet USDC Contract
-const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-const TRANSFER_EVENT_TOPIC = ethers.id("Transfer(address,address,uint256)");
-
-const STANDARD_PRICE = "0.05";
-const PRO_PRICE = "0.25";
-
-// Shared RPC Provider
-const provider = new ethers.JsonRpcProvider(BASE_RPC_URL);
-
-// Dual-Tier Telemetry Store
-let telemetryStore = {
-  standard: { timestamp: null, data: "No telemetry pushed yet." },
-  pro: { timestamp: null, data: "No alpha telemetry pushed yet." }
-};
-
-// --- Helper: On-Chain Settlement Verifier ---
-async function verifyPaymentOnChain(txHash, requiredAmount) {
-  try {
-    const receipt = await provider.getTransactionReceipt(txHash);
-    if (!receipt || !receipt.status) return false;
-
-    for (const log of receipt.logs) {
-      if (log.address.toLowerCase() === USDC_ADDRESS.toLowerCase()) {
-        if (log.topics[0] === TRANSFER_EVENT_TOPIC) {
-          const toAddress = ethers.dataSlice(log.topics[2], 12);
-          if (toAddress.toLowerCase() === PAYOUT_WALLET.toLowerCase()) {
-            const amountBN = ethers.BigNumber ? ethers.BigNumber.from(log.data) : BigInt(log.data);
-            const amountUSDC = Number(amountBN) / 1e6;
-            
-            if (amountUSDC >= parseFloat(requiredAmount)) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    return false;
-  } catch (err) {
-    console.error("RPC Verification Error:", err.message);
-    return false;
+// 2. Register Tool: Standard Telemetry ($0.05)
+mcp.tool(
+  "get_wolf_pack_telemetry",
+  "Fetches real-time prices, 24h performance, and telemetry for the Wolf Pack portfolio.",
+  {},
+  async () => {
+    // Returns current telemetry stored in your DB / memory
+    const telemetry = typeof getLatestTelemetryStandard === 'function' 
+      ? getLatestTelemetryStandard() 
+      : { status: "active", note: "Standard Wolf Pack Telemetry Feed" };
+      
+    return {
+      content: [{ type: "text", text: JSON.stringify(telemetry, null, 2) }]
+    };
   }
-}
+);
 
-// --- Helper: Dual-Auth Check ---
-async function validateAccess(authHeader, paymentHash, price) {
-  if (authHeader === `Bearer ${SUBSCRIBER_KEY}`) {
-    return { authorized: true, method: "Subscriber Key" };
+// 3. Register Tool: Pro Alpha Signals ($0.25)
+mcp.tool(
+  "get_pro_alpha_signals",
+  "Fetches technical setups, breakout triggers, and custom alpha indicators.",
+  {},
+  async () => {
+    const proSignals = typeof getLatestTelemetryPro === 'function' 
+      ? getLatestTelemetryPro() 
+      : { status: "active", note: "Pro Alpha Signal Feed" };
+
+    return {
+      content: [{ type: "text", text: JSON.stringify(proSignals, null, 2) }]
+    };
   }
-  if (paymentHash) {
-    const paid = await verifyPaymentOnChain(paymentHash, price);
-    if (paid) return { authorized: true, method: "On-Chain USDC Settlement" };
-  }
-  return { authorized: false };
-}
+);
 
-// --- Routes ---
-
-// 1. Landing Page
-app.get('/', (req, res) => {
-  res.sendFile(join(__dirname, 'index.html'));
-});
-
-// 2. Discovery Manifest
-app.get('/.well-known/agent.json', (req, res) => {
-  res.json({
-    name: "GW8 Capital Telemetry Gateway",
-    version: "2.0.0",
-    description: "Autonomous micro-SaaS agent gateway providing dual-tiered market signals on Base Mainnet.",
-    payment_recipient: PAYOUT_WALLET,
-    tiers: {
-      standard: { endpoint: "/api/agent", price: "0.05 USDC" },
-      pro_alpha: { endpoint: "/api/agent/alpha", price: "0.25 USDC" }
-    }
-  });
-});
-
-// 3. Free Preview Teaser
-app.get('/api/preview', (req, res) => {
-  res.json({
-    status: "online",
-    gateway: "GW8 Capital Agent Engine",
-    last_updated: telemetryStore.standard.timestamp || telemetryStore.pro.timestamp || "N/A",
-    teaser: "Active market pulse detected. Connect x402 payment headers for full stream."
-  });
-});
-
-// 4. Scout Ingestion Route
-app.post('/api/telemetry/update', (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader !== `Bearer ${SUBSCRIBER_KEY}`) {
-    return res.status(401).json({ error: "Unauthorized scout payload" });
-  }
-
-  const { tier, signal } = req.body;
-
-  if (tier === 'pro') {
-    telemetryStore.pro = { timestamp: new Date().toISOString(), data: signal };
-  } else {
-    telemetryStore.standard = { timestamp: new Date().toISOString(), data: signal };
-  }
-
-  res.json({ status: "success", updated_tier: tier || "standard" });
-});
-
-// 5. Standard Tier Endpoint (0.05 USDC / call)
-app.post('/api/agent', async (req, res) => {
-  const auth = await validateAccess(req.headers.authorization, req.headers['x-payment-hash'], STANDARD_PRICE);
-  
-  if (!auth.authorized) {
-    return res.status(402).json({
-      error: "Payment Required",
-      tier: "Standard",
-      price: `${STANDARD_PRICE} USDC`,
-      settlement_chain: "Base Mainnet (8453)",
-      recipient: PAYOUT_WALLET,
-      instructions: "Pass x-payment-hash header with valid Base USDC transfer tx or Bearer auth token."
-    });
-  }
-
-  res.json({
-    tier: "Standard",
-    auth_method: auth.method,
-    timestamp: telemetryStore.standard.timestamp,
-    telemetry: telemetryStore.standard.data
-  });
-});
-
-// 6. Pro Alpha Tier Endpoint (0.25 USDC / call)
-app.post('/api/agent/alpha', async (req, res) => {
-  const auth = await validateAccess(req.headers.authorization, req.headers['x-payment-hash'], PRO_PRICE);
-  
-  if (!auth.authorized) {
-    return res.status(402).json({
-      error: "Payment Required for Alpha Feed",
-      tier: "Pro Alpha",
-      price: `${PRO_PRICE} USDC`,
-      settlement_chain: "Base Mainnet (8453)",
-      recipient: PAYOUT_WALLET,
-      instructions: "Pass x-payment-hash header with valid Base USDC transfer tx or Bearer auth token."
-    });
-  }
-
-  res.json({
-    tier: "Pro Alpha",
-    auth_method: auth.method,
-    timestamp: telemetryStore.pro.timestamp,
-    telemetry: telemetryStore.pro.data
-  });
-});
-
-// Start Server
-app.listen(PORT, () => {
-  console.log(`GW8 Capital Gateway running on port ${PORT}`);
+// 4. Expose the MCP Stream Endpoint (Gated by your x402 payment middleware)
+app.post("/mcp", x402PaymentGatekeeper, async (req, res) => {
+  const transport = new StreamableHTTPServerTransport(req, res);
+  await mcp.connect(transport);
 });

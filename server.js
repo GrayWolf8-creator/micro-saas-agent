@@ -19,7 +19,11 @@ const x402PaymentGatekeeper = (req, res, next) => {
     message: 'Valid subscription required to access Wolf Pack MCP Gateway.'
   });
 };
-
+// Agent Telemetry Endpoint
+app.post('/api/agent', x402PaymentGatekeeper, (req, res) => {
+  console.log('Received scout telemetry:', req.body);
+  return res.json({ status: 'ok', received: req.body });
+});
 // MCP Endpoint
 app.post('/mcp', x402PaymentGatekeeper, async (req, res) => {
   try {

@@ -96,23 +96,34 @@
     <script>
         async function fetchTelemetry() {
             try {
-                const resStd = await fetch('/api/agent', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer SUB-GW8-CAPITAL-ALPHA-VIP' }
+                // Fetch live cached telemetry using the VIP Bearer Token
+                const res = await fetch('/api/telemetry', {
+                    method: 'GET',
+                    headers: { 
+                        'Authorization': 'Bearer SUB-GW8-CAPITAL-ALPHA-VIP' 
+                    }
                 });
-                const stdJson = await resStd.json();
-                document.getElementById('std-data').textContent = JSON.stringify(stdJson.telemetry, null, 2);
 
-                const resPro = await fetch('/api/agent/alpha', {
-                    method: 'POST',
-                    headers: { 'Authorization': 'Bearer SUB-GW8-CAPITAL-ALPHA-VIP' }
-                });
-                const proJson = await resPro.json();
-                document.getElementById('pro-data').textContent = JSON.stringify(proJson.telemetry, null, 2);
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    // Populate Standard Tier display
+                    document.getElementById('std-data').textContent = JSON.stringify({
+                        status: data.status,
+                        timestamp: data.timestamp
+                    }, null, 2);
+
+                    // Populate Alpha Tier with live scout telemetry stream
+                    document.getElementById('pro-data').textContent = JSON.stringify(data.telemetry, null, 2);
+                } else {
+                    document.getElementById('pro-data').textContent = "x402 Payment Required";
+                }
             } catch (err) {
                 console.error("Telemetry fetch error:", err);
+                document.getElementById('pro-data').textContent = "Error fetching signal stream.";
             }
         }
+
         fetchTelemetry();
         setInterval(fetchTelemetry, 15000);
     </script>

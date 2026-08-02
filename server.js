@@ -1,6 +1,9 @@
-const express = require('express');
-const path = require('path');
-const { JsonRpcProvider, Contract, formatUnits } = require('ethers');
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { JsonRpcProvider, Contract, formatUnits } from 'ethers';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 const PORT = process.env.PORT || 3000;

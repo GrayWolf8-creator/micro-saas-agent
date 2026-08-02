@@ -1,95 +1,61 @@
-import express from 'express';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 
+const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Body parser middleware
+// Enable JSON body parsing
 app.use(express.json());
 
-// Gatekeeper Middleware
+// Memory store for latest telemetry
+let latestTelemetry = null;
+
+// Middleware: x402 Payment Gatekeeper Authentication
 const x402PaymentGatekeeper = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  if (authHeader === 'Bearer SUB-GW8-CAPITAL-ALPHA-VIP') {
-    return next();
-  }
-  return res.status(402).json({
-    error: 'Payment Required',
-    message: 'Valid subscription required to access Wolf Pack MCP Gateway.'
-  });
+    const authHeader = req.headers['authorization'];
+    const expectedToken = 'Bearer SUB-GW8-CAPITAL-ALPHA-VIP';
+
+    if (!authHeader || authHeader !== expectedToken) {
+        return res.status(401).json({ 
+            status: 'error', 
+            message: 'Unauthorized: Valid x402 subscriber token required.' 
+        });
+    }
+    next();
 };
-// Agent Telemetry Endpoint
+
+// Health Check Route
+app.get('/', (req, res) => {
+    res.send('GW8 Capital Telemetry Gateway Online');
+});
+
+// POST /api/agent - Scout agent pushes fresh market telemetry here
 app.post('/api/agent', x402PaymentGatekeeper, (req, res) => {
-  console.log('Received scout telemetry:', req.body);
-  return res.json({ status: 'ok', received: req.body });
-});
-// MCP Endpoint
-app.post('/mcp', x402PaymentGatekeeper, async (req, res) => {
-  try {
-    const mcpServer = new McpServer({
-      name: "WolfPackTelemetry",
-      version: "1.0.0"
-    });
-
-    mcpServer.tool(
-      "get_wolf_pack_telemetry",
-      "Retrieves current market telemetry",
-      {},
-      async () => ({
-        content: [{ type: "text", text: JSON.stringify({ status: "active", pack_metrics: "nominal" }) }]
-      })
-    );
-
-    mcpServer.tool(
-      "get_pro_alpha_signals",
-      "Retrieves premium trading signals",
-      {},
-      async () => ({
-        content: [{ type: "text", text: JSON.stringify({ alpha: "high", signal: "strong" }) }]
-      })
-    );
-
-    // Standard JSON-RPC / MCP response for initialization/calls
-    const { method, params, id } = req.body || {};
+    latestTelemetry = req.body;
+    console.log(`[${new Date().toLocaleTimeString()}] Telemetry updated via scout agent.`);
     
-    if (method === 'initialize') {
-      return res.json({
-        jsonrpc: "2.0",
-        id: id,
-        result: {
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {} },
-          serverInfo: { name: "WolfPackTelemetry", version: "1.0.0" }
-        }
-      });
-    }
-
-    if (method === 'tools/list') {
-      return res.json({
-        jsonrpc: "2.0",
-        id: id,
-        result: {
-          tools: [
-            { name: "get_wolf_pack_telemetry", description: "Retrieves current market telemetry" },
-            { name: "get_pro_alpha_signals", description: "Retrieves premium trading signals" }
-          ]
-        }
-      });
-    }
-
-    return res.json({
-      jsonrpc: "2.0",
-      id: id,
-      result: { status: "processed" }
+    res.status(200).json({
+        status: 'success',
+        message: 'Telemetry payload received and cached successfully.'
     });
-
-  } catch (err) {
-    console.error("MCP Processing Error:", err);
-    res.status(500).json({ error: err.message });
-  }
 });
 
+// GET /api/telemetry - Subscribers read the cached high-alpha telemetry here
+app.get('/api/telemetry', x402PaymentGatekeeper, (req, res) => {
+    if (!latestTelemetry) {
+        return res.status(404).json({ 
+            status: 'error', 
+            message: 'No telemetry data cached yet. Agent is warming up.' 
+        });
+    }
+
+    res.status(200).json({
+        status: 'success',
+        timestamp: new Date().toISOString(),
+        telemetry: latestTelemetry
+    });
+});
+
+// Start Server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });

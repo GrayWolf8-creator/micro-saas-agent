@@ -11,17 +11,23 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Serve static assets if you have additional CSS/JS files in the same directory
+// Serve static assets (index.html, CSS, JS) from root directory
 app.use(express.static(__dirname));
 
-let latestTelemetry = null;
+// Initial telemetry state
+let latestTelemetry = {
+    status: "active",
+    market_pulse: "Telemetry Gateway Active",
+    alpha_insights: "GW8 Scout Clusters Operational",
+    timestamp: new Date().toISOString()
+};
 
-// Target settlement address for micro-SaaS revenue
-const GW8_VAULT_ADDRESS = process.env.GW8_PAYMENT_WALLET || "0xYOUR_BASE_OR_SOLANA_WALLET_ADDRESS";
+// Target settlement address on Base Mainnet
+const GW8_VAULT_ADDRESS = process.env.GW8_PAYMENT_WALLET || "0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd";
 
 /**
  * x402 Autonomous Payment Gatekeeper
- * Handles both legacy VIP tokens and modern x402 micro-payment headers
+ * Handles VIP tokens and x402 micro-payment headers for data consumers
  */
 const x402PaymentGatekeeper = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -34,7 +40,6 @@ const x402PaymentGatekeeper = (req, res, next) => {
 
     // 2. Autonomous Agent payment verification (x402 Protocol)
     if (x402Signature) {
-        // Here the gateway validates the signed USDC micro-transaction payload via an x402 facilitator
         console.log(`[x402] Micro-payment signature received: ${x402Signature.substring(0, 15)}...`);
         return next();
     }
@@ -63,24 +68,35 @@ const x402PaymentGatekeeper = (req, res, next) => {
 };
 
 // =========================================================
-// ROOT ROUTE: SERVES THE UI DASHBOARD (index.html)
+// ROUTE DEFINITIONS
 // =========================================================
+
+// Root Route: Serves dashboard UI
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Scout Agent Ingestion Endpoint
-app.post('/api/agent', x402PaymentGatekeeper, (req, res) => {
-    latestTelemetry = req.body;
-    console.log(`[${new Date().toLocaleTimeString()}] Telemetry payload received.`);
+// Scout Agent Ingestion Endpoint (Unprotected for local scout clusters)
+app.post('/api/agent', (req, res) => {
+    latestTelemetry = {
+        ...req.body,
+        updatedAt: new Date().toISOString()
+    };
+    console.log(`[${new Date().toLocaleTimeString()}] Telemetry payload received from scout.`);
     res.status(200).json({ status: 'success', message: 'Telemetry cached.' });
 });
 
-// Subscriber/Agent Telemetry Endpoint
+// Primary Telemetry Endpoint (Protected by x402 / VIP)
 app.get('/api/telemetry', x402PaymentGatekeeper, (req, res) => {
-    if (!latestTelemetry) {
-        return res.status(404).json({ status: 'error', message: 'Telemetry warming up.' });
-    }
+    res.status(200).json({
+        status: 'success',
+        timestamp: new Date().toISOString(),
+        telemetry: latestTelemetry
+    });
+});
+
+// Telemetry Endpoint Alias (Protected by x402 / VIP)
+app.get('/api/agent', x402PaymentGatekeeper, (req, res) => {
     res.status(200).json({
         status: 'success',
         timestamp: new Date().toISOString(),

@@ -1,9 +1,18 @@
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// Setup __dirname workaround for ES module environment
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Serve static assets if you have additional CSS/JS files in the same directory
+app.use(express.static(__dirname));
 
 let latestTelemetry = null;
 
@@ -53,8 +62,12 @@ const x402PaymentGatekeeper = (req, res, next) => {
     });
 };
 
-// Health Check
-app.get('/', (req, res) => res.send('GW8 Capital Telemetry Gateway Online'));
+// =========================================================
+// ROOT ROUTE: SERVES THE UI DASHBOARD (index.html)
+// =========================================================
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // Scout Agent Ingestion Endpoint
 app.post('/api/agent', x402PaymentGatekeeper, (req, res) => {

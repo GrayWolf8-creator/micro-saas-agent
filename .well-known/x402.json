@@ -1,0 +1,20 @@
+{
+  "x402Version": "1.0",
+  "name": "GW8 Base Signal Agent API",
+  "description": "Monetized AI Trading Signal Endpoint on Base Mainnet",
+  "endpoints": [
+    {
+      "path": "/api/agent",
+      "method": "POST",
+      "price": "0.05",
+      "currency": "USDC",
+      "network": "base-mainnet",
+      "chainId": 8453,
+      "payTo": "0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd",
+      "assetContract": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "headers": {
+        "X-Payment-Tx": "Base Mainnet Transaction Hash"
+      }
+    }
+  ]
+}

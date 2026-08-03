@@ -1,0 +1,25 @@
+// Serves the community-standard x402 discovery manifest
+app.get('/.well-known/x402.json', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.json({
+    x402Version: 2,
+    name: "GW8 Telemetry API",
+    network: "base",
+    facilitator: "coinbase",
+    payTo: "0xb4527dccac81eb73d4988a51a4cb1fbbf2c3cabd",
+    services: [
+      {
+        method: "GET",
+        path: "/telemetry",
+        description: "Real-time system and network telemetry data stream",
+        amount: "0.05",
+        asset: "USDC",
+        extensions: {
+          bazaar: {
+            discoverable: true
+          }
+        }
+      }
+    ]
+  });
+});

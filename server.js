@@ -40,9 +40,27 @@ app.get('/llms.txt', (req, res) => {
     res.sendFile(path.join(__dirname, 'llms.txt'));
 });
 
-// Dual Route Handler for x402 Manifest (Handles both dot and non-dot paths)
+// Inline x402 Manifest Handler (Guarantees 200 OK without file lookup errors)
 app.get(['/.well-known/x402.json', '/well-known/x402.json'], (req, res) => {
-    res.sendFile(path.join(__dirname, '.well-known', 'x402.json'));
+    res.json({
+        x402Version: "1.0",
+        name: "GW8 Base Signal Agent API",
+        description: "Monetized AI Trading Signal Endpoint on Base Mainnet",
+        payTo: VAULT_ADDRESS,
+        network: "Base Mainnet",
+        chainId: 8453,
+        asset: "USDC",
+        tokenAddress: USDC_BASE_ADDRESS,
+        endpoints: [
+            {
+                path: "/api/agent",
+                method: "POST",
+                price: "0.05",
+                currency: "USDC",
+                description: "Returns live market analytics, 24h momentum change, algorithmic signal, and confidence scores."
+            }
+        ]
+    });
 });
 
 // Scout Cluster Ingestion Endpoint (Unprotected)
@@ -76,10 +94,10 @@ async function verifyUsdcPayment(txHash, requiredAmountUsdc) {
                 const parsedLog = erc20Interface.parseLog(log);
                 if (parsedLog && parsedLog.name === 'Transfer') {
                     const [from, to, value] = parsedLog.args;
-                    const amountUsdc = parseFloat(formatUnits(value, 6)); // USDC 6 decimals
+                    const amountUsdc = parseFloat(formatUnits(value, 6));
 
                     if (to.toLowerCase() === VAULT_ADDRESS && amountUsdc >= requiredAmountUsdc) {
-                        processedTxs.add(txHash); // Mark as spent
+                        processedTxs.add(txHash);
                         return { valid: true, amount: amountUsdc, sender: from };
                     }
                 }
@@ -94,12 +112,11 @@ async function verifyUsdcPayment(txHash, requiredAmountUsdc) {
     }
 }
 
-// Core x402 Micropayment Verification Middleware
+// Core x402 Request Handler
 async function handleX402Request(req, res) {
     const authHeader = req.headers['authorization'];
     const paymentTx = req.headers['x-payment-tx'] || req.headers['x402-payment'] || req.query.tx;
 
-    // 1. VIP Token Bypass
     if (authHeader === `Bearer ${VIP_TOKEN}`) {
         return res.json({
             status: 'success',
@@ -109,9 +126,8 @@ async function handleX402Request(req, res) {
         });
     }
 
-    // 2. On-Chain x402 Payment Settlement Check
     if (paymentTx) {
-        const verification = await verifyUsdcPayment(paymentTx, 0.05); // 0.05 USDC
+        const verification = await verifyUsdcPayment(paymentTx, 0.05);
         if (verification.valid) {
             return res.json({
                 status: 'success',
@@ -126,7 +142,6 @@ async function handleX402Request(req, res) {
         }
     }
 
-    // 3. Return HTTP 402 Payment Required Challenge
     return res.status(402)
         .set('X-402-Pay-To', VAULT_ADDRESS)
         .set('X-402-Amount-USDC', '0.05')
@@ -145,7 +160,6 @@ async function handleX402Request(req, res) {
         });
 }
 
-// Monetized Endpoint Routes (Supports GET & POST for /api/agent and /api/telemetry)
 app.all('/api/agent', handleX402Request);
 app.all('/api/telemetry', handleX402Request);
 

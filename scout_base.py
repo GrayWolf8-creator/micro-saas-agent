@@ -3,10 +3,9 @@ import requests
 import pandas as pd
 import numpy as np
 
-# Global Gateway Configuration
-RENDER_GATEWAY_URL = "https://micro-saas-agent.onrender.com/api/telemetry"
-VIP_HEADERS = {
-    "Authorization": "Bearer SUB-GW8-CAPITAL-ALPHA-VIP",
+# Global Gateway Configuration (Updated to dedicated ingestion endpoint)
+RENDER_GATEWAY_URL = "https://micro-saas-agent.onrender.com/api/ingest"
+INGEST_HEADERS = {
     "Content-Type": "application/json"
 }
 
@@ -50,7 +49,7 @@ def generate_signal(price: float, rsi: float, bb_lower: float, bb_upper: float) 
 
 def dispatch_telemetry(symbol: str, price: float, price_history: list):
     """
-    Formats indicator calculations and posts to the Render Gateway.
+    Formats indicator calculations and posts directly to the Render Ingestion Route.
     """
     df = pd.DataFrame({"close": price_history})
     rsi = calculate_rsi(df["close"])
@@ -71,7 +70,7 @@ def dispatch_telemetry(symbol: str, price: float, price_history: list):
     }
 
     try:
-        res = requests.post(RENDER_GATEWAY_URL, json=payload, headers=VIP_HEADERS, timeout=5)
-        print(f"[{symbol}] Telemetry Posted | Status: {res.status_code} | Price: ${price} | Signal: {signal}")
+        res = requests.post(RENDER_GATEWAY_URL, json=payload, headers=INGEST_HEADERS, timeout=5)
+        print(f"[{symbol}] Telemetry Ingested | Status: {res.status_code} | Price: ${price} | Signal: {signal}")
     except Exception as e:
-        print(f"[{symbol}] Gateway Dispatch Error: {e}")
+        print(f"[{symbol}] Ingestion Dispatch Error: {e}")

@@ -17,7 +17,7 @@ const USDC_BASE_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const VIP_TOKEN = 'SUB-GW8-CAPITAL-ALPHA-VIP';
 const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
 
-// Lazy Provider Helper (Only connects when a tx needs verification)
+// Lazy Provider Helper
 let providerInstance = null;
 function getProvider() {
     if (!providerInstance) {
@@ -35,8 +35,17 @@ const erc20Interface = new Interface([
 let latestTelemetry = { status: "Awaiting scout data...", updatedAt: new Date().toISOString() };
 const processedTxs = new Set(); // Prevents replay attacks
 
-// 1. Ingestion Endpoint (Unprotected for Python scout cluster)
-app.post('/api/agent', (req, res) => {
+// Direct Manifest Route Handlers (Fixes 404s on discovery)
+app.get('/llms.txt', (req, res) => {
+    res.sendFile(path.join(__dirname, 'llms.txt'));
+});
+
+app.get('/.well-known/x402.json', (req, res) => {
+    res.sendFile(path.join(__dirname, '.well-known', 'x402.json'));
+});
+
+// Scout Cluster Ingestion Endpoint (Unprotected)
+app.post('/api/ingest', (req, res) => {
     latestTelemetry = {
         ...req.body,
         updatedAt: new Date().toISOString()
@@ -84,13 +93,12 @@ async function verifyUsdcPayment(txHash, requiredAmountUsdc) {
     }
 }
 
-// 2. Gated Telemetry Route (x402 Micropayment or VIP token)
-app.get('/api/telemetry', async (req, res) => {
+// Core x402 Micropayment Verification Middleware
+async function handleX402Request(req, res) {
     const authHeader = req.headers['authorization'];
-    // Accepts X-Payment-Tx, x402-payment, or ?tx query parameter
     const paymentTx = req.headers['x-payment-tx'] || req.headers['x402-payment'] || req.query.tx;
 
-    // Check VIP Token Bypass
+    // 1. VIP Token Bypass
     if (authHeader === `Bearer ${VIP_TOKEN}`) {
         return res.json({
             status: 'success',
@@ -100,7 +108,7 @@ app.get('/api/telemetry', async (req, res) => {
         });
     }
 
-    // Check On-Chain x402 Payment
+    // 2. On-Chain x402 Payment Settlement Check
     if (paymentTx) {
         const verification = await verifyUsdcPayment(paymentTx, 0.05); // 0.05 USDC
         if (verification.valid) {
@@ -117,7 +125,7 @@ app.get('/api/telemetry', async (req, res) => {
         }
     }
 
-    // Direct Short-Circuit: Enforce HTTP 402 Payment Required immediately
+    // 3. Return HTTP 402 Payment Required Challenge
     return res.status(402)
         .set('X-402-Pay-To', VAULT_ADDRESS)
         .set('X-402-Amount-USDC', '0.05')
@@ -134,7 +142,11 @@ app.get('/api/telemetry', async (req, res) => {
             },
             instructions: 'Send payment and re-query this endpoint with header "X-Payment-Tx: <TX_HASH>" or "?tx=<TX_HASH>"'
         });
-});
+}
+
+// Monetized Endpoint Routes (Supports GET & POST for /api/agent and /api/telemetry)
+app.all('/api/agent', handleX402Request);
+app.all('/api/telemetry', handleX402Request);
 
 app.listen(PORT, () => {
     console.log(`GW8 Capital x402 Gateway online on port ${PORT}`);

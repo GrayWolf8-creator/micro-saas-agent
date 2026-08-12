@@ -35,12 +35,13 @@ const erc20Interface = new Interface([
 let latestTelemetry = { status: "Awaiting scout data...", updatedAt: new Date().toISOString() };
 const processedTxs = new Set(); // Prevents replay attacks
 
-// Direct Manifest Route Handlers (Fixes 404s on discovery)
+// Manifest Routes
 app.get('/llms.txt', (req, res) => {
     res.sendFile(path.join(__dirname, 'llms.txt'));
 });
 
-app.get('/.well-known/x402.json', (req, res) => {
+// Dual Route Handler for x402 Manifest (Handles both dot and non-dot paths)
+app.get(['/.well-known/x402.json', '/well-known/x402.json'], (req, res) => {
     res.sendFile(path.join(__dirname, '.well-known', 'x402.json'));
 });
 

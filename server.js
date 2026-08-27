@@ -60,7 +60,7 @@ function getX402ChallengeV2() {
             {
                 scheme: "exact",
                 network: "eip155:8453",
-                maxAmountRequired: "50000", // 0.05 USDC (6 decimals)
+                amount: "50000", // 0.05 USDC (6 decimals)
                 asset: USDC_BASE_ADDRESS,
                 payTo: VAULT_ADDRESS,
                 maxTimeoutSeconds: 300,
@@ -72,35 +72,38 @@ function getX402ChallengeV2() {
         ],
         extensions: {
             bazaar: {
-                name: "GW8 Base Market Signal Agent",
-                description: "Real-time BTC/USD momentum signal, RSI(14), and Bollinger Band regime confirmation for autonomous trading agents.",
-                input: {
-                    method: "POST",
-                    type: "object",
-                    properties: {
-                        pair: {
-                            type: "string",
-                            enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
-                            default: "BTC/USD"
-                        }
+                schema: "https://x402.org/schemas/bazaar/v1.json",
+                info: {
+                    name: "GW8 Base Market Signal Agent",
+                    description: "Real-time BTC/USD momentum signal, RSI(14), and Bollinger Band regime confirmation for autonomous trading agents.",
+                    input: {
+                        method: "POST",
+                        type: "object",
+                        properties: {
+                            pair: {
+                                type: "string",
+                                enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
+                                default: "BTC/USD"
+                            }
+                        },
+                        required: []
                     },
-                    required: []
-                },
-                output: {
-                    example: {
-                        status: "success",
-                        telemetry: {
-                            symbol: "BTC/USD",
-                            price: 63881.0,
-                            metrics: {
-                                rsi_14: 50.0,
-                                sma_20: 63881.0,
-                                bb_upper: 63881.0,
-                                bb_lower: 63881.0
-                            },
-                            signal: "NEUTRAL_CONSOLIDATION",
-                            timestamp: 1786526256,
-                            updatedAt: "2026-08-27T02:18:00.000Z"
+                    output: {
+                        example: {
+                            status: "success",
+                            telemetry: {
+                                symbol: "BTC/USD",
+                                price: 63881,
+                                metrics: {
+                                    rsi_14: 50,
+                                    sma_20: 63881,
+                                    bb_upper: 63881,
+                                    bb_lower: 63881
+                                },
+                                signal: "NEUTRAL_CONSOLIDATION",
+                                timestamp: 1786526256,
+                                updatedAt: "2026-08-27T02:18:00.000Z"
+                            }
                         }
                     }
                 }

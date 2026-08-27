@@ -226,8 +226,8 @@ async function verifyManualUsdcTx(txHash) {
     }
 }
 
-// Helper: Parse payment header
-function parsePaymentPayload(raw) {
+// Helper: Parse incoming payment header
+function parsePaymentHeader(raw) {
     if (!raw) return null;
     if (typeof raw === 'object') return raw;
     try {
@@ -267,12 +267,15 @@ async function handleX402Agent(req, res) {
         }
 
         try {
-            const parsedPayment = parsePaymentPayload(paymentSigHeader);
+            const parsedPayment = parsePaymentHeader(paymentSigHeader);
+            const challenge = getX402ChallengeV2();
+            const paymentRequirements = challenge.accepts[0];
+
             const verifyPayload = {
-                x402Version: 2,
-                payment: parsedPayment,
-                resource: {
-                    url: RESOURCE_URL
+                paymentPayload: parsedPayment,
+                paymentRequirements: {
+                    ...paymentRequirements,
+                    resource: challenge.resource
                 }
             };
 
@@ -288,8 +291,11 @@ async function handleX402Agent(req, res) {
 
             if (verifyRes.ok) {
                 const settlePayload = {
-                    x402Version: 2,
-                    payment: parsedPayment
+                    paymentPayload: parsedPayment,
+                    paymentRequirements: {
+                        ...paymentRequirements,
+                        resource: challenge.resource
+                    }
                 };
 
                 const settleJwt = generateCdpJwt('POST', '/platform/v2/x402/settle');

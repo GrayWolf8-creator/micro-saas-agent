@@ -226,17 +226,18 @@ async function verifyManualUsdcTx(txHash) {
     }
 }
 
-// Helper: Parse incoming payment header
-function parsePaymentHeader(raw) {
+// Helper: Decode and parse incoming payment payload
+function decodePaymentPayload(raw) {
     if (!raw) return null;
     if (typeof raw === 'object') return raw;
     try {
         return JSON.parse(raw);
     } catch (e) {
         try {
-            return JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
+            const decoded = Buffer.from(raw, 'base64').toString('utf8');
+            return JSON.parse(decoded);
         } catch (e2) {
-            return raw;
+            return null;
         }
     }
 }
@@ -267,16 +268,14 @@ async function handleX402Agent(req, res) {
         }
 
         try {
-            const parsedPayment = parsePaymentHeader(paymentSigHeader);
+            const paymentPayload = decodePaymentPayload(paymentSigHeader);
             const challenge = getX402ChallengeV2();
             const paymentRequirements = challenge.accepts[0];
 
-            const verifyPayload = {
-                paymentPayload: parsedPayment,
-                paymentRequirements: {
-                    ...paymentRequirements,
-                    resource: challenge.resource
-                }
+            const facilitatorBody = {
+                x402Version: 2,
+                paymentPayload,
+                paymentRequirements
             };
 
             const verifyJwt = generateCdpJwt('POST', '/platform/v2/x402/verify');
@@ -286,18 +285,10 @@ async function handleX402Agent(req, res) {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${verifyJwt}`
                 },
-                body: JSON.stringify(verifyPayload)
+                body: JSON.stringify(facilitatorBody)
             });
 
             if (verifyRes.ok) {
-                const settlePayload = {
-                    paymentPayload: parsedPayment,
-                    paymentRequirements: {
-                        ...paymentRequirements,
-                        resource: challenge.resource
-                    }
-                };
-
                 const settleJwt = generateCdpJwt('POST', '/platform/v2/x402/settle');
                 const settleRes = await fetch(`${CDP_FACILITATOR_URL}/settle`, {
                     method: 'POST',
@@ -305,7 +296,7 @@ async function handleX402Agent(req, res) {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${settleJwt}`
                     },
-                    body: JSON.stringify(settlePayload)
+                    body: JSON.stringify(facilitatorBody)
                 });
                 const settleData = await settleRes.json();
 

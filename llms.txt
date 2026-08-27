@@ -1,19 +1,24 @@
 # GW8 Base Signal Agent API
-
 > Monetized AI Trading Signal Endpoint on Base Mainnet.
 
 ## Service Specs
 - Network: Base Mainnet (Chain ID 8453)
 - Token Contract: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 (USDC)
 - Pay To Wallet: 0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd
-- Protocol: x402 Micro-payments
+- Protocol: x402 Micropayments (Coinbase CDP / EIP-3009)
+- Price: 0.05 USDC (50000 atomic units)
 
-## Endpoints
-
+## Primary Endpoint
 ### [POST /api/agent](https://micro-saas-agent.onrender.com/api/agent)
-- Price: 0.05 USDC
-- Required Header: X-Payment-Tx (Base Mainnet Transaction Hash)
-- Description: Returns live ETH/USD market analytics, 24h momentum change, algorithmic signal (BUY/HOLD/SELL), and confidence scores upon valid payment verification.
+- Primary Handshake: Headers `PAYMENT-SIGNATURE` or `X-PAYMENT`
+- Fallback Header: `X-Payment-Tx`
+- Description: Returns sub-minute RSI(14), Bollinger Bands, momentum classification, and confidence scoring for BTC/USD, ONDO/USD, and XPR/USD.
+- Supported Enum Signals:
+  - `OVERSOLD_ACCUMULATION_ZONE`
+  - `OVERBOUGHT_DISTRIBUTION_ZONE`
+  - `BULLISH_MOMENTUM_BUILD`
+  - `BEARISH_MOMENTUM_BUILD`
+  - `NEUTRAL_CONSOLIDATION`
 
-## Manifests & Schemas
-- [x402 Manifest](https://micro-saas-agent.onrender.com/.well-known/x402.json): Machine-readable payment schema for agent registries.
+## Discovery & Manifests
+- [x402 Manifest](https://micro-saas-agent.onrender.com/.well-known/x402.json): Machine-readable payment schema for CDP Facilitator and Bazaar.

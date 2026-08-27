@@ -2,6 +2,8 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { JsonRpcProvider, Interface, formatUnits } from 'ethers';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -46,6 +48,34 @@ const erc20Interface = new Interface([
     "event Transfer(address indexed from, address indexed to, uint256 value)"
 ]);
 
+// Generate CDP Facilitator JWT Token
+function generateCdpJwt(method, uriPath) {
+    const keyName = process.env.CDP_API_KEY_ID;
+    let privateKey = process.env.CDP_API_KEY_SECRET;
+    if (!keyName || !privateKey) return null;
+
+    if (privateKey.includes('\\n')) {
+        privateKey = privateKey.replace(/\\n/g, '\n');
+    }
+
+    const uri = `${method} api.cdp.coinbase.com${uriPath}`;
+    const payload = {
+        iss: 'cdp',
+        nbf: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 120,
+        sub: keyName,
+        uri
+    };
+
+    const header = {
+        alg: 'ES256',
+        kid: keyName,
+        nonce: crypto.randomBytes(16).toString('hex')
+    };
+
+    return jwt.sign(payload, privateKey, { algorithm: 'ES256', header });
+}
+
 // Official x402 Version 2 + Bazaar Discovery Spec
 function getX402ChallengeV2() {
     return {
@@ -60,7 +90,7 @@ function getX402ChallengeV2() {
             {
                 scheme: "exact",
                 network: "eip155:8453",
-                amount: "50000", // 0.05 USDC (6 decimals)
+                amount: "50000",
                 asset: USDC_BASE_ADDRESS,
                 payTo: VAULT_ADDRESS,
                 maxTimeoutSeconds: 300,
@@ -222,11 +252,12 @@ async function handleX402Agent(req, res) {
         }
 
         try {
+            const verifyJwt = generateCdpJwt('POST', '/platform/v2/x402/verify');
             const verifyRes = await fetch(`${CDP_FACILITATOR_URL}/verify`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.CDP_API_KEY_SECRET}`
+                    'Authorization': `Bearer ${verifyJwt}`
                 },
                 body: JSON.stringify({
                     payment: paymentSig,
@@ -235,11 +266,12 @@ async function handleX402Agent(req, res) {
             });
 
             if (verifyRes.ok) {
+                const settleJwt = generateCdpJwt('POST', '/platform/v2/x402/settle');
                 const settleRes = await fetch(`${CDP_FACILITATOR_URL}/settle`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${process.env.CDP_API_KEY_SECRET}`
+                        'Authorization': `Bearer ${settleJwt}`
                     },
                     body: JSON.stringify({ payment: paymentSig })
                 });

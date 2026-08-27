@@ -14,6 +14,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Configuration
 const VAULT_ADDRESS = '0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd';
 const USDC_BASE_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const RESOURCE_URL = 'https://micro-saas-agent.onrender.com/api/agent';
 const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
 const CDP_FACILITATOR_URL = process.env.CDP_FACILITATOR_URL || 'https://api.cdp.coinbase.com/platform/v2/x402';
 const INGEST_SECRET = process.env.INGEST_SECRET || 'gw8-secret-scout-cluster-key';
@@ -33,7 +34,6 @@ const telemetryStore = {
 
 const processedTxs = new Set();
 
-// Lazy Provider
 let providerInstance = null;
 function getProvider() {
     if (!providerInstance) {
@@ -46,34 +46,65 @@ const erc20Interface = new Interface([
     "event Transfer(address indexed from, address indexed to, uint256 value)"
 ]);
 
-// Official x402 V1/V2 Challenge Payload
-function getX402Challenge() {
+// Official x402 Version 2 + Bazaar Extension Challenge Payload
+function getX402ChallengeV2() {
     return {
-        x402Version: 1,
+        x402Version: 2,
         error: "PAYMENT_REQUIRED",
+        resource: {
+            url: RESOURCE_URL,
+            description: "Live momentum signal: RSI(14), Bollinger %B, BUY/HOLD/SELL, confidence",
+            mimeType: "application/json"
+        },
         accepts: [
             {
                 scheme: "exact",
-                network: "base",
+                network: "eip155:8453",
                 maxAmountRequired: "50000", // 0.05 USDC (6 decimals)
-                resource: "https://micro-saas-agent.onrender.com/api/agent",
-                description: "Live momentum signal: RSI(14), Bollinger %B, BUY/HOLD/SELL, confidence",
-                mimeType: "application/json",
+                asset: USDC_BASE_ADDRESS,
                 payTo: VAULT_ADDRESS,
                 maxTimeoutSeconds: 300,
-                asset: USDC_BASE_ADDRESS,
                 extra: {
                     name: "USD Coin",
                     version: "2"
                 }
             }
         ],
-        paymentDetails: {
-            recipient: VAULT_ADDRESS,
-            token: "USDC",
-            chainId: 8453,
-            chainName: "Base Mainnet",
-            amount: 0.05
+        extensions: {
+            bazaar: {
+                name: "GW8 Base Market Signal Agent",
+                description: "Real-time BTC/USD momentum signal, RSI(14), and Bollinger Band regime confirmation for autonomous trading agents.",
+                input: {
+                    method: "POST",
+                    type: "object",
+                    properties: {
+                        pair: {
+                            type: "string",
+                            enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
+                            default: "BTC/USD"
+                        }
+                    },
+                    required: []
+                },
+                output: {
+                    example: {
+                        status: "success",
+                        telemetry: {
+                            symbol: "BTC/USD",
+                            price: 63881.0,
+                            metrics: {
+                                rsi_14: 50.0,
+                                sma_20: 63881.0,
+                                bb_upper: 63881.0,
+                                bb_lower: 63881.0
+                            },
+                            signal: "NEUTRAL_CONSOLIDATION",
+                            timestamp: 1786526256,
+                            updatedAt: "2026-08-27T02:18:00.000Z"
+                        }
+                    }
+                }
+            }
         }
     };
 }
@@ -83,7 +114,7 @@ app.get('/', (req, res) => {
     res.json({
         service: "GW8 Base Signal Agent API",
         status: "ONLINE",
-        protocol: "x402",
+        protocol: "x402 v2",
         price: "0.05 USDC",
         leadAsset: "BTC/USD",
         supportedAssets: Object.keys(telemetryStore),
@@ -98,10 +129,10 @@ app.get('/llms.txt', (req, res) => {
 });
 
 app.get(['/.well-known/x402.json', '/well-known/x402.json'], (req, res) => {
-    res.json(getX402Challenge());
+    res.json(getX402ChallengeV2());
 });
 
-// 3. Authenticated Scout Ingestion Route
+// 3. Ingestion Route
 app.post('/api/ingest', (req, res) => {
     const authHeader = req.headers['x-ingest-key'] || req.headers['authorization'];
     if (authHeader !== INGEST_SECRET && authHeader !== `Bearer ${INGEST_SECRET}`) {
@@ -120,11 +151,10 @@ app.post('/api/ingest', (req, res) => {
         updatedAt: new Date().toISOString()
     };
 
-    console.log(`[SCOUT INGESTION] Updated ${symbol} at ${telemetryStore[symbol].updatedAt}`);
     res.json({ status: "success", symbol, receivedAt: telemetryStore[symbol].updatedAt });
 });
 
-// Helper: Fallback Manual On-Chain TX Receipt Verification
+// Helper: Manual TX Fallback
 async function verifyManualUsdcTx(txHash) {
     if (processedTxs.has(txHash)) return { valid: false, reason: "Tx hash already spent" };
     try {
@@ -152,7 +182,7 @@ async function verifyManualUsdcTx(txHash) {
     }
 }
 
-// 4. Primary x402 Handler
+// 4. Primary x402 v2 Handler
 async function handleX402Agent(req, res) {
     const authHeader = req.headers['authorization'];
     const paymentSig = req.headers['payment-signature'] || req.headers['x-payment'];
@@ -170,18 +200,23 @@ async function handleX402Agent(req, res) {
         });
     }
 
-    // PRIMARY PATH: x402 EIP-3009 Signature Verification via CDP Facilitator
+    // PRIMARY PATH: x402 v2 EIP-3009 Signature Verification via CDP Facilitator
     if (paymentSig) {
+        if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
+            console.error("[CDP FACILITATOR] KEYS_MISSING: CDP_API_KEY_ID or CDP_API_KEY_SECRET not set on Render.");
+            return res.status(500).json({ error: "Facilitator Configuration Error", code: "KEYS_MISSING" });
+        }
+
         try {
             const verifyRes = await fetch(`${CDP_FACILITATOR_URL}/verify`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.CDP_API_KEY_SECRET || ''}`
+                    'Authorization': `Bearer ${process.env.CDP_API_KEY_SECRET}`
                 },
                 body: JSON.stringify({
                     payment: paymentSig,
-                    resource: "https://micro-saas-agent.onrender.com/api/agent"
+                    resource: RESOURCE_URL
                 })
             });
 
@@ -190,7 +225,7 @@ async function handleX402Agent(req, res) {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${process.env.CDP_API_KEY_SECRET || ''}`
+                        'Authorization': `Bearer ${process.env.CDP_API_KEY_SECRET}`
                     },
                     body: JSON.stringify({ payment: paymentSig })
                 });
@@ -205,9 +240,13 @@ async function handleX402Agent(req, res) {
                         timestamp: new Date().toISOString(),
                         telemetry
                     });
+            } else {
+                const verifyErr = await verifyRes.text();
+                return res.status(400).json({ error: "Payment verification failed", details: verifyErr });
             }
         } catch (err) {
             console.error("[CDP FACILITATOR ERROR]", err);
+            return res.status(500).json({ error: "Internal Facilitator Error" });
         }
     }
 
@@ -227,15 +266,15 @@ async function handleX402Agent(req, res) {
         return res.status(400).json({ error: "Invalid Payment", reason: manualCheck.reason });
     }
 
-    // PRIMARY CHALLENGE: 402 Payment Required
-    const challenge = getX402Challenge();
+    // PRIMARY CHALLENGE: 402 Payment Required (x402 Version 2)
+    const challenge = getX402ChallengeV2();
     const challengeBase64 = Buffer.from(JSON.stringify(challenge)).toString('base64');
 
     return res.status(402)
         .set('PAYMENT-REQUIRED', challengeBase64)
         .set('X-402-Pay-To', VAULT_ADDRESS)
         .set('X-402-Amount-USDC', '0.05')
-        .set('X-402-Chain', 'Base-Mainnet')
+        .set('X-402-Chain', 'eip155:8453')
         .json(challenge);
 }
 
@@ -243,5 +282,5 @@ app.all('/api/agent', handleX402Agent);
 app.all('/api/telemetry', handleX402Agent);
 
 app.listen(PORT, () => {
-    console.log(`GW8 Capital x402 Gateway online on port ${PORT}`);
+    console.log(`GW8 Capital x402 v2 Gateway online on port ${PORT}`);
 });

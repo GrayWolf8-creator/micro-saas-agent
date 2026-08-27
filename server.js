@@ -226,10 +226,25 @@ async function verifyManualUsdcTx(txHash) {
     }
 }
 
+// Helper: Parse payment header
+function parsePaymentPayload(raw) {
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    try {
+        return JSON.parse(raw);
+    } catch (e) {
+        try {
+            return JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
+        } catch (e2) {
+            return raw;
+        }
+    }
+}
+
 // 4. Primary x402 v2 Handler
 async function handleX402Agent(req, res) {
     const authHeader = req.headers['authorization'];
-    const paymentSig = req.headers['payment-signature'] || req.headers['x-payment'];
+    const paymentSigHeader = req.headers['payment-signature'] || req.headers['x-payment'];
     const legacyTx = req.headers['x-payment-tx'] || req.query.tx;
     const requestedSymbol = req.body?.pair || req.query?.symbol || 'BTC/USD';
     const telemetry = telemetryStore[requestedSymbol] || telemetryStore['BTC/USD'];
@@ -245,13 +260,22 @@ async function handleX402Agent(req, res) {
     }
 
     // PRIMARY PATH: x402 v2 EIP-3009 Signature Verification via CDP Facilitator
-    if (paymentSig) {
+    if (paymentSigHeader) {
         if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
             console.error("[CDP FACILITATOR] KEYS_MISSING: CDP_API_KEY_ID or CDP_API_KEY_SECRET not set on Render.");
             return res.status(500).json({ error: "Facilitator Configuration Error", code: "KEYS_MISSING" });
         }
 
         try {
+            const parsedPayment = parsePaymentPayload(paymentSigHeader);
+            const verifyPayload = {
+                x402Version: 2,
+                payment: parsedPayment,
+                resource: {
+                    url: RESOURCE_URL
+                }
+            };
+
             const verifyJwt = generateCdpJwt('POST', '/platform/v2/x402/verify');
             const verifyRes = await fetch(`${CDP_FACILITATOR_URL}/verify`, {
                 method: 'POST',
@@ -259,13 +283,15 @@ async function handleX402Agent(req, res) {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${verifyJwt}`
                 },
-                body: JSON.stringify({
-                    payment: paymentSig,
-                    resource: RESOURCE_URL
-                })
+                body: JSON.stringify(verifyPayload)
             });
 
             if (verifyRes.ok) {
+                const settlePayload = {
+                    x402Version: 2,
+                    payment: parsedPayment
+                };
+
                 const settleJwt = generateCdpJwt('POST', '/platform/v2/x402/settle');
                 const settleRes = await fetch(`${CDP_FACILITATOR_URL}/settle`, {
                     method: 'POST',
@@ -273,7 +299,7 @@ async function handleX402Agent(req, res) {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${settleJwt}`
                     },
-                    body: JSON.stringify({ payment: paymentSig })
+                    body: JSON.stringify(settlePayload)
                 });
                 const settleData = await settleRes.json();
 

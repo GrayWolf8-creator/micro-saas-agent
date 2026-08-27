@@ -46,7 +46,7 @@ const erc20Interface = new Interface([
     "event Transfer(address indexed from, address indexed to, uint256 value)"
 ]);
 
-// Official x402 Version 2 + Bazaar Extension Challenge Payload
+// Official x402 Version 2 + Bazaar Discovery Spec
 function getX402ChallengeV2() {
     return {
         x402Version: 2,
@@ -72,21 +72,32 @@ function getX402ChallengeV2() {
         ],
         extensions: {
             bazaar: {
-                schema: "https://x402.org/schemas/bazaar/v1.json",
+                schema: {
+                    type: "object",
+                    properties: {
+                        pair: {
+                            type: "string",
+                            enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
+                            default: "BTC/USD"
+                        }
+                    }
+                },
                 info: {
                     name: "GW8 Base Market Signal Agent",
                     description: "Real-time BTC/USD momentum signal, RSI(14), and Bollinger Band regime confirmation for autonomous trading agents.",
                     input: {
+                        type: "http",
                         method: "POST",
-                        type: "object",
-                        properties: {
-                            pair: {
-                                type: "string",
-                                enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
-                                default: "BTC/USD"
+                        body: {
+                            type: "object",
+                            properties: {
+                                pair: {
+                                    type: "string",
+                                    enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
+                                    default: "BTC/USD"
+                                }
                             }
-                        },
-                        required: []
+                        }
                     },
                     output: {
                         example: {

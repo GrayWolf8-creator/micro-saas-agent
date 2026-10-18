@@ -128,7 +128,7 @@ export async function buildSample() {
   const s = await buildSignal();
   return { timestamp: s.timestamp, sample: true,
     stage1: { score: s.stage1.score, outOf: 4, checks: Object.fromEntries(Object.entries(s.stage1.checks).map(([k, v]) => [k, v.status])) },
-    wavetrend: { core: s.wavetrend.core.map(c => ({ name: c.name, wt1: c.wt1, wt2: c.wt2 })), bandDotCount: s.wavetrend.bandDots.length, bandDots: 'paid: POST /api/agent ($0.05 USDC on Base via x402)' },
+    wavetrend: { core: s.wavetrend.core.map(c => ({ name: c.name, wt1: c.wt1, wt2: c.wt2 })), bandDotCount: s.wavetrend.bandDots.length, bandDots: 'paid: POST /api/agent ($0.02 USDC on Base via x402)' },
     disclaimer: DISCLAIMER };
 }
 

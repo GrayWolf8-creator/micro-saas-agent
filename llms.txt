@@ -1,24 +1,15 @@
-# GW8 Base Signal Agent API
-> Monetized AI Trading Signal Endpoint on Base Mainnet.
+# GW8 Crypto Regime + WaveTrend Signal API (x402)
+> Pay-per-call crypto market signal for AI agents. $0.02 USDC on Base via x402 v2. Signal only, no trading, not financial advice.
 
-## Service Specs
-- Network: Base Mainnet (Chain ID 8453)
-- Token Contract: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 (USDC)
-- Pay To Wallet: 0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd
-- Protocol: x402 Micropayments (Coinbase CDP / EIP-3009)
-- Price: 0.02 USDC (20000 atomic units)
+## What you get (POST /api/agent, $0.02)
+- stage1: 4-check market regime score 0-4 (BTC spot ETF 3-day net flow, BTC quiet support near 20d low, alt breadth not in freefall, Fear & Greed < 60 / no weekend pump), each with pass/fail/unknown, raw values and the rule.
+- wavetrend: LazyBear WaveTrend 10/21/4 on Kraken 4h closed candles for 66 USD pairs. core = BTC/ETH/SOL/LINK/XRP wt1/wt2; bandDots = every green (wt1<=-53, outer<=-60) / red (wt1>=53, outer>=60) cross in the last 6 bars, with name, bar time, close.
+- Data refreshes every 10 minutes; responses are served from cache (fast).
 
-## Primary Endpoint
-### [POST /api/agent](https://micro-saas-agent.onrender.com/api/agent)
-- Primary Handshake: Headers `PAYMENT-SIGNATURE` or `X-PAYMENT`
-- Fallback Header: `X-Payment-Tx`
-- Description: Returns sub-minute RSI(14), Bollinger Bands, momentum classification, and confidence scoring for BTC/USD, ONDO/USD, and XPR/USD.
-- Supported Enum Signals:
-  - `OVERSOLD_ACCUMULATION_ZONE`
-  - `OVERBOUGHT_DISTRIBUTION_ZONE`
-  - `BULLISH_MOMENTUM_BUILD`
-  - `BEARISH_MOMENTUM_BUILD`
-  - `NEUTRAL_CONSOLIDATION`
+## Free
+- GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.
 
-## Discovery & Manifests
-- [x402 Manifest](https://micro-saas-agent.onrender.com/.well-known/x402.json): Machine-readable payment schema for CDP Facilitator and Bazaar.
+## Payment
+- x402 v2, scheme exact, network eip155:8453, asset USDC 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, amount 20000, payTo 0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd
+- Send PAYMENT-SIGNATURE (or X-PAYMENT). Unpaid requests return 402 with PAYMENT-REQUIRED.
+- Manifest: /.well-known/x402.json

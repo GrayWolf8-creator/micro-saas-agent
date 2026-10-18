@@ -105,31 +105,24 @@ function getX402ChallengeV2() {
         extensions: {
             bazaar: {
                 schema: {
+                    $schema: "https://json-schema.org/draft/2020-12/schema",
                     type: "object",
                     properties: {
-                        pair: {
-                            type: "string",
-                            enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
-                            default: "BTC/USD"
-                        }
-                    }
+                        input: { type: "object", properties: { type: { const: "http" }, method: { const: "POST" } }, required: ["type", "method"] },
+                        output: { type: "object" }
+                    },
+                    required: ["input"]
                 },
                 info: {
-                    name: "GW8 Base Market Signal Agent",
+                    name: "GW8 Crypto Regime + WaveTrend Signal (66 Kraken pairs)",
+                    category: "crypto-market-data",
+                    tags: ["crypto", "trading-signal", "wavetrend", "market-regime", "btc", "kraken", "technical-analysis"],
                     description: "Stage 1 crypto regime check (ETF flows, BTC support, alt breadth, Fear & Greed) plus LazyBear WaveTrend band dots across 66 Kraken USD pairs, 4h. Free live sample at /api/sample.",
                     input: {
                         type: "http",
                         method: "POST",
-                        body: {
-                            type: "object",
-                            properties: {
-                                pair: {
-                                    type: "string",
-                                    enum: ["BTC/USD", "ONDO/USD", "XPR/USD"],
-                                    default: "BTC/USD"
-                                }
-                            }
-                        }
+                        bodyType: "json",
+                        body: {}
                     },
                     output: {
                         example: {
@@ -173,7 +166,7 @@ app.get(['/.well-known/x402.json', '/well-known/x402.json'], (req, res) => {
 // 3. Ingestion Route
 app.post('/api/ingest', (req, res) => {
     const authHeader = req.headers['x-ingest-key'] || req.headers['authorization'];
-    if (authHeader !== INGEST_SECRET && authHeader !== `Bearer ${INGEST_SECRET}`) {
+    if (!INGEST_SECRET || (authHeader !== INGEST_SECRET && authHeader !== `Bearer ${INGEST_SECRET}`)) {
         return res.status(401).json({ error: "Unauthorized ingestion" });
     }
 
@@ -245,7 +238,7 @@ async function handleX402Agent(req, res) {
     const telemetry = telemetryStore[requestedSymbol] || telemetryStore['BTC/USD'];
 
     // VIP Bypass
-    if (authHeader === `Bearer ${VIP_TOKEN}`) {
+    if (VIP_TOKEN && VIP_TOKEN.length >= 24 && authHeader === `Bearer ${VIP_TOKEN}`) {
         return res.json({
             status: 'success',
             accessType: 'VIP_BYPASS',
@@ -292,7 +285,11 @@ async function handleX402Agent(req, res) {
                     },
                     body: JSON.stringify(facilitatorBody)
                 });
-                const settleData = await settleRes.json();
+                const settleData = await settleRes.json().catch(() => ({}));
+                if (!settleRes.ok || settleData.success === false) {
+                    console.error("[CDP FACILITATOR] settle failed", settleRes.status, settleData.errorReason);
+                    return res.status(402).json({ error: "Payment settlement failed", reason: settleData.errorReason || settleRes.status });
+                }
 
                 return res
                     .set('PAYMENT-RESPONSE', Buffer.from(JSON.stringify(settleData)).toString('base64'))

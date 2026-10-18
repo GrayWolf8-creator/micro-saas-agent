@@ -92,7 +92,7 @@ function getX402ChallengeV2() {
             {
                 scheme: "exact",
                 network: "eip155:8453",
-                amount: "50000",
+                amount: "20000",
                 asset: USDC_BASE_ADDRESS,
                 payTo: VAULT_ADDRESS,
                 maxTimeoutSeconds: 300,
@@ -153,7 +153,7 @@ app.get('/', (req, res) => {
         service: "GW8 Base Signal Agent API",
         status: "ONLINE",
         protocol: "x402 v2",
-        price: "0.05 USDC",
+        price: "0.02 USDC",
         sample: "/api/sample",
         supportedAssets: Object.keys(telemetryStore),
         docs: "/llms.txt",
@@ -207,7 +207,7 @@ async function verifyManualUsdcTx(txHash) {
                 if (parsed && parsed.name === 'Transfer') {
                     const [from, to, value] = parsed.args;
                     const amountUsdc = parseFloat(formatUnits(value, 6));
-                    if (to.toLowerCase() === VAULT_ADDRESS.toLowerCase() && amountUsdc >= 0.05) {
+                    if (to.toLowerCase() === VAULT_ADDRESS.toLowerCase() && amountUsdc >= 0.02) {
                         processedTxs.add(txHash);
                         return { valid: true, amount: amountUsdc, sender: from };
                     }
@@ -336,7 +336,7 @@ async function handleX402Agent(req, res) {
     return res.status(402)
         .set('PAYMENT-REQUIRED', challengeBase64)
         .set('X-402-Pay-To', VAULT_ADDRESS)
-        .set('X-402-Amount-USDC', '0.05')
+        .set('X-402-Amount-USDC', '0.02')
         .set('X-402-Chain', 'eip155:8453')
         .json(challenge);
 }

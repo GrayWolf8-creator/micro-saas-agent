@@ -398,6 +398,7 @@ function decodePaymentPayload(raw) {
 
 // 4. Primary x402 v2 Handler
 async function handleX402Agent(req, res, product = null) {
+    if (typeof product !== 'object') product = null; // Express passes next() as 3rd arg on /api/agent
     const deliver = product ? product.deliver : safeSignal;
     const authHeader = req.headers['authorization'];
     const paymentSigHeader = req.headers['payment-signature'] || req.headers['x-payment'];

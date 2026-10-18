@@ -142,9 +142,24 @@ function getX402ChallengeV2(o = {}) {
         base.resource = { url: o.url, description: o.description, mimeType: "application/json" };
         base.accepts[0].amount = o.amount;
         base.extensions.bazaar.info = { name: o.name, description: o.description, input: { type: "http", method: "GET" }, output: { example: o.example } };
-        base.extensions.bazaar.schema = JSON.parse(JSON.stringify(base.extensions.bazaar.schema));
-        base.extensions.bazaar.schema.properties.input.properties.method = { const: "GET" };
     }
+    // Spec-shaped Bazaar extension: info.input/info.output + JSON schema describing them
+    const method = o.url ? "GET" : "POST";
+    const inProps = o.inputProps || {};
+    const inKey = method === "GET" ? "queryParams" : "body";
+    const inSchema = { type: "object", properties: inProps, additionalProperties: false };
+    const info = base.extensions.bazaar.info;
+    info.input = { type: "http", method, ...(method === "POST" ? { bodyType: "json" } : {}), [inKey]: Object.fromEntries(Object.entries(inProps).map(([k, v]) => [k, v.example ?? ""])) };
+    info.output = { type: "json", example: info.output.example };
+    base.extensions.bazaar.schema = {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: {
+            input: { type: "object", properties: { type: { type: "string", const: "http" }, method: { type: "string", enum: [method] }, ...(method === "POST" ? { bodyType: { type: "string", enum: ["json"] } } : {}), [inKey]: inSchema }, required: ["type", "method"] },
+            output: { type: "object", properties: { type: { type: "string" }, example: { type: "object" } }, required: ["example"] }
+        },
+        required: ["input"]
+    };
     return base;
 }
 
@@ -170,6 +185,50 @@ app.get('/llms.txt', (req, res) => {
 app.get(['/.well-known/x402.json', '/well-known/x402.json'], (req, res) => {
     res.json(getX402ChallengeV2());
 });
+
+// x402scan / AgentCash discovery: OpenAPI-first, plus /.well-known/x402 fan-out
+const PAID = [
+    { path: '/api/agent', method: 'post', price: '0.02', summary: 'Full signal: Stage 1 regime score + WaveTrend 10/21/4 on 66 Kraken 4h pairs with all band dots' },
+    { path: '/api/history', method: 'get', price: '0.05', summary: 'Rolling 90-day band-dot backtest with forward +4h/+24h/+3d moves and live hit rates (green dots carry the edge; red dots near coin-flip)', query: { pair: { type: 'string', description: 'Optional coin symbol, e.g. BTC' } } },
+    { path: '/api/regime', method: 'get', price: '0.01', summary: 'Stage 1 crypto regime check detail (ETF flows, BTC support, alt breadth, Fear & Greed)' },
+    { path: '/api/dots', method: 'get', price: '0.01', summary: 'Current WaveTrend band dots across 66 Kraken 4h USD pairs' },
+    { path: '/api/coin/{symbol}', method: 'get', price: '0.005', summary: 'WaveTrend 4h snapshot for one coin', pathParam: true }
+];
+function openApiDoc() {
+    const paths = {};
+    for (const p of PAID) {
+        const parameters = [];
+        if (p.pathParam) parameters.push({ name: 'symbol', in: 'path', required: true, schema: { type: 'string', enum: COINS } });
+        for (const [name, schema] of Object.entries(p.query || {})) parameters.push({ name, in: 'query', required: false, schema });
+        paths[p.path] = { [p.method]: {
+            operationId: p.path.replace(/[^a-z]/gi, '_'),
+            summary: p.summary,
+            ...(parameters.length ? { parameters } : {}),
+            ...(p.method === 'post' ? { requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {} } } } } } : {}),
+            'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
+            responses: {
+                '200': { description: 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: { type: 'object' } } } },
+                '402': { description: `Payment required: ${p.price} USDC on Base (eip155:8453) via x402 v2` }
+            }
+        } };
+    }
+    paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample', security: [], responses: { '200': { description: 'Sample JSON' } } } };
+    return {
+        openapi: '3.1.0',
+        info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.1.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
+            description: 'Pay-per-call crypto market signals for AI agents via x402 (USDC on Base). Signal only, no trading.',
+            'x-guidance': 'Start with free GET /api/sample. Cheapest: GET /api/coin/{symbol} ($0.005). Full snapshot: POST /api/agent ($0.02). Backtest: GET /api/history ($0.05). Pay by retrying with the PAYMENT-SIGNATURE header from the 402 challenge.' },
+        servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
+        paths
+    };
+}
+app.get(['/favicon.ico', '/favicon.svg'], (req, res) => res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#0b1220"/><path d="M8 40 Q20 10 32 32 T56 24" stroke="#22c55e" stroke-width="6" fill="none"/></svg>'));
+app.get('/openapi.json', (req, res) => res.json(openApiDoc()));
+app.get('/.well-known/x402', (req, res) => res.json({
+    version: 1,
+    resources: PAID.map(p => `https://micro-saas-agent.onrender.com${p.path.replace('{symbol}', 'BTC')}`),
+    instructions: 'See /openapi.json and /llms.txt'
+}));
 
 // 3. Ingestion Route
 app.post('/api/ingest', (req, res) => {
@@ -371,6 +430,7 @@ app.get('/api/history', (req, res) => {
         url: `${BASE_URL}/api/history`, amount: "50000", name: "GW8 WaveTrend Band-Dot History + Hit Rates (90d, 66 pairs)",
         description: "Rolling 90-day backtest of WaveTrend 10/21/4 band dots on 66 Kraken 4h USD pairs, recomputed live. Green dots carry the edge (recent window: outer green dots ~64% higher after 3d); red dots are near coin-flip and reported honestly. Per dot: pair, green/red, inner/outer, wt1/wt2, price, forward % +4h/+24h/+3d, plus live hit-rate summary. Optional ?pair=BTC. $0.05.",
         example: { window: "90 days", summary: { green_all: { fwd24hPct: { n: 120, hitRatePct: 55.0, avgMovePct: 0.8 } } }, dots: [{ pair: "LINK/USD", kind: "green", band: "inner", bar: "2026-10-17T16:00:00.000Z", wt1: -54.8, wt2: -48.6, close: 11.2, fwd4hPct: 0.6, fwd24hPct: null, fwd3dPct: null }] },
+        inputProps: { pair: { type: "string", description: "Optional coin symbol, e.g. BTC", example: "BTC" } },
         deliver: () => getHistory(pair)
     });
 });

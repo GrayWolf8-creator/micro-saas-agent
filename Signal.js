@@ -114,6 +114,15 @@ async function getStage1() {
 }
 
 // ---------- Public API ----------
+export const COINS = Object.keys(PAIRS);
+export async function getDots() {
+  try { const wt = await getWaveTrend(); return { asOf: wt.asOf, bandDots: wt.bandDots, disclaimer: 'signal only, not financial advice' }; }
+  catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+}
+export async function getCoin(sym) {
+  try { const wt = await getWaveTrend(); const r = [...wt.core, ...wt.others].find(x => x.name === sym); return { asOf: wt.asOf, ...r, disclaimer: 'signal only, not financial advice' }; }
+  catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+}
 const DISCLAIMER = 'signal only, not financial advice';
 
 export async function buildSignal() {

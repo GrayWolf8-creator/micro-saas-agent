@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { JsonRpcProvider, Interface, formatUnits } from 'ethers';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { safeSignal, buildSample } from './Signal.js';
+import { safeSignal, buildSample, getCoin, getDots, COINS } from './Signal.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -79,8 +79,8 @@ function generateCdpJwt(method, uriPath) {
 }
 
 // Official x402 Version 2 + Bazaar Discovery Spec
-function getX402ChallengeV2() {
-    return {
+function getX402ChallengeV2(o = {}) {
+    const base = {
         x402Version: 2,
         error: "PAYMENT_REQUIRED",
         resource: {
@@ -138,6 +138,12 @@ function getX402ChallengeV2() {
             }
         }
     };
+    if (o.url) {
+        base.resource = { url: o.url, description: o.description, mimeType: "application/json" };
+        base.accepts[0].amount = o.amount;
+        base.extensions.bazaar.info = { name: o.name, description: o.description, input: { type: "http", method: "GET" }, output: { example: o.example } };
+    }
+    return base;
 }
 
 // 1. Root Landing Page
@@ -230,7 +236,8 @@ function decodePaymentPayload(raw) {
 }
 
 // 4. Primary x402 v2 Handler
-async function handleX402Agent(req, res) {
+async function handleX402Agent(req, res, product = null) {
+    const deliver = product ? product.deliver : safeSignal;
     const authHeader = req.headers['authorization'];
     const paymentSigHeader = req.headers['payment-signature'] || req.headers['x-payment'];
     const legacyTx = req.headers['x-payment-tx'] || req.query.tx;
@@ -243,7 +250,7 @@ async function handleX402Agent(req, res) {
             status: 'success',
             accessType: 'VIP_BYPASS',
             timestamp: new Date().toISOString(),
-            signal: await safeSignal()
+            signal: await deliver()
         });
     }
 
@@ -257,7 +264,7 @@ async function handleX402Agent(req, res) {
         try {
             const paymentPayload = decodePaymentPayload(paymentSigHeader);
             const challenge = getX402ChallengeV2();
-            const paymentRequirements = challenge.accepts[0];
+            const paymentRequirements = getX402ChallengeV2(product || {}).accepts[0];
 
             const facilitatorBody = {
                 x402Version: 2,
@@ -298,7 +305,7 @@ async function handleX402Agent(req, res) {
                         accessType: 'X402_FACILITATOR_SETTLED',
                         settlement: settleData,
                         timestamp: new Date().toISOString(),
-                        signal: await safeSignal()
+                        signal: await deliver()
                     });
             } else {
                 const verifyErr = await verifyRes.text();
@@ -311,7 +318,7 @@ async function handleX402Agent(req, res) {
     }
 
     // FALLBACK ONLY: Manual Transfer Hash Check
-    if (legacyTx) {
+    if (legacyTx && !product) {
         const manualCheck = await verifyManualUsdcTx(legacyTx);
         if (manualCheck.valid) {
             return res.json({
@@ -320,20 +327,20 @@ async function handleX402Agent(req, res) {
                 txHash: legacyTx,
                 amountPaid: manualCheck.amount,
                 timestamp: new Date().toISOString(),
-                signal: await safeSignal()
+                signal: await deliver()
             });
         }
         return res.status(400).json({ error: "Invalid Payment", reason: manualCheck.reason });
     }
 
     // PRIMARY CHALLENGE: 402 Payment Required (x402 Version 2)
-    const challenge = getX402ChallengeV2();
+    const challenge = getX402ChallengeV2(product || {});
     const challengeBase64 = Buffer.from(JSON.stringify(challenge)).toString('base64');
 
     return res.status(402)
         .set('PAYMENT-REQUIRED', challengeBase64)
         .set('X-402-Pay-To', VAULT_ADDRESS)
-        .set('X-402-Amount-USDC', '0.02')
+        .set('X-402-Amount-USDC', product ? String(Number(product.amount) / 1e6) : '0.02')
         .set('X-402-Chain', 'eip155:8453')
         .json(challenge);
 }
@@ -346,6 +353,25 @@ app.get('/api/sample', async (req, res) => {
 
 app.all('/api/agent', handleX402Agent);
 app.all('/api/telemetry', handleX402Agent);
+
+// Cheaper single-purpose products (signal only)
+const BASE_URL = 'https://micro-saas-agent.onrender.com';
+app.get('/api/dots', (req, res) => handleX402Agent(req, res, {
+    url: `${BASE_URL}/api/dots`, amount: "10000", name: "GW8 WaveTrend Band Dots (66 Kraken pairs, 4h)",
+    description: "Every LazyBear WaveTrend 10/21/4 oversold/overbought band cross (green<=-53, red>=+53) in the last 6 closed 4h bars across 66 Kraken USD pairs. $0.01.",
+    example: { asOf: "2026-10-17T20:00:00Z", bandDots: [{ name: "LINK", kind: "green", band: "inner", wt1: -54.8, bar: "2026-10-17T16:00:00.000Z", close: 11.2 }] },
+    deliver: getDots
+}));
+app.get('/api/coin/:symbol', (req, res) => {
+    const sym = String(req.params.symbol || '').toUpperCase();
+    if (!COINS.includes(sym)) return res.status(404).json({ error: 'unknown symbol', supported: COINS });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/coin/${sym}`, amount: "5000", name: `GW8 WaveTrend 4h: ${sym}/USD`,
+        description: `LazyBear WaveTrend 10/21/4 on Kraken 4h for ${sym}/USD: wt1, wt2, previous values, recent band dots. $0.005.`,
+        example: { name: sym, wt1: -41.2, wt2: -38.9, prevWt1: -44.0, prevWt2: -39.5, dots: [] },
+        deliver: () => getCoin(sym)
+    });
+});
 
 app.listen(PORT, () => {
     console.log(`GW8 Capital x402 v2 Gateway online on port ${PORT}`);

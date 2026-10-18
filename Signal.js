@@ -7,7 +7,7 @@ const THROTTLE_MS = 1100;
 let cache = null, inflight = null;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 function ema(x, n) { const a = 2 / (n + 1), o = [x[0]]; for (let i = 1; i < x.length; i++) o.push(a * x[i] + (1 - a) * o[i - 1]); return o; }
-async function fetchOHLC(pair, interval) {
+export async function fetchOHLC(pair, interval) {
   const r = await fetch(`https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${interval}`, { signal: AbortSignal.timeout(20000) });
   const j = await r.json();
   if (j.error && j.error.length) throw new Error(j.error.join(','));
@@ -15,7 +15,7 @@ async function fetchOHLC(pair, interval) {
   const secs = interval * 60, now = Date.now() / 1000;
   return j.result[k].filter(x => +x[0] + secs <= now); // closed candles only
 }
-function compute(name, rows) {
+export function compute(name, rows) {
   const ts = rows.map(x => +x[0]), h = rows.map(x => +x[2]), l = rows.map(x => +x[3]), c = rows.map(x => +x[4]);
   const ap = h.map((v, i) => (v + l[i] + c[i]) / 3);
   const esa = ema(ap, 10), d = ema(ap.map((v, i) => Math.abs(v - esa[i])), 10);

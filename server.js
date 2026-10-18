@@ -14,7 +14,7 @@ import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS
 import { initMcpPayments, paidWrapper, mcpPayMode } from './mcp_pay.js';
 import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_RULES, getFlows, getBrief, signResponses, publicKeyInfo } from './upgrades.js';
 import { getRwa } from './rwa.js';
-import { getGovContracts, validGovFilters, GOV_SECTORS } from './gov.js';
+import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -230,6 +230,7 @@ function openApiDoc() {
         } };
     }
     paths['/api/proof/pubkey'] = { get: { operationId: 'proof_pubkey', summary: 'Free: Ed25519 public key used to sign paid responses (X-GW8-Signature, X-GW8-Signed-At, X-GW8-Body-SHA256)', security: [], responses: { '200': { description: 'Public key JSON' } } } };
+    paths['/api/govcontracts/status'] = { get: { operationId: 'govcontracts_status', summary: 'Free: gov-contract feed source health (sourceStatus, asOf, dodAnnouncementDays, dodAwardsParsed, count; no rows)', security: [], responses: { '200': { description: 'Status JSON' } } } };
     paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample', security: [], responses: { '200': { description: 'Sample JSON' } } } };
     return {
         openapi: '3.1.0',
@@ -598,6 +599,10 @@ app.get('/api/rwa', (req, res) => handleX402Agent(req, res, {
     deliver: () => getRwa().catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
 }));
 
+// Free: source health for the gov feed (no award rows). Registered before the paid route.
+app.get('/api/govcontracts/status', async (req, res) => {
+    try { res.json(await getGovStatus()); } catch (e) { res.status(503).json({ status: 'unavailable' }); }
+});
 app.get('/api/govcontracts', (req, res) => {
     const f = { ticker: req.query.ticker ? String(req.query.ticker) : undefined, sector: req.query.sector ? String(req.query.sector) : undefined, q: req.query.q ? String(req.query.q) : undefined };
     const bad = validGovFilters(f);

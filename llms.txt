@@ -24,6 +24,7 @@
 
 ## Free
 - GET /api/proof/pubkey: signing public key.
+- GET /api/govcontracts/status: gov feed source health (sourceStatus per source, asOf, dodAnnouncementDays, dodAwardsParsed, count). No award rows.
 - GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.
 
 ## Payment

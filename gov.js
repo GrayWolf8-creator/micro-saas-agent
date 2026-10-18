@@ -124,3 +124,16 @@ export async function getGovContracts(f = {}) {
       'Amounts are the obligation in that action, not total contract value. Cached 30 minutes. ' + DISCLAIMER + '.'
     ], disclaimer: DISCLAIMER };
 }
+
+// Free health view: per-source status and counts only (no award rows). Served from the 30-min cache;
+// a cold cache triggers at most one shared upstream fetch per 60 s.
+let lastStatusFetch = 0;
+export async function getGovStatus() {
+  const fresh = cache && Date.now() - cache.t < TTL;
+  if (!fresh && !inflight && Date.now() - lastStatusFetch < 60000) {
+    if (!cache) return { status: 'warming', retryAfterSec: Math.ceil((60000 - (Date.now() - lastStatusFetch)) / 1000) };
+  } else if (!fresh) lastStatusFetch = Date.now();
+  const all = fresh || inflight || Date.now() - lastStatusFetch < 1000 ? await getAll() : { ...cache.data, cached: true, stale: true };
+  if (all.error) return { status: 'unavailable', sourceStatus: { usaspending: 'unavailable', dodAnnouncements: 'unavailable' } };
+  return { status: 'ok', asOf: all.asOf, cached: !!all.cached, stale: !!all.stale, sourceStatus: all.sourceStatus, dodAnnouncementDays: all.dodAnnouncementDays, dodAwardsParsed: all.dodAwardsParsed, count: all.count };
+}

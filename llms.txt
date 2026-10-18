@@ -6,7 +6,7 @@
 - Token Contract: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 (USDC)
 - Pay To Wallet: 0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd
 - Protocol: x402 Micropayments (Coinbase CDP / EIP-3009)
-- Price: 0.05 USDC (50000 atomic units)
+- Price: 0.02 USDC (20000 atomic units)
 
 ## Primary Endpoint
 ### [POST /api/agent](https://micro-saas-agent.onrender.com/api/agent)

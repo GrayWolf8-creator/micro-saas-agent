@@ -116,6 +116,7 @@ export async function getGovContracts(f = {}) {
     coverage: { sectors: GOV_SECTORS, companies: GOV_COMPANIES.map(c => ({ match: c[0], ticker: c[1], sector: c[2] })) },
     sources: [API + ' (contract award types A-D, transactions by action_date)', 'https://www.usaspending.gov', ...DOD_SOURCES],
     notes: [
+      ...(all.sourceStatus?.dodAnnouncements === 'unavailable' ? ['DoD daily contract announcements (war.gov) are currently unavailable from our host (blocked); DoD awards in this response come only from USAspending, which publishes them with a ~90-day lag. This source is retried on every cache refresh and recovers automatically if unblocked.'] : []),
       'source=dod-announcement rows are parsed from the Department of War daily contract announcements (awards >= $7.5M, posted ~5pm ET on business days). amountUsd there is the announced value (amountType: ceiling / modification / announced value), often a contract ceiling, not money obligated today; read the description for obligated funds.',
       'DoD rows are matched to tickers by company name in the award paragraph; for multiple-awardee contracts the ceiling is shared, not per company. otherLargeDodAwards lists the biggest unmapped DoD awards (ticker null). A USAspending row with the same contract number is folded into the DoD row (usaspendingLink).',
       'Each USAspending row is one positive-obligation contract action (new award or modification) as published on USAspending; $0 admin mods and de-obligations are excluded.',

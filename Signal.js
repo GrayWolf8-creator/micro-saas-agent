@@ -29,7 +29,7 @@ function compute(name, rows) {
     if (dn && wt1[i] >= 53) dots.push({ ...base, kind: 'red', band: wt1[i] >= 60 ? 'outer' : 'inner' });
   }
   const hist = [], cutoff = ts[n-1] - 90 * 86400, fw = k => (i, sgn) => i + k < n ? r2((c[i+k] / c[i] - 1) * 100) : null;
-  const H = [[1, 'fwd4hPct'], [6, 'fwd24hPct'], [18, 'fwd3dPct']];
+  const H = [[1, 'fwd4hPct'], [6, 'fwd24hPct'], [18, 'fwd3dPct'], [42, 'fwd7dPct'], [180, 'fwd30dPct']];
   for (let i = 4; i < n; i++) {
     if (ts[i] < cutoff) continue;
     const up = wt1[i-1] <= wt2[i-1] && wt1[i] > wt2[i], dn = wt1[i-1] >= wt2[i-1] && wt1[i] < wt2[i];
@@ -41,18 +41,18 @@ function compute(name, rows) {
     for (const [k, key] of H) e[key] = fw(k)(i);
     hist.push(e);
   }
-  return { history: hist, name, barOpen: new Date(ts[n-1] * 1000).toISOString(), close: c[n-1], wt1: r2(wt1[n-1]), wt2: r2(wt2[n-1]), prevWt1: r2(wt1[n-2]), prevWt2: r2(wt2[n-2]), dots };
+  return { history: hist, series: ts.map((t, i) => [t, c[i]]), name, barOpen: new Date(ts[n-1] * 1000).toISOString(), close: c[n-1], wt1: r2(wt1[n-1]), wt2: r2(wt2[n-1]), prevWt1: r2(wt1[n-2]), prevWt2: r2(wt2[n-2]), dots };
 }
 async function run() {
-  const core = [], others = [], bandDots = [], history = [];
+  const core = [], others = [], bandDots = [], history = [], series = {};
   for (const [name, pair] of Object.entries(PAIRS)) {
     let rec;
-    try { rec = compute(name, await fetchOHLC(pair, 240)); bandDots.push(...rec.dots); history.push(...rec.history); delete rec.history; }
+    try { rec = compute(name, await fetchOHLC(pair, 240)); bandDots.push(...rec.dots); history.push(...rec.history); series[name] = rec.series; delete rec.history; delete rec.series; }
     catch (e) { rec = { name, error: String(e.message || e) }; }
     (CORE.includes(name) ? core : others).push(rec);
     await sleep(THROTTLE_MS);
   }
-  return { asOf: new Date().toISOString(), core, others, bandDots, history };
+  return { asOf: new Date().toISOString(), core, others, bandDots, history, series };
 }
 const refreshHooks = [];
 export function onWaveTrendRefresh(f) { refreshHooks.push(f); }

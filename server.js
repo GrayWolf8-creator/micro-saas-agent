@@ -14,6 +14,7 @@ import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS
 import { initMcpPayments, paidWrapper, mcpPayMode } from './mcp_pay.js';
 import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_RULES, getFlows, getBrief, signResponses, publicKeyInfo } from './upgrades.js';
 import { getRwa } from './rwa.js';
+import { getTrack, renderTrack, logDots } from './track.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -180,6 +181,7 @@ app.get('/', (req, res) => {
         protocol: "x402 v2",
         price: "0.02 USDC",
         sample: "/api/sample",
+        trackRecord: "/track",
         supportedAssets: Object.keys(telemetryStore),
         docs: "/llms.txt",
         manifest: "/.well-known/x402.json"
@@ -231,6 +233,7 @@ function openApiDoc() {
     }
     paths['/api/proof/pubkey'] = { get: { operationId: 'proof_pubkey', summary: 'Free: Ed25519 public key used to sign paid responses (X-GW8-Signature, X-GW8-Signed-At, X-GW8-Body-SHA256)', security: [], responses: { '200': { description: 'Public key JSON' } } } };
     paths['/api/govcontracts/status'] = { get: { operationId: 'govcontracts_status', summary: 'Free: gov-contract feed source health (sourceStatus, asOf, dodAnnouncementDays, dodAwardsParsed, count; no rows)', security: [], responses: { '200': { description: 'Status JSON' } } } };
+    paths['/api/track'] = { get: { operationId: 'track', summary: 'Free: honest track record of band-dot signals (backtest simulated vs live-logged, hit rates 1d/7d/30d incl. misses). HTML at /track', security: [], responses: { '200': { description: 'Track JSON' } } } };
     paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample', security: [], responses: { '200': { description: 'Sample JSON' } } } };
     return {
         openapi: '3.1.0',
@@ -496,6 +499,12 @@ async function handleX402Agent(req, res, product = null) {
         .json(challenge);
 }
 
+// Free public track record (backtest + live log)
+let trackCache = null;
+const trackData = async () => { if (trackCache && Date.now() - trackCache.t < 10 * 60 * 1000) return trackCache.d; const d = await getTrack(); trackCache = { t: Date.now(), d }; return d; };
+app.get('/api/track', async (req, res) => { try { res.json(await trackData()); } catch (e) { res.status(503).json({ error: 'upstream data unavailable, retry shortly' }); } });
+app.get('/track', async (req, res) => { try { res.type('html').send(renderTrack(await trackData())); } catch (e) { res.status(503).type('text').send('Track record temporarily unavailable, retry shortly.'); } });
+
 // Free live sample (no payment)
 app.get('/api/sample', async (req, res) => {
     try { res.json(await buildSample()); }
@@ -548,6 +557,7 @@ app.get('/api/alerts/:id', async (req, res) => {
     const s = await getStatus(String(req.params.id));
     return s ? res.json(s) : res.status(404).json({ error: 'unknown subscription' });
 });
+onWaveTrendRefresh(wt => logDots(wt).then(r => r.added && console.log('[track] logged', r.added)).catch(() => {}));
 onWaveTrendRefresh(wt => onRefresh(wt).then(r => r && (r.sent || r.seeded) && console.log('[alerts]', JSON.stringify(r))));
 setInterval(() => getWaveTrend().catch(() => {}), 10 * 60 * 1000).unref();
 console.log('[alerts] persistence:', persistenceMode());

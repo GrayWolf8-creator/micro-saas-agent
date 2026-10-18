@@ -23,6 +23,7 @@
 - POST /api/alerts/subscribe ($0.50): webhook alerts for NEW green band dots for 30 days or 300 alerts. JSON body {"webhookUrl":"https://…","filter":"outer|inner|all","pairs":["BTC"]}. Invalid bodies are rejected before payment. Response includes subscriptionId and a one-time secret; each alert POST carries X-GW8-Signature: t=<unix>,v1=<HMAC-SHA256(secret, "<t>.<rawBody>")>. Status: GET /api/alerts/{subscriptionId}.
 
 ## Free
+- GET /track (HTML, phone-friendly) and GET /api/track (JSON): honest track record of the band-dot signals. Two separate sections: backtest (simulated, rolling ~90 days) and live-logged since the date shown. Per signal: date, coin, green/red, band, entry price, move after 1d/7d/30d (null until elapsed), hit/miss; summary hit rates by horizon including misses, avg/median/worst move. Signals from the last 24h are withheld (paid). No fees/slippage.
 - GET /api/proof/pubkey: signing public key.
 - GET /api/govcontracts/status: gov feed source health (sourceStatus per source, asOf, dodAnnouncementDays, dodAwardsParsed, count). No award rows.
 - GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.

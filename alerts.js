@@ -12,7 +12,8 @@ const TEST_ALLOW_LOCAL = process.env.NODE_ENV !== 'production' && process.env.AL
 const MAX_SUBS = 1000;
 let subs = null; // id -> sub
 
-async function redis(cmd) {
+export const hasRedis = () => !!(REDIS_URL && REDIS_TOKEN);
+export async function redis(cmd) {
     const r = await fetch(REDIS_URL, { method: 'POST', headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(cmd), signal: AbortSignal.timeout(8000) });
     if (!r.ok) throw new Error('redis ' + r.status);
     return (await r.json()).result;

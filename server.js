@@ -8,6 +8,8 @@ import jwt from 'jsonwebtoken';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
+import { ALERT_PLAN, validateSubscribe, createSubscription, getStatus, onRefresh, persistenceMode } from './alerts.js';
+import { onWaveTrendRefresh, getWaveTrend } from './Signal.js';
 import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
 import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_RULES, getFlows, getBrief, signResponses, publicKeyInfo } from './upgrades.js';
 
@@ -145,10 +147,10 @@ function getX402ChallengeV2(o = {}) {
     if (o.url) {
         base.resource = { url: o.url, description: o.description, mimeType: "application/json" };
         base.accepts[0].amount = o.amount;
-        base.extensions.bazaar.info = { name: o.name, description: o.description, input: { type: "http", method: "GET" }, output: { example: o.example } };
+        base.extensions.bazaar.info = { name: o.name, description: o.description, input: { type: "http", method: o.method || "GET" }, output: { example: o.example } };
     }
     // Spec-shaped Bazaar extension: info.input/info.output + JSON schema describing them
-    const method = o.url ? "GET" : "POST";
+    const method = o.method || (o.url ? "GET" : "POST");
     const inProps = o.inputProps || {};
     const inKey = method === "GET" ? "queryParams" : "body";
     const inSchema = { type: "object", properties: inProps, additionalProperties: false };
@@ -199,7 +201,8 @@ const PAID = [
     { path: '/api/coin/{symbol}', method: 'get', price: '0.005', summary: 'WaveTrend 4h snapshot for one coin', pathParam: true },
     { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.02', summary: 'Token safety verdict: score 0-100, safe/caution/danger, reasons and source URLs (GoPlus + DexScreener, fixed published rules, 10-min cache)', params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS) }, address: { type: 'string', description: 'Token contract (0x...) or Solana mint' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
     { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Large-print flow summary from Kraken public trades (single venue, not on-chain) joined with the coin WaveTrend 4h dot state', pathParam: true, ex: '/api/flows/BTC' },
-    { path: '/api/brief', method: 'get', price: '0.05', summary: 'Daily brief (built once per Mountain Time day): regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flow summary' }
+    { path: '/api/brief', method: 'get', price: '0.05', summary: 'Daily brief (built once per Mountain Time day): regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flow summary' },
+    { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Green band-dot webhook alerts: ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts, HMAC-signed POSTs`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
 ];
 function openApiDoc() {
     const paths = {};
@@ -213,7 +216,7 @@ function openApiDoc() {
             summary: p.summary,
             security: [],
             ...(parameters.length ? { parameters } : {}),
-            ...(p.method === 'post' ? { requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {} } } } } } : {}),
+            ...(p.method === 'post' ? { requestBody: { required: !!p.required, content: { 'application/json': { schema: { type: 'object', properties: p.body || {}, ...(p.required ? { required: p.required } : {}) } } } } } : {}),
             'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
             responses: {
                 '200': { description: 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: { type: 'object' } } } },
@@ -257,6 +260,7 @@ function buildMcp() {
     paidTool('get_band_dots', 'Band dots', '/api/dots', 'GET', '0.01', 'Current WaveTrend band dots across 66 Kraken 4h USD pairs.');
     paidTool('get_regime', 'Stage 1 regime detail', '/api/regime', 'GET', '0.01', 'Stage 1 crypto regime check with raw values and rules.');
     paidTool('get_coin', 'WaveTrend for one coin', '/api/coin/{symbol}', 'GET', '0.005', 'WaveTrend 4h snapshot for one coin.', { symbol: z.enum(COINS) }, a => `/api/coin/${a.symbol}`);
+    paidTool('subscribe_green_dot_alerts', 'Green-dot webhook alerts', '/api/alerts/subscribe', 'POST', ALERT_PLAN.priceUsd, `Subscribe a public https webhook to NEW green WaveTrend band dots (filter outer|inner|all, optional pairs) for ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts; HMAC-signed. Send JSON body {webhookUrl, filter, pairs}.`);
     paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history');
     paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.02', 'Is this token safe? Score 0-100, safe/caution/danger, reasons, sources (GoPlus + DexScreener, fixed rules).', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string() }, a => `/api/verdict/${a.chain}/${a.address}`);
     paidTool('get_flows', 'Large-print flows + dot state', '/api/flows/{symbol}', 'GET', '0.02', 'Kraken large-print buy/sell summary (single venue, not on-chain) joined with WaveTrend 4h state.', { symbol: z.enum(COINS) }, a => `/api/flows/${a.symbol}`);
@@ -280,7 +284,7 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.1.0',
     description: 'Crypto market signals for AI agents: Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Free sample; paid endpoints via x402 (USDC on Base). Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history'],
+    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts'],
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json` }
 }));
 
@@ -370,6 +374,10 @@ async function handleX402Agent(req, res, product = null) {
     }
 
     // PRIMARY PATH: x402 v2 EIP-3009 Signature Verification via CDP Facilitator
+    if (paymentSigHeader && product && product.precheck) {
+        const pc = await product.precheck(req);
+        if (pc && pc.error) return res.status(400).json({ error: pc.error, note: 'no payment was taken' });
+    }
     if (paymentSigHeader) {
         if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
             console.error("[CDP FACILITATOR] KEYS_MISSING: CDP_API_KEY_ID or CDP_API_KEY_SECRET not set on Render.");
@@ -495,6 +503,26 @@ app.get('/api/regime', (req, res) => handleX402Agent(req, res, {
     example: { score: 3, outOf: 4, checks: { btcQuietSupport: { status: "pass", detail: { pctAboveLow: 2.1, avgRange3dPct: 2.4 }, rule: "..." } } },
     deliver: getRegime
 }));
+const SUB_URL = `${BASE_URL}/api/alerts/subscribe`;
+app.post('/api/alerts/subscribe', (req, res) => {
+    let v = null;
+    return handleX402Agent(req, res, {
+        url: SUB_URL, method: "POST", amount: ALERT_PLAN.amount,
+        name: "GW8 Green-Dot Webhook Alerts (30 days)",
+        description: `Webhook alerts for NEW green WaveTrend 10/21/4 band dots on 66 Kraken 4h pairs. Body: {webhookUrl (https), filter: outer|inner|all, pairs?}. HMAC-SHA256 signed POSTs. ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts. $${ALERT_PLAN.priceUsd}. Signal only.`,
+        inputProps: { webhookUrl: { type: "string", example: "https://example.com/hook" }, filter: { type: "string", enum: ["outer", "inner", "all"], example: "outer" }, pairs: { type: "array", items: { type: "string" }, example: ["BTC", "ETH"] } },
+        example: { subscriptionId: "sub_…", secret: "whsec_…", filter: "outer", expiresAt: "2026-11-17T00:00:00Z", alertsLeft: ALERT_PLAN.maxAlerts },
+        precheck: async (r) => { v = await validateSubscribe(r.body, COINS); return v.error ? v : null; },
+        deliver: async () => { if (!v) v = await validateSubscribe(req.body, COINS); return v.error ? { error: v.error } : createSubscription(v); }
+    });
+});
+app.get('/api/alerts/:id', async (req, res) => {
+    const s = await getStatus(String(req.params.id));
+    return s ? res.json(s) : res.status(404).json({ error: 'unknown subscription' });
+});
+onWaveTrendRefresh(wt => onRefresh(wt).then(r => r && (r.sent || r.seeded) && console.log('[alerts]', JSON.stringify(r))));
+setInterval(() => getWaveTrend().catch(() => {}), 10 * 60 * 1000).unref();
+console.log('[alerts] persistence:', persistenceMode());
 app.get('/api/coin/:symbol', (req, res) => {
     const sym = String(req.params.symbol || '').toUpperCase();
     if (!COINS.includes(sym)) return res.status(404).json({ error: 'unknown symbol', supported: COINS });

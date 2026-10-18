@@ -18,6 +18,8 @@
 ## Signed responses
 - When enabled, paid responses carry X-GW8-Signature (base64 Ed25519 over "<X-GW8-Signed-At>.<sha256 hex of body>"), X-GW8-Signed-At and X-GW8-Body-SHA256. Public key: GET /api/proof/pubkey (free).
 
+- POST /api/alerts/subscribe ($0.50): webhook alerts for NEW green band dots for 30 days or 300 alerts. JSON body {"webhookUrl":"https://…","filter":"outer|inner|all","pairs":["BTC"]}. Invalid bodies are rejected before payment. Response includes subscriptionId and a one-time secret; each alert POST carries X-GW8-Signature: t=<unix>,v1=<HMAC-SHA256(secret, "<t>.<rawBody>")>. Status: GET /api/alerts/{subscriptionId}.
+
 ## Free
 - GET /api/proof/pubkey: signing public key.
 - GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.

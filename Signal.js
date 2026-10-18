@@ -54,9 +54,11 @@ async function run() {
   }
   return { asOf: new Date().toISOString(), core, others, bandDots, history };
 }
-async function getWaveTrend() {
+const refreshHooks = [];
+export function onWaveTrendRefresh(f) { refreshHooks.push(f); }
+export async function getWaveTrend() {
   if (cache && Date.now() - cache.t < CACHE_MS) return cache.data;
-  if (!inflight) inflight = run().then(d => { cache = { t: Date.now(), data: d }; return d; }).finally(() => { inflight = null; });
+  if (!inflight) inflight = run().then(d => { cache = { t: Date.now(), data: d }; for (const f of refreshHooks) Promise.resolve().then(() => f(d)).catch(() => {}); return d; }).finally(() => { inflight = null; });
   return cache ? cache.data : inflight; // serve stale while refreshing
 }
 

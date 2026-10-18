@@ -17,6 +17,7 @@ import { getRwa } from './rwa.js';
 import { mintPass, usePass, refundPass, revokePass, PASS_PLAN, tail } from './pass.js';
 import { getTrack, renderTrack, logDots } from './track.js';
 import { getKrakenListings, getKrakenStatus, snapshot as krakenSnapshot } from './kraken.js';
+import { getRules, getRulesStatus } from './rules.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
 
@@ -213,6 +214,7 @@ const PAID = [
     { path: '/api/rwa', method: 'get', price: '0.02', summary: 'RWA feed (tokenized treasuries, credit, stocks): top RWA protocols by TVL with 7d change and estimated flows, 7d movers, new launches (30d), yields, top RWA tokens by market cap, sources + timestamp (DefiLlama + CoinGecko, 10-min cache)' },
     { path: '/api/govcontracts', method: 'get', price: '0.02', summary: 'Recent (14-day) federal contract actions to AI, drone, nuclear, robotics, space, quantum and defense-tech companies from USAspending.gov, with curated tickers (private = null), amount, agency, date, description, award link; DoD daily announcements currently blocked from our host, so DoD awards appear only via USAspending (~90-day lag) (30-min cache)', query: { ticker: { type: 'string', description: 'Optional ticker, e.g. PLTR' }, sector: { type: 'string', enum: GOV_SECTORS }, q: { type: 'string', description: 'Optional keyword in recipient/description/agency' } } },
     { path: '/api/kraken/listings', method: 'get', price: '0.02', summary: 'New Kraken USD pairs (last 30 days): first-seen date, price, 24h volume, % since listing, WaveTrend 4h dot state, Kraken listing posts. Free health: /api/kraken/listings/status' },
+    { path: '/api/rules', method: 'get', price: '0.02', summary: 'CFTC + SEC crypto rule-change feed (90 days): ANPRM/NPRM/final/notice/press, RIN, comment deadlines, stage-change flags, per-source status. Free health: /api/rules/status' },
     { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to every paid data endpoint and MCP tool via header X-GW8-Pass (MCP arg "pass"). Fair use ${PASS_PLAN.dailyCap} calls per pass, ${PASS_PLAN.perMinute}/min. Excludes /api/alerts/subscribe. Token shown once; bearer-style (anyone holding it can use it)` },
     ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly brief: ${p.weeks} Monday issues by HMAC-signed webhook (regime, top dots, 7d hit rates, RWA, gov contracts; DoD awards lag ~90d)`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' } }, required: ['webhookUrl'] })),
     { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Green band-dot webhook alerts: ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts, HMAC-signed POSTs`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
@@ -245,7 +247,7 @@ function openApiDoc() {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.1.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call crypto market signals for AI agents via x402 (USDC on Base). Signal only, no trading.',
-            'x-guidance': 'Start with free GET /api/sample. Cheapest: GET /api/coin/{symbol} ($0.005). Full snapshot: POST /api/agent ($0.02). Backtest: GET /api/history ($0.05). Token safety: GET /api/verdict/{chain}/{address} ($0.02). Flows: GET /api/flows/{symbol} ($0.02). Daily brief: GET /api/brief ($0.05). RWA feed: GET /api/rwa ($0.02). Day pass: POST /api/pass/day ($1.00, 24h, send X-GW8-Pass header; fair use 2000 calls, 60/min; excludes alert subscriptions). Gov contracts: GET /api/govcontracts ($0.02, ?ticker= ?sector= ?q=). Kraken new listings: GET /api/kraken/listings ($0.02). Paid responses may be Ed25519-signed; key at /api/proof/pubkey. Pay by retrying with the PAYMENT-SIGNATURE header from the 402 challenge.' },
+            'x-guidance': 'Start with free GET /api/sample. Cheapest: GET /api/coin/{symbol} ($0.005). Full snapshot: POST /api/agent ($0.02). Backtest: GET /api/history ($0.05). Token safety: GET /api/verdict/{chain}/{address} ($0.02). Flows: GET /api/flows/{symbol} ($0.02). Daily brief: GET /api/brief ($0.05). RWA feed: GET /api/rwa ($0.02). Day pass: POST /api/pass/day ($1.00, 24h, send X-GW8-Pass header; fair use 2000 calls, 60/min; excludes alert subscriptions). Gov contracts: GET /api/govcontracts ($0.02, ?ticker= ?sector= ?q=). Kraken new listings: GET /api/kraken/listings ($0.02). Crypto rule changes (CFTC/SEC): GET /api/rules ($0.02). Paid responses may be Ed25519-signed; key at /api/proof/pubkey. Pay by retrying with the PAYMENT-SIGNATURE header from the 402 challenge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -310,6 +312,7 @@ async function buildMcp() {
     await paidTool('get_gov_contracts', 'Federal contract feed', '/api/govcontracts', 'GET', '0.02', 'Recent (14-day) US federal contract actions to AI, drone, nuclear, robotics, space, quantum and defense-tech companies (USAspending.gov), with tickers, amount, agency, date, description, award link. Optional ticker / sector / q filters. NOTE: the Department of War daily announcements source is currently blocked from our host (sourceStatus.dodAnnouncements=unavailable; check free GET /api/govcontracts/status), so DoD awards currently appear only via USAspending with a ~90-day lag.', { ticker: z.string().regex(/^[A-Za-z.]{1,6}$/).optional(), sector: z.enum(GOV_SECTORS).optional(), q: z.string().max(60).optional() },
         a => { const p = new URLSearchParams(); for (const k of ['ticker', 'sector', 'q']) if (a[k]) p.set(k, a[k]); const qs = p.toString(); return '/api/govcontracts' + (qs ? '?' + qs : ''); }, a => getGovContracts(a));
     await paidTool('get_kraken_listings', 'Kraken new USD listings', '/api/kraken/listings', 'GET', '0.02', 'New Kraken USD pairs from the last 30 days: first-seen date (our snapshot, or first Kraken daily candle for pairs older than our snapshots), price, 24h volume, % change since listing, WaveTrend 4h dot state, plus Kraken blog listing posts.', {}, undefined, () => getKrakenListings());
+    await paidTool('get_crypto_rules', 'Crypto rule-change feed (CFTC + SEC)', '/api/rules', 'GET', '0.02', 'CFTC and SEC crypto / digital-asset / stablecoin / tokenization rulemaking from the last 90 days: Federal Register docs (ANPRM/NPRM/final/notice) with RIN, comment deadline, stage-change flag and Unified Agenda presence, plus agency press releases. Each source labeled ok/unavailable; no stale fill.', {}, undefined, () => getRules());
     await paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.05', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.', {}, undefined, () => getBrief());
     m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
     return m;
@@ -330,7 +333,7 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
     description: 'Crypto market signals for AI agents: Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Free sample; paid endpoints via x402 (USDC on Base). Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'buy_day_pass', 'get_signing_pubkey'],
+    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'buy_day_pass', 'get_signing_pubkey'],
     dayPass: { endpoint: `${ORIGIN}/api/pass/day`, mcpTool: 'buy_day_pass', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass' },
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
@@ -548,7 +551,7 @@ app.get('/api/sample', async (req, res) => {
     catch (e) { res.status(503).json({ error: 'upstream data unavailable, retry shortly' }); }
 });
 
-app.use(['/api/agent', '/api/telemetry', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings'], signResponses);
+app.use(['/api/agent', '/api/telemetry', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules'], signResponses);
 app.all('/api/agent', handleX402Agent);
 app.all('/api/telemetry', handleX402Agent);
 
@@ -700,6 +703,15 @@ app.get('/api/kraken/listings', (req, res) => handleX402Agent(req, res, {
 }));
 setTimeout(() => krakenSnapshot().catch(() => {}), 60e3).unref();
 setInterval(() => krakenSnapshot().catch(() => {}), 30 * 60e3).unref();
+
+// Crypto rule-change feed (public keyless sources). Free status registered before the paid route.
+app.get('/api/rules/status', async (req, res) => { try { res.json(await getRulesStatus()); } catch { res.status(503).json({ status: 'unavailable' }); } });
+app.get('/api/rules', (req, res) => handleX402Agent(req, res, {
+    url: `${BASE_URL}/api/rules`, amount: "20000", name: "GW8 Crypto Rule-Change Feed (CFTC + SEC)",
+    description: "CFTC + SEC crypto rulemaking, last 90 days: Federal Register ANPRM/NPRM/final/notices with RIN, comment deadline and stage-change flag, plus press releases. Per-source status; no stale fill. Public data. $0.02.",
+    example: { count: 1, openComments: [{ rin: "3038-AF80", agency: "CFTC", docType: "ANPRM", commentDeadline: "2026-12-14" }], rows: [{ date: "2026-10-13", agency: "CFTC", docType: "ANPRM", title: "Regulation Crypto Asset Transactions and Regulation Crypto Asset Markets", rin: "3038-AF80", commentDeadline: "2026-12-14", link: "https://www.federalregister.gov/documents/2026/10/13/2026-20888/...", stageChange: { from: null, to: "ANPRM" } }] },
+    deliver: getRules
+}));
 
 initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))

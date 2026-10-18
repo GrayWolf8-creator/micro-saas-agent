@@ -6,6 +6,12 @@
 - wavetrend: LazyBear WaveTrend 10/21/4 on Kraken 4h closed candles for 66 USD pairs. core = BTC/ETH/SOL/LINK/XRP wt1/wt2; bandDots = every green (wt1<=-53, outer<=-60) / red (wt1>=53, outer>=60) cross in the last 6 bars, with name, bar time, close.
 - Data refreshes every 10 minutes; responses are served from cache (fast).
 
+## More paid endpoints
+- GET /api/history ($0.05, optional ?pair=BTC): rolling 90-day backtest of every band dot, recomputed live, with forward % change +4h/+24h/+3d and hit-rate summary. Green dots carry the edge (recent window: outer green dots ~64% higher after 3 days); red dots are near coin-flip, shown as-is. Past performance is not indicative of future results.
+- GET /api/regime ($0.01): full Stage 1 detail with raw values and rules.
+- GET /api/dots ($0.01): current band dots across 66 pairs.
+- GET /api/coin/:symbol ($0.005): WaveTrend 4h for one coin.
+
 ## Free
 - GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.
 

@@ -367,7 +367,7 @@ app.get('/api/history', (req, res) => {
     if (pair && !COINS.includes(pair)) return res.status(404).json({ error: 'unknown pair', supported: COINS });
     return handleX402Agent(req, res, {
         url: `${BASE_URL}/api/history`, amount: "50000", name: "GW8 WaveTrend Band-Dot History + Hit Rates (90d, 66 pairs)",
-        description: "90-day backtest of every LazyBear WaveTrend 10/21/4 band dot on 66 Kraken 4h USD pairs: pair, green/red, inner/outer, wt1/wt2, price at dot, forward % change +4h/+24h/+3d, and summary hit rates. Optional ?pair=BTC. $0.05.",
+        description: "Rolling 90-day backtest of WaveTrend 10/21/4 band dots on 66 Kraken 4h USD pairs, recomputed live. Green dots carry the edge (recent window: outer green dots ~64% higher after 3d); red dots are near coin-flip and reported honestly. Per dot: pair, green/red, inner/outer, wt1/wt2, price, forward % +4h/+24h/+3d, plus live hit-rate summary. Optional ?pair=BTC. $0.05.",
         example: { window: "90 days", summary: { green_all: { fwd24hPct: { n: 120, hitRatePct: 55.0, avgMovePct: 0.8 } } }, dots: [{ pair: "LINK/USD", kind: "green", band: "inner", bar: "2026-10-17T16:00:00.000Z", wt1: -54.8, wt2: -48.6, close: 11.2, fwd4hPct: 0.6, fwd24hPct: null, fwd3dPct: null }] },
         deliver: () => getHistory(pair)
     });

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import { JsonRpcProvider, Interface, formatUnits } from 'ethers';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { safeSignal, buildSample, getCoin, getDots, COINS } from './Signal.js';
+import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -361,6 +361,22 @@ app.get('/api/dots', (req, res) => handleX402Agent(req, res, {
     description: "Every LazyBear WaveTrend 10/21/4 oversold/overbought band cross (green<=-53, red>=+53) in the last 6 closed 4h bars across 66 Kraken USD pairs. $0.01.",
     example: { asOf: "2026-10-17T20:00:00Z", bandDots: [{ name: "LINK", kind: "green", band: "inner", wt1: -54.8, bar: "2026-10-17T16:00:00.000Z", close: 11.2 }] },
     deliver: getDots
+}));
+app.get('/api/history', (req, res) => {
+    const pair = req.query.pair ? String(req.query.pair).toUpperCase().replace(/\/USD$/, '') : null;
+    if (pair && !COINS.includes(pair)) return res.status(404).json({ error: 'unknown pair', supported: COINS });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/history`, amount: "50000", name: "GW8 WaveTrend Band-Dot History + Hit Rates (90d, 66 pairs)",
+        description: "90-day backtest of every LazyBear WaveTrend 10/21/4 band dot on 66 Kraken 4h USD pairs: pair, green/red, inner/outer, wt1/wt2, price at dot, forward % change +4h/+24h/+3d, and summary hit rates. Optional ?pair=BTC. $0.05.",
+        example: { window: "90 days", summary: { green_all: { fwd24hPct: { n: 120, hitRatePct: 55.0, avgMovePct: 0.8 } } }, dots: [{ pair: "LINK/USD", kind: "green", band: "inner", bar: "2026-10-17T16:00:00.000Z", wt1: -54.8, wt2: -48.6, close: 11.2, fwd4hPct: 0.6, fwd24hPct: null, fwd3dPct: null }] },
+        deliver: () => getHistory(pair)
+    });
+});
+app.get('/api/regime', (req, res) => handleX402Agent(req, res, {
+    url: `${BASE_URL}/api/regime`, amount: "10000", name: "GW8 Stage 1 Crypto Regime Check (detail)",
+    description: "Stage 1 crypto market regime score 0-4 with full detail: BTC spot ETF 3-day net flow (Farside), BTC quiet support vs 20-day low, alt breadth (ETH/SOL/LINK/XRP), Fear & Greed / weekend pump. Raw values and rules. $0.01.",
+    example: { score: 3, outOf: 4, checks: { btcQuietSupport: { status: "pass", detail: { pctAboveLow: 2.1, avgRange3dPct: 2.4 }, rule: "..." } } },
+    deliver: getRegime
 }));
 app.get('/api/coin/:symbol', (req, res) => {
     const sym = String(req.params.symbol || '').toUpperCase();

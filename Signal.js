@@ -28,18 +28,31 @@ function compute(name, rows) {
     if (up && wt1[i] <= -53) dots.push({ ...base, kind: 'green', band: wt1[i] <= -60 ? 'outer' : 'inner' });
     if (dn && wt1[i] >= 53) dots.push({ ...base, kind: 'red', band: wt1[i] >= 60 ? 'outer' : 'inner' });
   }
-  return { name, barOpen: new Date(ts[n-1] * 1000).toISOString(), close: c[n-1], wt1: r2(wt1[n-1]), wt2: r2(wt2[n-1]), prevWt1: r2(wt1[n-2]), prevWt2: r2(wt2[n-2]), dots };
+  const hist = [], cutoff = ts[n-1] - 90 * 86400, fw = k => (i, sgn) => i + k < n ? r2((c[i+k] / c[i] - 1) * 100) : null;
+  const H = [[1, 'fwd4hPct'], [6, 'fwd24hPct'], [18, 'fwd3dPct']];
+  for (let i = 4; i < n; i++) {
+    if (ts[i] < cutoff) continue;
+    const up = wt1[i-1] <= wt2[i-1] && wt1[i] > wt2[i], dn = wt1[i-1] >= wt2[i-1] && wt1[i] < wt2[i];
+    let kind = null, band = null;
+    if (up && wt1[i] <= -53) { kind = 'green'; band = wt1[i] <= -60 ? 'outer' : 'inner'; }
+    if (dn && wt1[i] >= 53) { kind = 'red'; band = wt1[i] >= 60 ? 'outer' : 'inner'; }
+    if (!kind) continue;
+    const e = { pair: name + '/USD', kind, band, bar: new Date(ts[i] * 1000).toISOString(), wt1: r2(wt1[i]), wt2: r2(wt2[i]), close: c[i] };
+    for (const [k, key] of H) e[key] = fw(k)(i);
+    hist.push(e);
+  }
+  return { history: hist, name, barOpen: new Date(ts[n-1] * 1000).toISOString(), close: c[n-1], wt1: r2(wt1[n-1]), wt2: r2(wt2[n-1]), prevWt1: r2(wt1[n-2]), prevWt2: r2(wt2[n-2]), dots };
 }
 async function run() {
-  const core = [], others = [], bandDots = [];
+  const core = [], others = [], bandDots = [], history = [];
   for (const [name, pair] of Object.entries(PAIRS)) {
     let rec;
-    try { rec = compute(name, await fetchOHLC(pair, 240)); bandDots.push(...rec.dots); }
+    try { rec = compute(name, await fetchOHLC(pair, 240)); bandDots.push(...rec.dots); history.push(...rec.history); delete rec.history; }
     catch (e) { rec = { name, error: String(e.message || e) }; }
     (CORE.includes(name) ? core : others).push(rec);
     await sleep(THROTTLE_MS);
   }
-  return { asOf: new Date().toISOString(), core, others, bandDots };
+  return { asOf: new Date().toISOString(), core, others, bandDots, history };
 }
 async function getWaveTrend() {
   if (cache && Date.now() - cache.t < CACHE_MS) return cache.data;
@@ -115,6 +128,32 @@ async function getStage1() {
 
 // ---------- Public API ----------
 export const COINS = Object.keys(PAIRS);
+function hitRates(h) {
+  const out = {};
+  for (const kind of ['green', 'red']) for (const band of ['inner', 'outer', 'all']) {
+    const s = h.filter(x => x.kind === kind && (band === 'all' || x.band === band)), r = {};
+    for (const key of ['fwd4hPct', 'fwd24hPct', 'fwd3dPct']) {
+      const v = s.map(x => x[key]).filter(x => x !== null);
+      const hits = v.filter(x => kind === 'green' ? x > 0 : x < 0).length;
+      r[key] = v.length ? { n: v.length, hitRatePct: Math.round(hits / v.length * 1000) / 10, avgMovePct: Math.round(v.reduce((a, b) => a + b, 0) / v.length * 100) / 100 } : { n: 0 };
+    }
+    out[`${kind}_${band}`] = r;
+  }
+  return out;
+}
+export async function getHistory(pair) {
+  try {
+    const wt = await getWaveTrend();
+    let h = wt.history || [];
+    if (pair) h = h.filter(x => x.pair === pair.toUpperCase() + '/USD' || x.pair === pair.toUpperCase());
+    h = [...h].sort((a, b) => b.bar.localeCompare(a.bar));
+    return { asOf: wt.asOf, window: '90 days, Kraken 4h closed candles', hitDefinition: 'green = price higher after N, red = price lower after N', summary: hitRates(h), count: h.length, dots: h, disclaimer: 'signal only, past performance is not indicative of future results, not financial advice' };
+  } catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+}
+export async function getRegime() {
+  try { const s = await getStage1(); return { ...s, disclaimer: 'signal only, not financial advice' }; }
+  catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+}
 export async function getDots() {
   try { const wt = await getWaveTrend(); return { asOf: wt.asOf, bandDots: wt.bandDots, disclaimer: 'signal only, not financial advice' }; }
   catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }

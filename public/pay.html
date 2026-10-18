@@ -23,7 +23,11 @@ button:disabled{background:#374151;color:#9ca3af}select{width:100%;font-size:18p
 <option value="/api/rwa|GET">/api/rwa — $0.02</option>
 <option value="/api/govcontracts|GET">/api/govcontracts — $0.02</option>
 <option value="/api/pass/day|POST">/api/pass/day — $1.00</option>
+<option value="/api/brief/weekly/subscribe|POST">/api/brief/weekly/subscribe — $0.25 (needs webhook)</option>
+<option value="/api/alerts/subscribe|POST">/api/alerts/subscribe — $0.50 (needs webhook)</option>
 </select>
+<label>Webhook URL (only for subscribe options)</label>
+<input id="hook" type="url" placeholder="https://webhook.site/..." style="width:100%;font-size:16px;padding:12px;border-radius:10px;box-sizing:border-box">
 <button id="connect">1. Connect wallet</button>
 <button id="pay" disabled>2. Sign &amp; pay</button>
 <div id="status" class="box">Not connected.</div>
@@ -77,8 +81,9 @@ async function usdcBalance(a) {
   const r = await eth.request({ method: 'eth_call', params: [{ to: USDC, data }, 'latest'] });
   return Number(BigInt(r)) / 1e6;
 }
+function postBody() { const h = $('hook').value.trim(); return JSON.stringify(h ? { webhookUrl: h } : {}); }
 async function challenge(path, method) {
-  const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+  const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? postBody() : undefined });
   if (r.status !== 402) throw new Error('Expected 402, got ' + r.status);
   const h = r.headers.get('PAYMENT-REQUIRED');
   return h ? unb64(h) : await r.json();
@@ -123,7 +128,7 @@ $('pay').onclick = async () => {
     const signature = await eth.request({ method: 'eth_signTypedData_v4', params: [acct, JSON.stringify(typed)] });
     const paymentPayload = { x402Version: 2, payload: { authorization, signature }, extensions: pr.extensions, resource: pr.resource, accepted: req };
     say('Signed. Settling payment (can take up to a minute on a cold start)…');
-    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? '{}' : undefined });
+    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? postBody() : undefined });
     const j = await r.json().catch(() => ({}));
     let tx = j.settlement && j.settlement.transaction;
     const ph = r.headers.get('PAYMENT-RESPONSE'); if (!tx && ph) try { tx = unb64(ph).transaction; } catch {}

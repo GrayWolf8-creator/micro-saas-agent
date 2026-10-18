@@ -17,6 +17,7 @@ import { getRwa } from './rwa.js';
 import { mintPass, usePass, refundPass, revokePass, PASS_PLAN, tail } from './pass.js';
 import { getTrack, renderTrack, logDots } from './track.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
+import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -211,6 +212,7 @@ const PAID = [
     { path: '/api/rwa', method: 'get', price: '0.02', summary: 'RWA feed (tokenized treasuries, credit, stocks): top RWA protocols by TVL with 7d change and estimated flows, 7d movers, new launches (30d), yields, top RWA tokens by market cap, sources + timestamp (DefiLlama + CoinGecko, 10-min cache)' },
     { path: '/api/govcontracts', method: 'get', price: '0.02', summary: 'Recent (14-day) federal contract actions to AI, drone, nuclear, robotics, space, quantum and defense-tech companies from USAspending.gov, with curated tickers (private = null), amount, agency, date, description, award link; DoD daily announcements currently blocked from our host, so DoD awards appear only via USAspending (~90-day lag) (30-min cache)', query: { ticker: { type: 'string', description: 'Optional ticker, e.g. PLTR' }, sector: { type: 'string', enum: GOV_SECTORS }, q: { type: 'string', description: 'Optional keyword in recipient/description/agency' } } },
     { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to every paid data endpoint and MCP tool via header X-GW8-Pass (MCP arg "pass"). Fair use ${PASS_PLAN.dailyCap} calls per pass, ${PASS_PLAN.perMinute}/min. Excludes /api/alerts/subscribe. Token shown once; bearer-style (anyone holding it can use it)` },
+    ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly brief: ${p.weeks} Monday issues by HMAC-signed webhook (regime, top dots, 7d hit rates, RWA, gov contracts; DoD awards lag ~90d)`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' } }, required: ['webhookUrl'] })),
     { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Green band-dot webhook alerts: ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts, HMAC-signed POSTs`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
 ];
 function openApiDoc() {
@@ -266,7 +268,7 @@ async function buildMcp() {
     m.registerTool('get_sample', { title: 'Free live sample', description: 'Free: Stage 1 regime statuses, core WaveTrend 4h values (BTC/ETH/SOL/LINK/XRP) and band-dot count. Signal only, not financial advice.', inputSchema: {} },
         async () => { try { return txt(await buildSample()); } catch (e) { return mcpErr('upstream data unavailable, retry shortly'); } });
     m.registerTool('list_paid_endpoints', { title: 'Paid x402 endpoints', description: 'Lists paid x402 endpoints (USDC on Base, eip155:8453) with method, URL and USD price. Paid MCP tools also accept x402 payment in-band (@x402/mcp).', inputSchema: {} },
-        async () => txt({ protocol: 'x402 v2', network: 'eip155:8453', asset: 'USDC', mcpPayments: mcpPayMode().mode, dayPass: { url: ORIGIN + '/api/pass/day', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass', excludes: ['/api/alerts/subscribe'] }, openapi: `${ORIGIN}/openapi.json`, endpoints: PAID.map(p => ({ method: p.method.toUpperCase(), url: ORIGIN + p.path, priceUsd: p.price, summary: p.summary })) }));
+        async () => txt({ protocol: 'x402 v2', network: 'eip155:8453', asset: 'USDC', mcpPayments: mcpPayMode().mode, dayPass: { url: ORIGIN + '/api/pass/day', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass', excludes: ['/api/alerts/subscribe', ...Object.values(WEEKLY_PLANS).map(p => p.path)] }, openapi: `${ORIGIN}/openapi.json`, endpoints: PAID.map(p => ({ method: p.method.toUpperCase(), url: ORIGIN + p.path, priceUsd: p.price, summary: p.summary })) }));
     // deliver(a) returns the paid data (or {error} -> isError, which skips settlement so the buyer is not charged).
     // precheck(a) runs before any payment is requested; return an error string to refuse without charging.
     const paidTool = async (name, title, path, method, price, desc, schema = {}, build = () => path, deliver, precheck, opts = {}) => {
@@ -586,6 +588,24 @@ app.post('/api/alerts/subscribe', (req, res) => {
         rollback: out => cancelSubscription(out && out.subscriptionId)
     });
 });
+for (const plan of Object.values(WEEKLY_PLANS)) app.post(plan.path, (req, res) => {
+    let v = null;
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}${plan.path}`, method: "POST", amount: plan.amount, noPass: true,
+        name: `GW8 Weekly Brief (${plan.weeks} weeks, webhook)`,
+        description: `${plan.weeks} Monday issues to your https webhook, HMAC-signed: regime, top dots, 7d dot hit rates, RWA and US contract highlights. Undelivered weeks not counted. $${plan.priceUsd}.`,
+        inputProps: { webhookUrl: { type: "string", description: "public https URL" } },
+        example: { subscriptionId: "wk_…", secret: "whsec_…", plan: plan.id, issuesLeft: plan.weeks, expiresAt: "2026-11-22T00:00:00Z" },
+        precheck: async (r) => { v = await validateWeekly(r.body); return v.error ? v : null; },
+        deliver: async () => { if (!v) v = await validateWeekly(req.body); return v.error ? { error: v.error } : createWeekly(v, plan); },
+        rollback: out => cancelWeekly(out && out.subscriptionId)
+    });
+});
+app.get('/api/brief/weekly/:id', async (req, res) => {
+    const s = await getWeeklyStatus(String(req.params.id));
+    return s ? res.json(s) : res.status(404).json({ error: 'unknown subscription' });
+});
+setInterval(() => weeklyTick().then(r => r && r.sent && console.log('[weekly]', JSON.stringify(r))).catch(() => {}), 10 * 60 * 1000).unref();
 app.post('/api/pass/day', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/pass/day`, method: "POST", amount: PASS_PLAN.amount, noPass: true,
     name: "GW8 Day Pass (24h, all paid data endpoints)",

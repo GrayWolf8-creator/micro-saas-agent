@@ -658,8 +658,8 @@ app.get('/api/govcontracts', (req, res) => {
     const bad = validGovFilters(f);
     if (bad) return res.status(400).json({ error: bad, sectors: GOV_SECTORS });
     return handleX402Agent(req, res, {
-        url: `${BASE_URL}/api/govcontracts`, amount: "20000", name: "GW8 Federal Contract Feed (AI, drones, nuclear, robotics, space, quantum, defense tech)",
-        description: "Recent (14-day) US federal contract actions (USAspending.gov by action date + Department of War daily contract announcements >= $7.5M) to AI, drone, nuclear, robotics, space, quantum and defense-tech companies from USAspending.gov: amount, agency, recipient, curated ticker (private = null), date, description, award link, per-company totals. Optional ?ticker= ?sector= ?q=. DoD data lags ~90 days on USAspending. 30-min cache. NOTE: the Department of War daily announcements source is currently blocked from our host (sourceStatus.dodAnnouncements=unavailable; check free GET /api/govcontracts/status), so DoD awards currently appear only via USAspending with a ~90-day lag. $0.02.",
+        url: `${BASE_URL}/api/govcontracts`, amount: "20000", name: "GW8 Federal Contract Feed",
+        description: "Recent (14-day) US federal contract actions to AI, drone, nuclear, robotics, space, quantum and defense-tech companies, from USAspending.gov. Optional ?ticker= ?sector= ?q=. DoD awards lag ~90 days (DoD daily announcements unavailable from our host). $0.02.",
         inputProps: { ticker: { type: "string", example: "PLTR" }, sector: { type: "string", enum: GOV_SECTORS }, q: { type: "string", example: "NASA" } },
         example: { window: { start: "2026-10-04", end: "2026-10-18" }, count: 1, awards: [{ date: "2026-10-08", recipient: "...", ticker: "BAH", amountUsd: 1, agency: "General Services Administration", link: "https://www.usaspending.gov/award/..." }] },
         deliver: () => getGovContracts(f).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))

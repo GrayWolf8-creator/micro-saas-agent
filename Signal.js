@@ -128,6 +128,7 @@ async function getStage1() {
 
 // ---------- Public API ----------
 export const COINS = Object.keys(PAIRS);
+export const PAIRS_MAP = PAIRS;
 function hitRates(h) {
   const out = {};
   for (const kind of ['green', 'red']) for (const band of ['inner', 'outer', 'all']) {

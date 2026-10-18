@@ -9,6 +9,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
+import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_RULES, getFlows, getBrief, signResponses, publicKeyInfo } from './upgrades.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -195,17 +196,22 @@ const PAID = [
     { path: '/api/history', method: 'get', price: '0.05', summary: 'Rolling 90-day band-dot backtest with forward +4h/+24h/+3d moves and live hit rates (green dots carry the edge; red dots near coin-flip)', query: { pair: { type: 'string', description: 'Optional coin symbol, e.g. BTC' } } },
     { path: '/api/regime', method: 'get', price: '0.01', summary: 'Stage 1 crypto regime check detail (ETF flows, BTC support, alt breadth, Fear & Greed)' },
     { path: '/api/dots', method: 'get', price: '0.01', summary: 'Current WaveTrend band dots across 66 Kraken 4h USD pairs' },
-    { path: '/api/coin/{symbol}', method: 'get', price: '0.005', summary: 'WaveTrend 4h snapshot for one coin', pathParam: true }
+    { path: '/api/coin/{symbol}', method: 'get', price: '0.005', summary: 'WaveTrend 4h snapshot for one coin', pathParam: true },
+    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.02', summary: 'Token safety verdict: score 0-100, safe/caution/danger, reasons and source URLs (GoPlus + DexScreener, fixed published rules, 10-min cache)', params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS) }, address: { type: 'string', description: 'Token contract (0x...) or Solana mint' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
+    { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Large-print flow summary from Kraken public trades (single venue, not on-chain) joined with the coin WaveTrend 4h dot state', pathParam: true, ex: '/api/flows/BTC' },
+    { path: '/api/brief', method: 'get', price: '0.05', summary: 'Daily brief (built once per Mountain Time day): regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flow summary' }
 ];
 function openApiDoc() {
     const paths = {};
     for (const p of PAID) {
         const parameters = [];
         if (p.pathParam) parameters.push({ name: 'symbol', in: 'path', required: true, schema: { type: 'string', enum: COINS } });
+        for (const [name, schema] of Object.entries(p.params || {})) parameters.push({ name, in: 'path', required: true, schema });
         for (const [name, schema] of Object.entries(p.query || {})) parameters.push({ name, in: 'query', required: false, schema });
         paths[p.path] = { [p.method]: {
             operationId: p.path.replace(/[^a-z]/gi, '_'),
             summary: p.summary,
+            security: [],
             ...(parameters.length ? { parameters } : {}),
             ...(p.method === 'post' ? { requestBody: { required: false, content: { 'application/json': { schema: { type: 'object', properties: {} } } } } } : {}),
             'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
@@ -215,12 +221,13 @@ function openApiDoc() {
             }
         } };
     }
+    paths['/api/proof/pubkey'] = { get: { operationId: 'proof_pubkey', summary: 'Free: Ed25519 public key used to sign paid responses (X-GW8-Signature, X-GW8-Signed-At, X-GW8-Body-SHA256)', security: [], responses: { '200': { description: 'Public key JSON' } } } };
     paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample', security: [], responses: { '200': { description: 'Sample JSON' } } } };
     return {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.1.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call crypto market signals for AI agents via x402 (USDC on Base). Signal only, no trading.',
-            'x-guidance': 'Start with free GET /api/sample. Cheapest: GET /api/coin/{symbol} ($0.005). Full snapshot: POST /api/agent ($0.02). Backtest: GET /api/history ($0.05). Pay by retrying with the PAYMENT-SIGNATURE header from the 402 challenge.' },
+            'x-guidance': 'Start with free GET /api/sample. Cheapest: GET /api/coin/{symbol} ($0.005). Full snapshot: POST /api/agent ($0.02). Backtest: GET /api/history ($0.05). Token safety: GET /api/verdict/{chain}/{address} ($0.02). Flows: GET /api/flows/{symbol} ($0.02). Daily brief: GET /api/brief ($0.05). Paid responses may be Ed25519-signed; key at /api/proof/pubkey. Pay by retrying with the PAYMENT-SIGNATURE header from the 402 challenge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -229,7 +236,7 @@ app.get(['/favicon.ico', '/favicon.svg'], (req, res) => res.type('image/svg+xml'
 app.get('/openapi.json', (req, res) => res.json(openApiDoc()));
 app.get('/.well-known/x402', (req, res) => res.json({
     version: 1,
-    resources: PAID.map(p => `https://micro-saas-agent.onrender.com${p.path.replace('{symbol}', 'BTC')}`),
+    resources: PAID.map(p => `https://micro-saas-agent.onrender.com${(p.ex || p.path.replace('{symbol}', 'BTC'))}`),
     instructions: 'See /openapi.json and /llms.txt'
 }));
 
@@ -251,6 +258,10 @@ function buildMcp() {
     paidTool('get_regime', 'Stage 1 regime detail', '/api/regime', 'GET', '0.01', 'Stage 1 crypto regime check with raw values and rules.');
     paidTool('get_coin', 'WaveTrend for one coin', '/api/coin/{symbol}', 'GET', '0.005', 'WaveTrend 4h snapshot for one coin.', { symbol: z.enum(COINS) }, a => `/api/coin/${a.symbol}`);
     paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history');
+    paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.02', 'Is this token safe? Score 0-100, safe/caution/danger, reasons, sources (GoPlus + DexScreener, fixed rules).', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string() }, a => `/api/verdict/${a.chain}/${a.address}`);
+    paidTool('get_flows', 'Large-print flows + dot state', '/api/flows/{symbol}', 'GET', '0.02', 'Kraken large-print buy/sell summary (single venue, not on-chain) joined with WaveTrend 4h state.', { symbol: z.enum(COINS) }, a => `/api/flows/${a.symbol}`);
+    paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.05', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.');
+    m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
     return m;
 }
 app.post('/mcp', async (req, res) => {
@@ -455,6 +466,7 @@ app.get('/api/sample', async (req, res) => {
     catch (e) { res.status(503).json({ error: 'upstream data unavailable, retry shortly' }); }
 });
 
+app.use(['/api/agent', '/api/telemetry', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief'], signResponses);
 app.all('/api/agent', handleX402Agent);
 app.all('/api/telemetry', handleX402Agent);
 
@@ -493,6 +505,36 @@ app.get('/api/coin/:symbol', (req, res) => {
         deliver: () => getCoin(sym)
     });
 });
+
+// Upgrades-4: token verdict, flows, daily brief (signal only, public data)
+app.get('/api/proof/pubkey', (req, res) => res.json(publicKeyInfo()));
+app.get('/api/verdict/:chain/:address', (req, res) => {
+    const chain = String(req.params.chain).toLowerCase(), address = String(req.params.address);
+    const bad = validVerdictInput(chain, address);
+    if (bad) return res.status(400).json({ error: bad, chains: Object.keys(VERDICT_CHAINS) });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/verdict/${chain}/${address}`, amount: "20000", name: "GW8 Token Safety Verdict (GoPlus + DexScreener)",
+        description: "Is this token safe? Score 0-100 and verdict safe/caution/danger with reasons and source URLs, from GoPlus token security + DexScreener liquidity using fixed published rules. Chains: base, ethereum, bsc, arbitrum, solana. 10-min cache. $0.02.",
+        example: { chain: "base", address: "0x...", score: 85, verdict: "safe", reasons: ["-15: mintable"], sources: ["https://api.gopluslabs.io/...", "https://api.dexscreener.com/..."] },
+        deliver: () => getVerdict(chain, address).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
+    });
+});
+app.get('/api/flows/:symbol', (req, res) => {
+    const sym = String(req.params.symbol || '').toUpperCase();
+    if (!COINS.includes(sym)) return res.status(404).json({ error: 'unknown symbol', supported: COINS });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/flows/${sym}`, amount: "20000", name: `GW8 Large-Print Flows + WaveTrend: ${sym}/USD`,
+        description: `Large-print buy vs sell summary for ${sym}/USD from Kraken public trades (last 1000 prints; single venue, not on-chain whale wallets) joined with WaveTrend 10/21/4 4h state. $0.02.`,
+        example: { symbol: sym, flows: { largePrints: { count: 12, buyUsd: 420000, sellUsd: 180000, netUsd: 240000 }, bias: "large buyers dominant" }, wavetrend: { wt1: -41.2, wt2: -38.9, zone: "neutral" } },
+        deliver: () => getFlows(sym).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
+    });
+});
+app.get('/api/brief', (req, res) => handleX402Agent(req, res, {
+    url: `${BASE_URL}/api/brief`, amount: "50000", name: "GW8 Daily Crypto Brief",
+    description: "Once-per-day (Mountain Time) brief: Stage 1 regime, band-dot counts, top 10 coins by WaveTrend dot strength, BTC/ETH/SOL Kraken large-print flows, with honest notes. $0.05.",
+    example: { date: "2026-10-17", regime: { score: 3, outOf: 4 }, dots: { green: 5, red: 2 }, top10ByDotStrength: [{ name: "LINK", kind: "green", strength: 68.5 }], flowsSummary: [{ symbol: "BTC", bias: "balanced" }] },
+    deliver: getBrief
+}));
 
 app.listen(PORT, () => {
     console.log(`GW8 Capital x402 v2 Gateway online on port ${PORT}`);

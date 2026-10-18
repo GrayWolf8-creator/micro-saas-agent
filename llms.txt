@@ -11,8 +11,15 @@
 - GET /api/regime ($0.01): full Stage 1 detail with raw values and rules.
 - GET /api/dots ($0.01): current band dots across 66 pairs.
 - GET /api/coin/:symbol ($0.005): WaveTrend 4h for one coin.
+- GET /api/verdict/:chain/:address ($0.02): token safety verdict. score 0-100, verdict safe (>=75) / caution (40-74) / danger (<40), reasons[], sources[] (GoPlus token security + DexScreener), fixed published rules, 10-min cache. Chains: base, ethereum, bsc, arbitrum, solana. Automated screen, not a guarantee.
+- GET /api/flows/:symbol ($0.02): large-print buy vs sell summary from Kraken public trades (last 1000 prints, threshold max($10k, 95th pct)) joined with WaveTrend 4h state. Single venue only: not on-chain whale wallets, not other exchanges.
+- GET /api/brief ($0.05): daily brief built once per Mountain Time day: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.
+
+## Signed responses
+- When enabled, paid responses carry X-GW8-Signature (base64 Ed25519 over "<X-GW8-Signed-At>.<sha256 hex of body>"), X-GW8-Signed-At and X-GW8-Body-SHA256. Public key: GET /api/proof/pubkey (free).
 
 ## Free
+- GET /api/proof/pubkey: signing public key.
 - GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.
 
 ## Payment

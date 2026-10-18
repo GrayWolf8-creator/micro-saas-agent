@@ -94,6 +94,7 @@ $('connect').onclick = async () => {
 $('pay').onclick = async () => {
   const [path, method] = $('ep').value.split('|');
   $('pay').disabled = true; $('out').innerHTML = '';
+  say('Starting… asking server for the price');
   try {
     await ensureBase();
     const pr = await challenge(path, method), req = pr.accepts[0];
@@ -102,7 +103,7 @@ $('pay').onclick = async () => {
     if (!req.extra || !req.extra.name || !req.extra.version) throw new Error('Missing EIP-712 domain in challenge');
     if (acct.toLowerCase() === req.payTo.toLowerCase()) throw new Error('Connected wallet is the payout wallet');
     const usd = Number(req.amount) / 1e6;
-    if (!confirm(`Pay ${usd} USDC to ${req.payTo} for ${path}?`)) { $('pay').disabled = false; return; }
+    say(`Price ${usd} USDC to ${req.payTo}. Opening your wallet to sign…`);
     const now = Math.floor(Date.now() / 1000);
     const authorization = { from: acct, to: req.payTo, value: String(req.amount), validAfter: '0', validBefore: String(now + req.maxTimeoutSeconds), nonce: hex(32) };
     const typed = {

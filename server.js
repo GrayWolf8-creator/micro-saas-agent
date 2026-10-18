@@ -5,6 +5,9 @@ import { fileURLToPath } from 'url';
 import { JsonRpcProvider, Interface, formatUnits } from 'ethers';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
 import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -228,6 +231,46 @@ app.get('/.well-known/x402', (req, res) => res.json({
     version: 1,
     resources: PAID.map(p => `https://micro-saas-agent.onrender.com${p.path.replace('{symbol}', 'BTC')}`),
     instructions: 'See /openapi.json and /llms.txt'
+}));
+
+// MCP (remote, streamable HTTP, stateless). Free tools return data; paid tools return the x402 HTTP
+// endpoint + price so x402-capable agents pay over HTTP. No payment logic lives here.
+const ORIGIN = 'https://micro-saas-agent.onrender.com';
+function buildMcp() {
+    const m = new McpServer({ name: 'gw8-crypto-signal', version: '1.1.0' });
+    const txt = o => ({ content: [{ type: 'text', text: JSON.stringify(o) }], structuredContent: o });
+    m.registerTool('get_sample', { title: 'Free live sample', description: 'Free: Stage 1 regime statuses, core WaveTrend 4h values (BTC/ETH/SOL/LINK/XRP) and band-dot count. Signal only, not financial advice.', inputSchema: {} },
+        async () => { try { return txt(await buildSample()); } catch (e) { return { isError: true, content: [{ type: 'text', text: 'upstream data unavailable, retry shortly' }] }; } });
+    m.registerTool('list_paid_endpoints', { title: 'Paid x402 endpoints', description: 'Lists paid x402 endpoints (USDC on Base, eip155:8453) with method, URL and USD price. Call them over HTTP with an x402 client (e.g. @x402/fetch).', inputSchema: {} },
+        async () => txt({ protocol: 'x402 v2', network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, endpoints: PAID.map(p => ({ method: p.method.toUpperCase(), url: ORIGIN + p.path, priceUsd: p.price, summary: p.summary })) }));
+    const paidTool = (name, title, path, method, price, desc, schema = {}, build = () => path) =>
+        m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base via x402. Returns the endpoint to call with an x402 client.`, inputSchema: schema },
+            async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).' }));
+    paidTool('get_full_signal', 'Full signal', '/api/agent', 'POST', '0.02', 'Stage 1 regime score + WaveTrend 10/21/4 on 66 Kraken 4h pairs with all band dots.');
+    paidTool('get_band_dots', 'Band dots', '/api/dots', 'GET', '0.01', 'Current WaveTrend band dots across 66 Kraken 4h USD pairs.');
+    paidTool('get_regime', 'Stage 1 regime detail', '/api/regime', 'GET', '0.01', 'Stage 1 crypto regime check with raw values and rules.');
+    paidTool('get_coin', 'WaveTrend for one coin', '/api/coin/{symbol}', 'GET', '0.005', 'WaveTrend 4h snapshot for one coin.', { symbol: z.enum(COINS) }, a => `/api/coin/${a.symbol}`);
+    paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history');
+    return m;
+}
+app.post('/mcp', async (req, res) => {
+    try {
+        const server = buildMcp();
+        const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+        res.on('close', () => { transport.close(); server.close(); });
+        await server.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+    } catch (e) {
+        if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
+    }
+});
+app.get('/mcp', (req, res) => res.status(405).set('Allow', 'POST').json({ error: 'Use POST (MCP streamable HTTP, stateless)' }));
+app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.json'], (req, res) => res.json({
+    name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.1.0',
+    description: 'Crypto market signals for AI agents: Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Free sample; paid endpoints via x402 (USDC on Base). Signal only, no trading.',
+    transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
+    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history'],
+    payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json` }
 }));
 
 // 3. Ingestion Route

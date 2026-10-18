@@ -1,19 +1,7 @@
 {
-  "schema_version": "1.0",
-  "name": "gw8-base-signal-agent",
-  "description": "Real-time algorithmic trading signals (BUY/SELL/HOLD) verified on-chain via x402 0.05 USDC micropayments on Base.",
-  "tools": [
-    {
-      "name": "get_market_signal",
-      "description": "Retrieves the latest verified market signal for target assets.",
-      "endpoint": "https://your-render-service.onrender.com/api/agent",
-      "method": "POST",
-      "payment": {
-        "protocol": "x402",
-        "network": "base-mainnet",
-        "asset": "USDC",
-        "amount": "0.05"
-      }
-    }
-  ]
+  "name": "gw8-crypto-signal",
+  "description": "Crypto market signals for AI agents (Stage 1 regime + WaveTrend band dots, 66 Kraken 4h pairs). Free sample; paid endpoints via x402, USDC on Base. Signal only.",
+  "transport": { "type": "streamable-http", "url": "https://micro-saas-agent.onrender.com/mcp" },
+  "manifest": "https://micro-saas-agent.onrender.com/.well-known/mcp.json",
+  "openapi": "https://micro-saas-agent.onrender.com/openapi.json"
 }

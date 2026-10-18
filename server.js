@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { ALERT_PLAN, validateSubscribe, createSubscription, getStatus, onRefresh, persistenceMode } from './alerts.js';
 import { onWaveTrendRefresh, getWaveTrend } from './Signal.js';
 import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
+import { initMcpPayments, paidWrapper, mcpPayMode } from './mcp_pay.js';
 import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_RULES, getFlows, getBrief, signResponses, publicKeyInfo } from './upgrades.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -243,34 +244,53 @@ app.get('/.well-known/x402', (req, res) => res.json({
     instructions: 'See /openapi.json and /llms.txt'
 }));
 
-// MCP (remote, streamable HTTP, stateless). Free tools return data; paid tools return the x402 HTTP
-// endpoint + price so x402-capable agents pay over HTTP. No payment logic lives here.
+// MCP (remote, streamable HTTP, stateless). Free tools return data. Paid tools take x402 payment in-band
+// (via @x402/mcp, _meta["x402/payment"]) when the facilitator is configured; otherwise they fall back to
+// returning the x402 HTTP endpoint + price so x402-capable agents pay over HTTP.
 const ORIGIN = 'https://micro-saas-agent.onrender.com';
-function buildMcp() {
-    const m = new McpServer({ name: 'gw8-crypto-signal', version: '1.1.0' });
-    const txt = o => ({ content: [{ type: 'text', text: JSON.stringify(o) }], structuredContent: o });
+const mcpOk = o => ({ content: [{ type: 'text', text: JSON.stringify(o) }], structuredContent: o });
+const mcpErr = msg => ({ isError: true, content: [{ type: 'text', text: msg }] });
+async function buildMcp() {
+    const m = new McpServer({ name: 'gw8-crypto-signal', version: '1.2.0' });
+    const txt = mcpOk;
     m.registerTool('get_sample', { title: 'Free live sample', description: 'Free: Stage 1 regime statuses, core WaveTrend 4h values (BTC/ETH/SOL/LINK/XRP) and band-dot count. Signal only, not financial advice.', inputSchema: {} },
-        async () => { try { return txt(await buildSample()); } catch (e) { return { isError: true, content: [{ type: 'text', text: 'upstream data unavailable, retry shortly' }] }; } });
-    m.registerTool('list_paid_endpoints', { title: 'Paid x402 endpoints', description: 'Lists paid x402 endpoints (USDC on Base, eip155:8453) with method, URL and USD price. Call them over HTTP with an x402 client (e.g. @x402/fetch).', inputSchema: {} },
-        async () => txt({ protocol: 'x402 v2', network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, endpoints: PAID.map(p => ({ method: p.method.toUpperCase(), url: ORIGIN + p.path, priceUsd: p.price, summary: p.summary })) }));
-    const paidTool = (name, title, path, method, price, desc, schema = {}, build = () => path) =>
-        m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base via x402. Returns the endpoint to call with an x402 client.`, inputSchema: schema },
-            async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).' }));
-    paidTool('get_full_signal', 'Full signal', '/api/agent', 'POST', '0.02', 'Stage 1 regime score + WaveTrend 10/21/4 on 66 Kraken 4h pairs with all band dots.');
-    paidTool('get_band_dots', 'Band dots', '/api/dots', 'GET', '0.01', 'Current WaveTrend band dots across 66 Kraken 4h USD pairs.');
-    paidTool('get_regime', 'Stage 1 regime detail', '/api/regime', 'GET', '0.01', 'Stage 1 crypto regime check with raw values and rules.');
-    paidTool('get_coin', 'WaveTrend for one coin', '/api/coin/{symbol}', 'GET', '0.005', 'WaveTrend 4h snapshot for one coin.', { symbol: z.enum(COINS) }, a => `/api/coin/${a.symbol}`);
-    paidTool('subscribe_green_dot_alerts', 'Green-dot webhook alerts', '/api/alerts/subscribe', 'POST', ALERT_PLAN.priceUsd, `Subscribe a public https webhook to NEW green WaveTrend band dots (filter outer|inner|all, optional pairs) for ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts; HMAC-signed. Send JSON body {webhookUrl, filter, pairs}.`);
-    paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history');
-    paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.02', 'Is this token safe? Score 0-100, safe/caution/danger, reasons, sources (GoPlus + DexScreener, fixed rules).', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string() }, a => `/api/verdict/${a.chain}/${a.address}`);
-    paidTool('get_flows', 'Large-print flows + dot state', '/api/flows/{symbol}', 'GET', '0.02', 'Kraken large-print buy/sell summary (single venue, not on-chain) joined with WaveTrend 4h state.', { symbol: z.enum(COINS) }, a => `/api/flows/${a.symbol}`);
-    paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.05', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.');
+        async () => { try { return txt(await buildSample()); } catch (e) { return mcpErr('upstream data unavailable, retry shortly'); } });
+    m.registerTool('list_paid_endpoints', { title: 'Paid x402 endpoints', description: 'Lists paid x402 endpoints (USDC on Base, eip155:8453) with method, URL and USD price. Paid MCP tools also accept x402 payment in-band (@x402/mcp).', inputSchema: {} },
+        async () => txt({ protocol: 'x402 v2', network: 'eip155:8453', asset: 'USDC', mcpPayments: mcpPayMode().mode, openapi: `${ORIGIN}/openapi.json`, endpoints: PAID.map(p => ({ method: p.method.toUpperCase(), url: ORIGIN + p.path, priceUsd: p.price, summary: p.summary })) }));
+    // deliver(a) returns the paid data (or {error} -> isError, which skips settlement so the buyer is not charged).
+    // precheck(a) runs before any payment is requested; return an error string to refuse without charging.
+    const paidTool = async (name, title, path, method, price, desc, schema = {}, build = () => path, deliver, precheck) => {
+        const amount = String(Math.round(Number(price) * 1e6));
+        const wrap = await paidWrapper(name, amount, `${title}: ${desc}`);
+        const pointer = async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).' });
+        if (!wrap) return m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base via x402. Returns the endpoint to call with an x402 client.`, inputSchema: schema }, pointer);
+        const run = wrap(async (a) => {
+            try { const out = await deliver(a); return out && out.error ? mcpErr(String(out.error)) : txt(out); }
+            catch (e) { return mcpErr('upstream data unavailable, retry shortly (not charged)'); }
+        });
+        return m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base, paid in-band via x402 MCP (@x402/mcp; _meta "x402/payment"). Also at ${method} ${ORIGIN}${path}.`, inputSchema: schema },
+            async (a, extra) => { if (precheck) { const bad = await precheck(a); if (bad) return mcpErr(bad + ' (no payment was taken)'); } return run(a, extra); });
+    };
+    let subV = null;
+    await paidTool('get_full_signal', 'Full signal', '/api/agent', 'POST', '0.02', 'Stage 1 regime score + WaveTrend 10/21/4 on 66 Kraken 4h pairs with all band dots.', {}, undefined, () => safeSignal());
+    await paidTool('get_band_dots', 'Band dots', '/api/dots', 'GET', '0.01', 'Current WaveTrend band dots across 66 Kraken 4h USD pairs.', {}, undefined, () => getDots());
+    await paidTool('get_regime', 'Stage 1 regime detail', '/api/regime', 'GET', '0.01', 'Stage 1 crypto regime check with raw values and rules.', {}, undefined, () => getRegime());
+    await paidTool('get_coin', 'WaveTrend for one coin', '/api/coin/{symbol}', 'GET', '0.005', 'WaveTrend 4h snapshot for one coin.', { symbol: z.enum(COINS) }, a => `/api/coin/${a.symbol}`, a => getCoin(a.symbol));
+    await paidTool('subscribe_green_dot_alerts', 'Green-dot webhook alerts', '/api/alerts/subscribe', 'POST', ALERT_PLAN.priceUsd, `Subscribe a public https webhook to NEW green WaveTrend band dots (filter outer|inner|all, optional pairs) for ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts; HMAC-signed. Args {webhookUrl, filter, pairs}.`,
+        { webhookUrl: z.string().optional(), filter: z.enum(['outer', 'inner', 'all']).optional(), pairs: z.array(z.string()).optional() }, undefined,
+        async a => { const v = subV || await validateSubscribe(a, COINS); return v.error ? { error: v.error } : createSubscription(v); },
+        async a => { subV = await validateSubscribe(a, COINS); return subV.error || null; });
+    await paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history', a => getHistory(a.pair || null));
+    await paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.02', 'Is this token safe? Score 0-100, safe/caution/danger, reasons, sources (GoPlus + DexScreener, fixed rules).', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string() }, a => `/api/verdict/${a.chain}/${a.address}`,
+        a => getVerdict(a.chain, a.address), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
+    await paidTool('get_flows', 'Large-print flows + dot state', '/api/flows/{symbol}', 'GET', '0.02', 'Kraken large-print buy/sell summary (single venue, not on-chain) joined with WaveTrend 4h state.', { symbol: z.enum(COINS) }, a => `/api/flows/${a.symbol}`, a => getFlows(a.symbol));
+    await paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.05', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.', {}, undefined, () => getBrief());
     m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
     return m;
 }
 app.post('/mcp', async (req, res) => {
     try {
-        const server = buildMcp();
+        const server = await buildMcp();
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
         res.on('close', () => { transport.close(); server.close(); });
         await server.connect(transport);
@@ -281,11 +301,11 @@ app.post('/mcp', async (req, res) => {
 });
 app.get('/mcp', (req, res) => res.status(405).set('Allow', 'POST').json({ error: 'Use POST (MCP streamable HTTP, stateless)' }));
 app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.json'], (req, res) => res.json({
-    name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.1.0',
+    name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
     description: 'Crypto market signals for AI agents: Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Free sample; paid endpoints via x402 (USDC on Base). Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts'],
-    payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json` }
+    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_signing_pubkey'],
+    payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
 
 // 3. Ingestion Route
@@ -564,6 +584,9 @@ app.get('/api/brief', (req, res) => handleX402Agent(req, res, {
     deliver: getBrief
 }));
 
+initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt })
+    .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))
+    .catch(() => console.log('[mcp-pay] mode: pointer (init error)'));
 app.listen(PORT, () => {
     console.log(`GW8 Capital x402 v2 Gateway online on port ${PORT}`);
 });

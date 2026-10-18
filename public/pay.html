@@ -24,7 +24,34 @@ button:disabled{background:#374151;color:#9ca3af}select{width:100%;font-size:18p
 <div id="out"></div>
 <script>
 const BASE = '0x2105', USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const $ = id => document.getElementById(id), eth = window.ethereum;
+const $ = id => document.getElementById(id);
+let eth = null; const announced = [];
+window.addEventListener('eip6963:announceProvider', e => { if (e.detail && e.detail.provider) announced.push(e.detail); });
+window.dispatchEvent(new Event('eip6963:requestProvider'));
+function pickProvider() {
+  const pref = ['io.metamask', 'com.coinbase.wallet'];
+  for (const r of pref) { const d = announced.find(x => x.info && x.info.rdns && x.info.rdns.startsWith(r)); if (d) return d.provider; }
+  if (announced.length) return announced[0].provider;
+  const w = window.ethereum;
+  if (w && Array.isArray(w.providers) && w.providers.length) return w.providers.find(p => p.isMetaMask) || w.providers.find(p => p.isCoinbaseWallet) || w.providers[0];
+  return w || null;
+}
+function waitForProvider(ms = 3000) {
+  return new Promise(res => {
+    const now = pickProvider(); if (now) return res(now);
+    let done = false; const finish = () => { if (done) return; done = true; clearInterval(iv); res(pickProvider()); };
+    window.addEventListener('ethereum#initialized', finish, { once: true });
+    const iv = setInterval(() => { window.dispatchEvent(new Event('eip6963:requestProvider')); if (pickProvider()) finish(); }, 250);
+    setTimeout(finish, ms);
+  });
+}
+const PAY_URL = 'https://micro-saas-agent.onrender.com/pay.html';
+function showOpenIn() {
+  say('No wallet found in this browser. Open this page inside your wallet app:', 'warn');
+  $('out').innerHTML = `<a href="https://metamask.app.link/dapp/micro-saas-agent.onrender.com/pay.html"><button>Open in MetaMask</button></a>
+<a href="https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(PAY_URL)}"><button>Open in Coinbase Wallet</button></a>`;
+}
+waitForProvider().then(p => { eth = p; if (!p) showOpenIn(); else say('Wallet detected. Tap Connect.'); });
 let acct = null;
 const say = (h, cls = '') => { $('status').className = 'box ' + cls; $('status').innerHTML = h; };
 const b64 = s => btoa(unescape(encodeURIComponent(s)));
@@ -52,7 +79,9 @@ async function challenge(path, method) {
 }
 $('connect').onclick = async () => {
   try {
-    if (!eth) return say('No wallet found. Open this page in the MetaMask or Coinbase Wallet in-app browser.', 'warn');
+    if (!eth) eth = await waitForProvider();
+    if (!eth) return showOpenIn();
+    $('out').innerHTML = '';
     [acct] = await eth.request({ method: 'eth_requestAccounts' });
     await ensureBase();
     const pr = await challenge('/api/coin/BTC', 'GET'), payTo = pr.accepts[0].payTo;

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GW8 x402 Pay</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;background:#0b1220;color:#e5e7eb;margin:0;padding:16px;max-width:560px;margin:auto}
+h1{font-size:22px}button{display:block;width:100%;font-size:20px;padding:18px;margin:12px 0;border:0;border-radius:14px;background:#22c55e;color:#04120a;font-weight:700}
+button:disabled{background:#374151;color:#9ca3af}select{width:100%;font-size:18px;padding:12px;border-radius:10px}
+.box{background:#111827;border-radius:12px;padding:12px;margin:10px 0;word-break:break-all;font-size:14px}
+.warn{background:#7f1d1d}.ok{background:#14532d}pre{white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto}a{color:#60a5fa}
+</style></head><body>
+<h1>GW8 x402 test payment</h1>
+<div class="box">Open this page inside the MetaMask or Coinbase Wallet app browser. Use a wallet that is <b>not</b> the payout wallet, on Base, holding a little USDC. No gas needed — you only sign; the facilitator pays gas.</div>
+<label>Endpoint</label>
+<select id="ep">
+<option value="/api/coin/BTC|GET">/api/coin/BTC — $0.005</option>
+<option value="/api/dots|GET">/api/dots — $0.01</option>
+<option value="/api/regime|GET">/api/regime — $0.01</option>
+<option value="/api/agent|POST">/api/agent — $0.02</option>
+<option value="/api/history|GET">/api/history — $0.05</option>
+</select>
+<button id="connect">1. Connect wallet</button>
+<button id="pay" disabled>2. Sign &amp; pay</button>
+<div id="status" class="box">Not connected.</div>
+<div id="out"></div>
+<script>
+const BASE = '0x2105', USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+const $ = id => document.getElementById(id), eth = window.ethereum;
+let acct = null;
+const say = (h, cls = '') => { $('status').className = 'box ' + cls; $('status').innerHTML = h; };
+const b64 = s => btoa(unescape(encodeURIComponent(s)));
+const unb64 = s => JSON.parse(decodeURIComponent(escape(atob(s))));
+const hex = n => '0x' + [...crypto.getRandomValues(new Uint8Array(n))].map(b => b.toString(16).padStart(2, '0')).join('');
+async function ensureBase() {
+  const id = await eth.request({ method: 'eth_chainId' });
+  if (id === BASE) return;
+  try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: BASE }] }); }
+  catch (e) {
+    if (e.code !== 4902) throw e;
+    await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: BASE, chainName: 'Base', nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 }, rpcUrls: ['https://mainnet.base.org'], blockExplorerUrls: ['https://basescan.org'] }] });
+  }
+}
+async function usdcBalance(a) {
+  const data = '0x70a08231' + a.slice(2).toLowerCase().padStart(64, '0');
+  const r = await eth.request({ method: 'eth_call', params: [{ to: USDC, data }, 'latest'] });
+  return Number(BigInt(r)) / 1e6;
+}
+async function challenge(path, method) {
+  const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+  if (r.status !== 402) throw new Error('Expected 402, got ' + r.status);
+  const h = r.headers.get('PAYMENT-REQUIRED');
+  return h ? unb64(h) : await r.json();
+}
+$('connect').onclick = async () => {
+  try {
+    if (!eth) return say('No wallet found. Open this page in the MetaMask or Coinbase Wallet in-app browser.', 'warn');
+    [acct] = await eth.request({ method: 'eth_requestAccounts' });
+    await ensureBase();
+    const pr = await challenge('/api/coin/BTC', 'GET'), payTo = pr.accepts[0].payTo;
+    const bal = await usdcBalance(acct);
+    if (acct.toLowerCase() === payTo.toLowerCase()) { $('pay').disabled = true; return say(`Connected ${acct}<br><b>This is the payout wallet.</b> Switch to a different wallet — paying yourself won't count.`, 'warn'); }
+    say(`Connected ${acct} on Base<br>USDC balance: ${bal.toFixed(4)}`, bal > 0 ? 'ok' : 'warn');
+    $('pay').disabled = false;
+  } catch (e) { say('Error: ' + (e.message || e), 'warn'); }
+};
+$('pay').onclick = async () => {
+  const [path, method] = $('ep').value.split('|');
+  $('pay').disabled = true; $('out').innerHTML = '';
+  try {
+    await ensureBase();
+    const pr = await challenge(path, method), req = pr.accepts[0];
+    if (pr.x402Version !== 2 || req.scheme !== 'exact' || req.network !== 'eip155:8453') throw new Error('Unexpected challenge');
+    if (req.asset.toLowerCase() !== USDC.toLowerCase()) throw new Error('Asset is not Base USDC');
+    if (!req.extra || !req.extra.name || !req.extra.version) throw new Error('Missing EIP-712 domain in challenge');
+    if (acct.toLowerCase() === req.payTo.toLowerCase()) throw new Error('Connected wallet is the payout wallet');
+    const usd = Number(req.amount) / 1e6;
+    if (!confirm(`Pay ${usd} USDC to ${req.payTo} for ${path}?`)) { $('pay').disabled = false; return; }
+    const now = Math.floor(Date.now() / 1000);
+    const authorization = { from: acct, to: req.payTo, value: String(req.amount), validAfter: '0', validBefore: String(now + req.maxTimeoutSeconds), nonce: hex(32) };
+    const typed = {
+      types: { EIP712Domain: [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }, { name: 'verifyingContract', type: 'address' }],
+        TransferWithAuthorization: [{ name: 'from', type: 'address' }, { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'validAfter', type: 'uint256' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' }] },
+      primaryType: 'TransferWithAuthorization',
+      domain: { name: req.extra.name, version: req.extra.version, chainId: 8453, verifyingContract: req.asset },
+      message: authorization
+    };
+    say('Waiting for your signature in the wallet…');
+    const signature = await eth.request({ method: 'eth_signTypedData_v4', params: [acct, JSON.stringify(typed)] });
+    const paymentPayload = { x402Version: 2, payload: { authorization, signature }, extensions: pr.extensions, resource: pr.resource, accepted: req };
+    say('Signed. Settling payment (can take up to a minute on a cold start)…');
+    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? '{}' : undefined });
+    const j = await r.json().catch(() => ({}));
+    let tx = j.settlement && j.settlement.transaction;
+    const ph = r.headers.get('PAYMENT-RESPONSE'); if (!tx && ph) try { tx = unb64(ph).transaction; } catch {}
+    if (r.ok) say(`✅ Paid. HTTP ${r.status}` + (tx ? `<br>Tx: <a href="https://basescan.org/tx/${tx}" target="_blank">${tx}</a>` : ''), 'ok');
+    else say(`❌ HTTP ${r.status}: ${(j.error || '')} ${(j.reason || j.details || '')}`, 'warn');
+    $('out').innerHTML = '<div class="box"><pre></pre></div>'; $('out').querySelector('pre').textContent = JSON.stringify(j, null, 2);
+  } catch (e) { say('Error: ' + (e.message || e), 'warn'); }
+  $('pay').disabled = false;
+};
+</script></body></html>

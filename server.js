@@ -21,8 +21,8 @@ const USDC_BASE_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const RESOURCE_URL = 'https://micro-saas-agent.onrender.com/api/agent';
 const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
 const CDP_FACILITATOR_URL = process.env.CDP_FACILITATOR_URL || 'https://api.cdp.coinbase.com/platform/v2/x402';
-const INGEST_SECRET = process.env.INGEST_SECRET || 'gw8-secret-scout-cluster-key';
-const VIP_TOKEN = process.env.VIP_TOKEN || 'SUB-GW8-CAPITAL-ALPHA-SECURE';
+const INGEST_SECRET = process.env.INGEST_SECRET 
+const VIP_TOKEN = process.env.VIP_TOKEN 
 
 // Multi-Asset Telemetry Store
 const telemetryStore = {

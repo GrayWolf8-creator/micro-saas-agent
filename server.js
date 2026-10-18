@@ -142,6 +142,8 @@ function getX402ChallengeV2(o = {}) {
         base.resource = { url: o.url, description: o.description, mimeType: "application/json" };
         base.accepts[0].amount = o.amount;
         base.extensions.bazaar.info = { name: o.name, description: o.description, input: { type: "http", method: "GET" }, output: { example: o.example } };
+        base.extensions.bazaar.schema = JSON.parse(JSON.stringify(base.extensions.bazaar.schema));
+        base.extensions.bazaar.schema.properties.input.properties.method = { const: "GET" };
     }
     return base;
 }

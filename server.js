@@ -14,6 +14,7 @@ import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS
 import { initMcpPayments, paidWrapper, mcpPayMode } from './mcp_pay.js';
 import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_RULES, getFlows, getBrief, signResponses, publicKeyInfo } from './upgrades.js';
 import { getRwa } from './rwa.js';
+import { getGovContracts, validGovFilters, GOV_SECTORS } from './gov.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -205,6 +206,7 @@ const PAID = [
     { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Large-print flow summary from Kraken public trades (single venue, not on-chain) joined with the coin WaveTrend 4h dot state', pathParam: true, ex: '/api/flows/BTC' },
     { path: '/api/brief', method: 'get', price: '0.05', summary: 'Daily brief (built once per Mountain Time day): regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flow summary' },
     { path: '/api/rwa', method: 'get', price: '0.02', summary: 'RWA feed (tokenized treasuries, credit, stocks): top RWA protocols by TVL with 7d change and estimated flows, 7d movers, new launches (30d), yields, top RWA tokens by market cap, sources + timestamp (DefiLlama + CoinGecko, 10-min cache)' },
+    { path: '/api/govcontracts', method: 'get', price: '0.02', summary: 'Recent (14-day) federal contract actions to AI, drone, nuclear, robotics, space, quantum and defense-tech companies from USAspending.gov, with curated tickers (private = null), amount, agency, date, description, award link (30-min cache)', query: { ticker: { type: 'string', description: 'Optional ticker, e.g. PLTR' }, sector: { type: 'string', enum: GOV_SECTORS }, q: { type: 'string', description: 'Optional keyword in recipient/description/agency' } } },
     { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Green band-dot webhook alerts: ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts, HMAC-signed POSTs`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
 ];
 function openApiDoc() {
@@ -233,7 +235,7 @@ function openApiDoc() {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.1.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call crypto market signals for AI agents via x402 (USDC on Base). Signal only, no trading.',
-            'x-guidance': 'Start with free GET /api/sample. Cheapest: GET /api/coin/{symbol} ($0.005). Full snapshot: POST /api/agent ($0.02). Backtest: GET /api/history ($0.05). Token safety: GET /api/verdict/{chain}/{address} ($0.02). Flows: GET /api/flows/{symbol} ($0.02). Daily brief: GET /api/brief ($0.05). RWA feed: GET /api/rwa ($0.02). Paid responses may be Ed25519-signed; key at /api/proof/pubkey. Pay by retrying with the PAYMENT-SIGNATURE header from the 402 challenge.' },
+            'x-guidance': 'Start with free GET /api/sample. Cheapest: GET /api/coin/{symbol} ($0.005). Full snapshot: POST /api/agent ($0.02). Backtest: GET /api/history ($0.05). Token safety: GET /api/verdict/{chain}/{address} ($0.02). Flows: GET /api/flows/{symbol} ($0.02). Daily brief: GET /api/brief ($0.05). RWA feed: GET /api/rwa ($0.02). Gov contracts: GET /api/govcontracts ($0.02, ?ticker= ?sector= ?q=). Paid responses may be Ed25519-signed; key at /api/proof/pubkey. Pay by retrying with the PAYMENT-SIGNATURE header from the 402 challenge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -287,6 +289,8 @@ async function buildMcp() {
         a => getVerdict(a.chain, a.address), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
     await paidTool('get_flows', 'Large-print flows + dot state', '/api/flows/{symbol}', 'GET', '0.02', 'Kraken large-print buy/sell summary (single venue, not on-chain) joined with WaveTrend 4h state.', { symbol: z.enum(COINS) }, a => `/api/flows/${a.symbol}`, a => getFlows(a.symbol));
     await paidTool('get_rwa_feed', 'RWA feed', '/api/rwa', 'GET', '0.02', 'Real-world assets on-chain (tokenized treasuries, credit, stocks): top RWA protocols by TVL, 7d change + estimated flows, movers, new launches, yields, top RWA tokens by market cap, with sources and timestamp.', {}, undefined, () => getRwa());
+    await paidTool('get_gov_contracts', 'Federal contract feed', '/api/govcontracts', 'GET', '0.02', 'Recent (14-day) US federal contract actions to AI, drone, nuclear, robotics, space, quantum and defense-tech companies (USAspending.gov), with tickers, amount, agency, date, description, award link. Optional ticker / sector / q filters.', { ticker: z.string().regex(/^[A-Za-z.]{1,6}$/).optional(), sector: z.enum(GOV_SECTORS).optional(), q: z.string().max(60).optional() },
+        a => { const p = new URLSearchParams(); for (const k of ['ticker', 'sector', 'q']) if (a[k]) p.set(k, a[k]); const qs = p.toString(); return '/api/govcontracts' + (qs ? '?' + qs : ''); }, a => getGovContracts(a));
     await paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.05', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.', {}, undefined, () => getBrief());
     m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
     return m;
@@ -307,7 +311,7 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
     description: 'Crypto market signals for AI agents: Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Free sample; paid endpoints via x402 (USDC on Base). Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_signing_pubkey'],
+    tools: ['get_sample', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_signing_pubkey'],
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
 
@@ -497,7 +501,7 @@ app.get('/api/sample', async (req, res) => {
     catch (e) { res.status(503).json({ error: 'upstream data unavailable, retry shortly' }); }
 });
 
-app.use(['/api/agent', '/api/telemetry', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa'], signResponses);
+app.use(['/api/agent', '/api/telemetry', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts'], signResponses);
 app.all('/api/agent', handleX402Agent);
 app.all('/api/telemetry', handleX402Agent);
 
@@ -593,6 +597,19 @@ app.get('/api/rwa', (req, res) => handleX402Agent(req, res, {
     example: { asOf: "2026-10-18T17:00:00Z", summary: { totalTvlUsd: 1, netChange7dPct: 1.2 }, topProtocolsByTvl: [{ name: "...", tvlUsd: 1, change7dPct: 1.1 }], yields: { topPoolsByTvl: [{ symbol: "USDY", apyPct: 3.69 }] }, sources: ["https://api.llama.fi/protocols"] },
     deliver: () => getRwa().catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
 }));
+
+app.get('/api/govcontracts', (req, res) => {
+    const f = { ticker: req.query.ticker ? String(req.query.ticker) : undefined, sector: req.query.sector ? String(req.query.sector) : undefined, q: req.query.q ? String(req.query.q) : undefined };
+    const bad = validGovFilters(f);
+    if (bad) return res.status(400).json({ error: bad, sectors: GOV_SECTORS });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/govcontracts`, amount: "20000", name: "GW8 Federal Contract Feed (AI, drones, nuclear, robotics, space, quantum, defense tech)",
+        description: "Recent (14-day) US federal contract actions (USAspending.gov by action date + Department of War daily contract announcements >= $7.5M) to AI, drone, nuclear, robotics, space, quantum and defense-tech companies from USAspending.gov: amount, agency, recipient, curated ticker (private = null), date, description, award link, per-company totals. Optional ?ticker= ?sector= ?q=. DoD data lags ~90 days on USAspending. 30-min cache. $0.02.",
+        inputProps: { ticker: { type: "string", example: "PLTR" }, sector: { type: "string", enum: GOV_SECTORS }, q: { type: "string", example: "NASA" } },
+        example: { window: { start: "2026-10-04", end: "2026-10-18" }, count: 1, awards: [{ date: "2026-10-08", recipient: "...", ticker: "BAH", amountUsd: 1, agency: "General Services Administration", link: "https://www.usaspending.gov/award/..." }] },
+        deliver: () => getGovContracts(f).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
+    });
+});
 
 initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))

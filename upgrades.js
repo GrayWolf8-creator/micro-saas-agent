@@ -30,6 +30,7 @@ export async function getVerdict(chain, address) {
   const gpUrl = chain === 'solana' ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${address}` : `https://api.gopluslabs.io/api/v1/token_security/${id}?contract_addresses=${address}`;
   const dsUrl = `https://api.dexscreener.com/tokens/v1/${chain}/${address}`;
   const [gp, ds] = await Promise.allSettled([getJson(gpUrl), getJson(dsUrl)]);
+  if (gp.status === 'rejected' && ds.status === 'rejected') return { error: 'upstream data unavailable, retry shortly' }; // both sources down: no verdict, no charge
   let score = 100; const reasons = []; const hit_ = (pts, why) => { score -= pts; reasons.push(`-${pts}: ${why}`); };
   let t = null;
   if (gp.status === 'fulfilled' && gp.value?.result) { const res = gp.value.result; t = res[address] || res[address.toLowerCase()] || Object.values(res)[0] || null; }

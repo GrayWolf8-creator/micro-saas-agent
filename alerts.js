@@ -93,6 +93,12 @@ export async function createSubscription(v, payer) {
         verify: 'Each POST carries X-GW8-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>. Store the secret; it is shown only once.',
         disclaimer: 'signal only, not financial advice' };
 }
+// Used when x402 settlement fails after the subscription was created (buyer was not charged).
+export async function cancelSubscription(id) {
+    if (!id) return false;
+    const all = await load(); if (!all[id]) return false;
+    delete all[id]; await save(); return true;
+}
 export async function getStatus(id) {
     const s = (await load())[id];
     if (!s) return null;

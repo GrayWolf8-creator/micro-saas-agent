@@ -20,6 +20,7 @@ import { getKrakenListings, getKrakenStatus, snapshot as krakenSnapshot } from '
 import { getRules, getRulesStatus } from './rules.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
+import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd } from './stats.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +28,8 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
+// Per-endpoint request tallies (402 quotes vs paid 2xx etc). Free, no PII. Before x402 handlers.
+app.use(statsMiddleware);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Configuration
@@ -186,6 +189,8 @@ app.get('/', (req, res) => {
         price: "0.02 USDC",
         sample: "/api/sample",
         trackRecord: "/track",
+        stats: "/api/stats",
+        statsHtml: "/stats.html",
         supportedAssets: Object.keys(telemetryStore),
         docs: "/llms.txt",
         manifest: "/.well-known/x402.json"
@@ -243,6 +248,10 @@ function openApiDoc() {
     paths['/api/govcontracts/status'] = { get: { operationId: 'govcontracts_status', summary: 'Free: gov-contract feed source health (sourceStatus, asOf, dodAnnouncementDays, dodAwardsParsed, count; no rows)', security: [], responses: { '200': { description: 'Status JSON' } } } };
     paths['/api/track'] = { get: { operationId: 'track', summary: 'Free: honest track record of band-dot signals (backtest simulated vs live-logged, hit rates 1d/7d/30d incl. misses). HTML at /track', security: [], responses: { '200': { description: 'Track JSON' } } } };
     paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample', security: [], responses: { '200': { description: 'Sample JSON' } } } };
+    paths['/api/stats'] = { get: { operationId: 'stats', summary: 'Free: per-endpoint request tallies (402 quotes, paid 2xx, 404, 5xx) for the last 1-30 Mountain Time days. No IPs or PII. HTML at /stats.html; ?format=md for markdown', security: [], parameters: [
+        { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 30, default: 1 } },
+        { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'md'], default: 'json' } }
+    ], responses: { '200': { description: 'Stats JSON or markdown' } } } };
     return {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.1.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
@@ -549,6 +558,21 @@ app.get('/track', async (req, res) => { try { res.type('html').send(renderTrack(
 app.get('/api/sample', async (req, res) => {
     try { res.json(await buildSample()); }
     catch (e) { res.status(503).json({ error: 'upstream data unavailable, retry shortly' }); }
+});
+
+// Free per-endpoint request stats (not x402-paid, not listed on Bazaar). No PII.
+app.get('/api/stats', async (req, res) => {
+    try {
+        const s = await getStats(req.query.days);
+        if (String(req.query.format || '').toLowerCase() === 'md') return res.type('text/markdown').send(renderStatsMd(s));
+        return res.json(s);
+    } catch (e) { res.status(503).json({ error: 'stats unavailable, retry shortly' }); }
+});
+app.get('/stats.html', async (req, res) => {
+    try {
+        const s = await getStats(req.query.days);
+        res.type('html').send(renderStatsHtml(s));
+    } catch (e) { res.status(503).type('text').send('Stats temporarily unavailable, retry shortly.'); }
 });
 
 app.use(['/api/agent', '/api/telemetry', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules'], signResponses);

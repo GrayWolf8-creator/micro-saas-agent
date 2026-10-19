@@ -32,6 +32,7 @@
 - GET /api/proof/pubkey: signing public key.
 - GET /api/govcontracts/status: gov feed source health (sourceStatus per source, asOf, dodAnnouncementDays, dodAwardsParsed, count). No award rows.
 - GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.
+- GET /api/stats (?days=1..30, optional ?format=md) and GET /stats.html: per-endpoint request tallies (402 payment quotes, paid 2xx, 404, 405, 5xx). No IPs, headers, or wallet addresses. Not a paid endpoint.
 
 ## Payment
 - x402 v2, scheme exact, network eip155:8453, asset USDC 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, amount 20000, payTo 0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd

@@ -78,7 +78,7 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \- \*\*Express / Node.js Gateway (`server.js`)\*\*: Render-hosted ingestion point for incoming cluster streams.
 
-\- \*\*x402 Micro-Payment Gatekeeper\*\*: Added HTTP 402 challenge response headers targeting USDC on Base (`0x8335...2913`) and VIP bearer token bypass (`SUB-GW8-CAPITAL-ALPHA-VIP`).
+\- \*\*x402 Micro-Payment Gatekeeper\*\*: Added HTTP 402 challenge response headers targeting USDC on Base (`0x8335...2913`) and VIP bearer token bypass (`[redacted — retired]`).
 
 \- \*\*Automation Pipeline (`start\_pack.ps1`)\*\*: Background process script for starting, monitoring, and killing local scout processes.
 

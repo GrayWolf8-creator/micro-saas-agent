@@ -21,10 +21,14 @@ export async function logDots(wt) {
     const k = key(d), rec = { name: d.name, kind: d.kind, band: d.band, bar: d.bar, wt1: d.wt1, close: d.close, loggedAt: new Date().toISOString() };
     if (hasRedis()) {
       try {
-        if (await redis(['SADD', SEEN, k]) === 1) { await redis(['RPUSH', LOG, JSON.stringify(rec)]); added++; }
+        if (await redis(['SADD', SEEN, k]) === 1) {
+          await redis(['RPUSH', LOG, JSON.stringify(rec)]);
+          await redis(['LTRIM', LOG, -5000, -1]); // cap live log; /track still reads the kept tail
+          added++;
+        }
         await redis(['SETNX', SINCE, rec.loggedAt]);
       } catch (e) { console.error('[track] log failed', e.message); }
-    } else if (!mem.seen.has(k)) { mem.seen.add(k); mem.log.push(rec); mem.since ||= rec.loggedAt; added++; }
+    } else if (!mem.seen.has(k)) { mem.seen.add(k); mem.log.push(rec); if (mem.log.length > 5000) mem.log = mem.log.slice(-5000); mem.since ||= rec.loggedAt; added++; }
   }
   return { added };
 }

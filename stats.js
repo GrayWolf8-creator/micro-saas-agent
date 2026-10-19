@@ -23,7 +23,6 @@ const EXACT = new Set([
     '/.well-known/mcp.json',
     '/.well-known/mcp/server-card.json',
     '/api/agent',
-    '/api/telemetry',
     '/api/dots',
     '/api/history',
     '/api/regime',
@@ -38,10 +37,10 @@ const EXACT = new Set([
     '/api/pass/day',
     '/api/alerts/subscribe',
     '/api/sample',
+    '/api/brief/teaser',
     '/api/track',
     '/api/proof/pubkey',
-    '/api/ingest',
-    '/api/brief/weekly/subscribe',
+        '/api/brief/weekly/subscribe',
 ]);
 
 const PARAM = [
@@ -55,7 +54,6 @@ const PARAM = [
 /** Paid data routes (normalized path without method). 2xx here counts as "paid". */
 const PAID_PATHS = new Set([
     '/api/agent',
-    '/api/telemetry',
     '/api/dots',
     '/api/history',
     '/api/regime',

@@ -1,35 +1,50 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>GW8 x402 Pay</title>
 <style>
-body{font-family:-apple-system,system-ui,sans-serif;background:#0b1220;color:#e5e7eb;margin:0;padding:16px;max-width:560px;margin:auto}
-h1{font-size:22px}button{display:block;width:100%;font-size:20px;padding:18px;margin:12px 0;border:0;border-radius:14px;background:#22c55e;color:#04120a;font-weight:700}
-button:disabled{background:#374151;color:#9ca3af}select{width:100%;font-size:18px;padding:12px;border-radius:10px}
-.box{background:#111827;border-radius:12px;padding:12px;margin:10px 0;word-break:break-all;font-size:14px}
-.warn{background:#7f1d1d}.ok{background:#14532d}pre{white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto}a{color:#60a5fa}
+*{box-sizing:border-box}
+body{font-family:-apple-system,system-ui,sans-serif;background:#0b1220;color:#e5e7eb;margin:0 auto;padding:16px;padding-bottom:32px;max-width:560px;width:100%}
+h1{font-size:1.35rem;margin:0 0 8px}h2{font-size:.95rem;color:#94a3b8;margin:16px 0 6px;font-weight:600}
+button{display:block;width:100%;font-size:1.1rem;padding:16px;margin:10px 0;border:0;border-radius:14px;background:#22c55e;color:#04120a;font-weight:700}
+button:disabled{background:#374151;color:#9ca3af}
+select,input{width:100%;font-size:16px;padding:12px;border-radius:10px;border:1px solid #1f2937;background:#0f172a;color:#e5e7eb}
+/* 16px inputs avoid iOS zoom */
+.box{background:#111827;border-radius:12px;padding:12px;margin:10px 0;word-break:break-word;overflow-wrap:anywhere;font-size:14px}
+.warn{background:#7f1d1d}.ok{background:#14532d}
+pre{white-space:pre-wrap;font-size:12px;max-height:40vh;overflow:auto;margin:0}a{color:#60a5fa}
+.free a{display:inline-block;margin:4px 8px 4px 0}
+optgroup{color:#94a3b8;font-weight:700}
+@media (max-width:380px){body{padding:12px}h1{font-size:1.2rem}button{font-size:1rem;padding:14px}}
 </style></head><body>
-<h1>GW8 x402 test payment</h1>
+<h1>GW8 x402 Pay</h1>
+<div class="box free">Free (no wallet): <a href="/api/brief/teaser">brief teaser</a> <a href="/api/sample">sample</a> <a href="/track">track</a> <a href="/llms.txt">docs</a></div>
 <div class="box">Open this page inside the MetaMask or Coinbase Wallet app browser. Use a wallet that is <b>not</b> the payout wallet, on Base, holding a little USDC. No gas needed — you only sign; the facilitator pays gas.</div>
-<label>Endpoint</label>
+<label for="ep">Endpoint</label>
 <select id="ep">
+<optgroup label="Starter">
 <option value="/api/coin/BTC|GET">/api/coin/BTC — $0.005</option>
-<option value="/api/dots|GET">/api/dots — $0.01</option>
 <option value="/api/regime|GET">/api/regime — $0.01</option>
+<option value="/api/dots|GET">/api/dots — $0.01</option>
+</optgroup>
+<optgroup label="Research">
 <option value="/api/agent|POST">/api/agent — $0.02</option>
+<option value="/api/brief|GET">/api/brief — $0.02</option>
 <option value="/api/history|GET">/api/history — $0.05</option>
 <option value="/api/flows/BTC|GET">/api/flows/BTC — $0.02</option>
-<option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict (USDC on Base) — $0.02</option>
-<option value="/api/brief|GET">/api/brief — $0.05</option>
 <option value="/api/rwa|GET">/api/rwa — $0.02</option>
-<option value="/api/govcontracts|GET">/api/govcontracts — $0.02</option>
+<option value="/api/govcontracts|GET">/api/govcontracts — $0.01</option>
 <option value="/api/kraken/listings|GET">/api/kraken/listings — $0.02</option>
 <option value="/api/rules|GET">/api/rules — $0.02</option>
+<option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict (USDC on Base) — $0.01</option>
+</optgroup>
+<optgroup label="Access">
 <option value="/api/pass/day|POST">/api/pass/day — $1.00</option>
 <option value="/api/brief/weekly/subscribe|POST">/api/brief/weekly/subscribe — $0.25 (needs webhook)</option>
 <option value="/api/alerts/subscribe|POST">/api/alerts/subscribe — $0.50 (needs webhook)</option>
+</optgroup>
 </select>
-<label>Webhook URL (only for subscribe options)</label>
-<input id="hook" type="url" placeholder="https://webhook.site/..." style="width:100%;font-size:16px;padding:12px;border-radius:10px;box-sizing:border-box">
+<label for="hook">Webhook URL (only for subscribe options)</label>
+<input id="hook" type="url" placeholder="https://webhook.site/..." autocomplete="off">
 <button id="connect">1. Connect wallet</button>
 <button id="pay" disabled>2. Sign &amp; pay</button>
 <div id="status" class="box">Not connected.</div>
@@ -60,8 +75,8 @@ function waitForProvider(ms = 3000) {
 const PAY_URL = 'https://micro-saas-agent.onrender.com/pay.html';
 function showOpenIn() {
   say('No wallet found in this browser. Open this page inside your wallet app:', 'warn');
-  $('out').innerHTML = `<a href="https://metamask.app.link/dapp/micro-saas-agent.onrender.com/pay.html"><button>Open in MetaMask</button></a>
-<a href="https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(PAY_URL)}"><button>Open in Coinbase Wallet</button></a>`;
+  $('out').innerHTML = `<a href="https://metamask.app.link/dapp/micro-saas-agent.onrender.com/pay.html"><button type="button">Open in MetaMask</button></a>
+<a href="https://go.cb-w.com/dapp?cb_url=${encodeURIComponent(PAY_URL)}"><button type="button">Open in Coinbase Wallet</button></a>`;
 }
 waitForProvider().then(p => { eth = p; if (!p) showOpenIn(); else say('Wallet detected. Tap Connect.'); });
 let acct = null;
@@ -134,7 +149,7 @@ $('pay').onclick = async () => {
     const j = await r.json().catch(() => ({}));
     let tx = j.settlement && j.settlement.transaction;
     const ph = r.headers.get('PAYMENT-RESPONSE'); if (!tx && ph) try { tx = unb64(ph).transaction; } catch {}
-    if (r.ok) say(`✅ Paid. HTTP ${r.status}` + (tx ? `<br>Tx: <a href="https://basescan.org/tx/${tx}" target="_blank">${tx}</a>` : ''), 'ok');
+    if (r.ok) say(`✅ Paid. HTTP ${r.status}` + (tx ? `<br>Tx: <a href="https://basescan.org/tx/${tx}" target="_blank" rel="noopener">${tx}</a>` : ''), 'ok');
     else say(`❌ HTTP ${r.status}: ${(j.error || '')} ${(j.reason || j.details || '')}`, 'warn');
     $('out').innerHTML = '<div class="box"><pre></pre></div>'; $('out').querySelector('pre').textContent = JSON.stringify(j, null, 2);
   } catch (e) { say('Error: ' + (e.message || e), 'warn'); }

@@ -2,6 +2,7 @@
 // Public data only (GoPlus, DexScreener, Kraken). No API keys, no trading, no execution.
 import crypto from 'crypto';
 import { getDots, getRegime, getCoin, COINS, PAIRS_MAP } from './Signal.js';
+import { getTrack } from './track.js';
 
 const DISCLAIMER = 'signal only, not financial advice';
 const r2 = v => Math.round(v * 100) / 100;
@@ -145,6 +146,55 @@ export async function getBrief() {
   if (brief && brief.date === d && !brief.regime?.error) return brief;
   if (!briefInflight) briefInflight = buildBrief(d).then(b => (brief = b)).finally(() => { briefInflight = null; });
   try { return await briefInflight; } catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+}
+
+
+// ---------- Free brief teaser (partial live brief; 15-min cache) ----------
+let teaserCache = null, teaserInflight = null;
+const TEASER_TTL = 15 * 60 * 1000;
+export async function getBriefTeaser() {
+  if (teaserCache && Date.now() - teaserCache.t < TEASER_TTL) return { ...teaserCache.data, cached: true };
+  if (!teaserInflight) teaserInflight = (async () => {
+    const [regime, dots, track] = await Promise.all([
+      getRegime().catch(() => ({ error: true })),
+      getDots().catch(() => ({ error: true, bandDots: [] })),
+      getTrack().catch(() => null)
+    ]);
+    if (regime.error && (!dots.bandDots || !dots.bandDots.length)) throw new Error('upstream unavailable');
+    const all = dots.bandDots || [];
+    const strength = d => (d.kind === 'green' ? 1 : -1) * Math.abs(d.wt1) * (d.band === 'outer' ? 1.25 : 1) * (d.latest ? 1.1 : 1);
+    const ranked = [...all].sort((a, b) => Math.abs(strength(b)) - Math.abs(strength(a)))
+      .filter((d, i, a) => a.findIndex(x => x.name === d.name) === i);
+    const top3 = ranked.slice(0, 3).map(d => ({ symbol: d.name, kind: d.kind, band: d.band }));
+    const checks = regime.error ? null : Object.fromEntries(Object.entries(regime.checks || {}).map(([k, v]) => [k, v.status]));
+    const g7 = track?.backtest?.summary?.green_all?.['7d'] || null;
+    const data = {
+      free: true,
+      asOf: new Date().toISOString(),
+      timezone: 'America/Denver',
+      regime: regime.error ? { error: 'unavailable' } : { score: regime.score, outOf: 4, checks },
+      dots: { green: all.filter(d => d.kind === 'green').length, red: all.filter(d => d.kind === 'red').length, asOf: dots.asOf || null },
+      top3Dots: top3, // symbol + band/kind only — no exact WaveTrend values
+      backtest7dHeadline: g7 ? {
+        label: 'simulated 90-day backtest (not a live trade log)',
+        signal: 'green_all',
+        horizon: '7d',
+        hitRatePct: g7.hitRatePct,
+        n: g7.n,
+        note: 'Past performance is not indicative of future results.'
+      } : { label: 'simulated backtest', note: 'hit-rate unavailable right now; see free GET /track' },
+      upsell: {
+        fullBrief: 'GET /api/brief — $0.02 USDC: full daily digest (top 10 dots with strength, BTC/ETH/SOL flows)',
+        dots: 'GET /api/dots — $0.01 USDC: every green/red WaveTrend band dot with wt1/wt2 and closes',
+        agent: 'POST /api/agent — $0.02 USDC: full Stage 1 regime + all band dots in one call'
+      },
+      disclaimer: 'signal only, not financial advice'
+    };
+    teaserCache = { t: Date.now(), data };
+    return data;
+  })().finally(() => { teaserInflight = null; });
+  try { return await teaserInflight; }
+  catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
 }
 
 // ---------- 2. Response signing (Ed25519 over SHA-256 of the exact JSON body) ----------

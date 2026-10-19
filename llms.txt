@@ -14,6 +14,7 @@
 - Signed receipts: paid responses carry X-GW8-Receipt (base64url JSON: route, amount, tx, payer, issuedAt, bodySha256) + X-GW8-Receipt-Signature (Ed25519). Key: /.well-known/gw8-receipt-key.
 - Safe retry: resending the same PAYMENT-SIGNATURE to the same URL within 15 min returns the same response (X-GW8-Replay: true), no second charge.
 - Best value: POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass.
+- Raw USDC transfer + tx hash (X-Payment-Tx) is retired (410); pay with x402 only.
 - GET /api/govcontracts/status, /api/kraken/listings/status, /api/rules/status — source health only.
 
 ## Menu tiers

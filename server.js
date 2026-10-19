@@ -2,7 +2,6 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { JsonRpcProvider, Interface, formatUnits } from 'ethers';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -23,7 +22,6 @@ import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStat
 import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid } from './stats.js';
 import { funnel, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH } from './trust.js';
 import { payerFrom } from './buyers.js';
-import { redis, hasRedis } from './alerts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,22 +37,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const VAULT_ADDRESS = '0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd';
 const USDC_BASE_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const RESOURCE_URL = 'https://micro-saas-agent.onrender.com/api/agent';
-const BASE_RPC_URL = process.env.BASE_RPC_URL || 'https://mainnet.base.org';
 const CDP_FACILITATOR_URL = process.env.CDP_FACILITATOR_URL || 'https://api.cdp.coinbase.com/platform/v2/x402';
-const processedTxs = new Set();
-
-let providerInstance = null;
-function getProvider() {
-    if (!providerInstance) {
-        providerInstance = new JsonRpcProvider(BASE_RPC_URL, 8453, { staticNetwork: true });
-    }
-    return providerInstance;
-}
-
-const erc20Interface = new Interface([
-    "event Transfer(address indexed from, address indexed to, uint256 value)"
-]);
-
 // Generate CDP Facilitator JWT Token
 function generateCdpJwt(method, uriPath) {
     const keyName = process.env.CDP_API_KEY_ID;
@@ -393,51 +376,6 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
 
-// Helper: Manual TX Fallback
-// Replay protection: in-memory set plus (when Upstash is configured) SET NX with a 90-day TTL so a
-// restart does not make an old tx hash spendable again. release() undoes the claim if delivery fails.
-const LEGACY_TX_TTL = 90 * 24 * 3600;
-async function claimLegacyTx(txHash) {
-    if (processedTxs.has(txHash)) return false;
-    if (hasRedis()) {
-        try { if ((await redis(['SET', `gw8:legacy_tx:${String(txHash).toLowerCase()}`, '1', 'NX', 'EX', LEGACY_TX_TTL])) !== 'OK') return false; }
-        catch (e) { console.error('[legacy-tx] redis claim failed, memory only', e.message); }
-    }
-    processedTxs.add(txHash);
-    return true;
-}
-async function releaseLegacyTx(txHash) {
-    processedTxs.delete(txHash);
-    if (hasRedis()) { try { await redis(['DEL', `gw8:legacy_tx:${String(txHash).toLowerCase()}`]); } catch { /* ignore */ } }
-}
-async function verifyManualUsdcTx(txHash) {
-    if (!/^0x[0-9a-fA-F]{64}$/.test(String(txHash || ''))) return { valid: false, reason: "Invalid tx hash" };
-    if (processedTxs.has(txHash)) return { valid: false, reason: "Tx hash already spent" };
-    try {
-        const provider = getProvider();
-        const receipt = await provider.getTransactionReceipt(txHash);
-        if (!receipt || receipt.status !== 1) return { valid: false, reason: "Tx not found or failed" };
-
-        for (const log of receipt.logs) {
-            if (log.address.toLowerCase() !== USDC_BASE_ADDRESS.toLowerCase()) continue;
-            try {
-                const parsed = erc20Interface.parseLog(log);
-                if (parsed && parsed.name === 'Transfer') {
-                    const [from, to, value] = parsed.args;
-                    const amountUsdc = parseFloat(formatUnits(value, 6));
-                    if (to.toLowerCase() === VAULT_ADDRESS.toLowerCase() && amountUsdc >= 0.02) {
-                        if (!(await claimLegacyTx(txHash))) return { valid: false, reason: "Tx hash already spent" };
-                        return { valid: true, amount: amountUsdc, amountAtomic: value.toString(), sender: from };
-                    }
-                }
-            } catch (e) {}
-        }
-        return { valid: false, reason: "No matching USDC transfer to vault found" };
-    } catch (err) {
-        return { valid: false, reason: "RPC error verifying transaction" };
-    }
-}
-
 // Helper: Decode and parse incoming payment payload
 function decodePaymentPayload(raw) {
     if (!raw) return null;
@@ -512,7 +450,7 @@ async function handleX402Agent(req, res, product = null) {
     if (typeof product !== 'object') product = null; // Express passes next() as 3rd arg on /api/agent
     const deliver = product ? product.deliver : safeSignal;
     const paymentSigHeader = req.headers['payment-signature'] || req.headers['x-payment'];
-    const legacyTx = req.headers['x-payment-tx'] || req.query.tx;
+    const legacyTx = req.headers['x-payment-tx'] || req.query.tx; // retired path, see below
     // Day pass: X-GW8-Pass header skips the 402 when valid (checked before the paywall). Not for excluded products.
     const passHdr = req.headers['x-gw8-pass'];
     if (passHdr && !(product && product.noPass)) {
@@ -553,21 +491,14 @@ async function handleX402Agent(req, res, product = null) {
         }
     }
 
-    // FALLBACK ONLY: Manual Transfer Hash Check (tx already on-chain, so deliver first and release the tx if data fails)
+    // RETIRED: manual tx-hash redemption (X-Payment-Tx / ?tx=). A public USDC transfer to the payout wallet is
+    // visible to anyone, so redeeming a tx hash for data let third parties claim other people's payments. It had
+    // no recorded use. Nothing is delivered for a tx hash; callers get the x402 challenge to pay the normal way.
     if (legacyTx && !product) {
-        const manualCheck = await verifyManualUsdcTx(legacyTx);
-        if (manualCheck.valid) {
-            let out;
-            try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
-            if (!out || out.error) {
-                await releaseLegacyTx(legacyTx);
-                return res.status(503).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'your tx hash was not consumed; retry with the same X-Payment-Tx' });
-            }
-            const body = { status: 'success', accessType: 'MANUAL_TX_FALLBACK', txHash: legacyTx, amountPaid: manualCheck.amount, timestamp: new Date().toISOString(), signal: out };
-            res.locals.gw8Payer = manualCheck.sender;
-            return res.set(receiptHeaders({ route: `${req.method} ${req.path}`, resource: RESOURCE_URL, amount: manualCheck.amountAtomic, payTo: VAULT_ADDRESS, tx: legacyTx, payer: manualCheck.sender, accessType: 'MANUAL_TX_FALLBACK' }, body)).json(body);
-        }
-        return res.status(400).json({ error: "Invalid Payment", reason: manualCheck.reason });
+        const challenge = getX402ChallengeV2();
+        return res.status(410)
+            .set('PAYMENT-REQUIRED', Buffer.from(JSON.stringify(challenge)).toString('base64'))
+            .json({ error: 'MANUAL_TX_RETIRED', message: 'Paying by raw USDC transfer + tx hash is no longer accepted (anyone could redeem a public tx). Pay with x402 instead: sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE. No data is returned for a tx hash.', howTo: `${BASE_URL}/pay.html`, freeTeaser: `${BASE_URL}/api/brief/teaser`, note: 'If you already sent a raw transfer expecting data, contact the operator via the GitHub repo for a refund.' });
     }
 
     // PRIMARY CHALLENGE: 402 Payment Required (x402 Version 2). v2 fields unchanged; GW8 extras ride alongside.

@@ -12,6 +12,9 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Retire manual tx-hash redemption (2026-10-19)
+- `/api/agent` with X-Payment-Tx or ?tx= now returns 410 MANUAL_TX_RETIRED plus the x402 challenge; no data. Anyone could redeem a public transfer to the payout wallet. Stats showed 0 uses. ethers import dropped from server.js (dependency left in package.json). x402 flows unchanged.
+
 ### Buyer-vs-bot stats + trust/funnel (2026-10-19)
 - Stats: audience split (known x402 monitors/indexers/graders, crawlers, empty UA = bot; else likely buyer; GW8_OWN_WALLETS = self). Per-route buyer/bot quotes and paid calls, unique/repeat/returning payers by anonymized id, top bot names. Legacy totals unchanged except safe-retry replays are tallied as "other", not paid.
 - 402s: extra `gw8` body field + X-GW8-Free-Teaser / X-GW8-Best-Value / X-GW8-Paid-Adds / Link headers (free teaser, what the paid call adds, day pass). x402 v2 fields and PAYMENT-REQUIRED header unchanged.

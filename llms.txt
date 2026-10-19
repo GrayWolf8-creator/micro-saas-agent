@@ -1,40 +1,53 @@
 # GW8 Crypto Regime + WaveTrend Signal API (x402)
-> Pay-per-call crypto market signal for AI agents. $0.02 USDC on Base via x402 v2. Signal only, no trading, not financial advice.
+> Pay-per-call crypto market signals for AI agents. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
 
-## What you get (POST /api/agent, $0.02)
-- stage1: 4-check market regime score 0-4 (BTC spot ETF 3-day net flow, BTC quiet support near 20d low, alt breadth not in freefall, Fear & Greed < 60 / no weekend pump), each with pass/fail/unknown, raw values and the rule.
-- wavetrend: LazyBear WaveTrend 10/21/4 on Kraken 4h closed candles for 66 USD pairs. core = BTC/ETH/SOL/LINK/XRP wt1/wt2; bandDots = every green (wt1<=-53, outer<=-60) / red (wt1>=53, outer>=60) cross in the last 6 bars, with name, bar time, close.
-- Data refreshes every 10 minutes; responses are served from cache (fast).
+## Start here (free)
+- GET /api/sample — live Stage 1 regime statuses, core WaveTrend values, band-dot count.
+- GET /llms.txt — this file.
+- GET /openapi.json — machine-readable paid + free routes (x402scan OpenAPI-first discovery).
+- GET /.well-known/x402 — resource fan-out list for indexers.
+- GET /track and GET /api/track — honest track record. Backtest section is **simulated** (rolling ~90 days). Live log accrues after deploy (label shows "live log not started yet" until the first logged dot).
+- GET /api/stats and /stats.html — per-endpoint request tallies (402 quotes vs paid). No IPs or PII.
+- GET /api/proof/pubkey — Ed25519 public key for signed paid responses.
+- GET /api/govcontracts/status, /api/kraken/listings/status, /api/rules/status — free source-health checks (no paid rows).
 
-## More paid endpoints
-- GET /api/history ($0.05, optional ?pair=BTC): rolling 90-day backtest of every band dot, recomputed live, with forward % change +4h/+24h/+3d and hit-rate summary. Green dots carry the edge (recent window: outer green dots ~64% higher after 3 days); red dots are near coin-flip, shown as-is. Past performance is not indicative of future results.
-- GET /api/regime ($0.01): full Stage 1 detail with raw values and rules.
-- GET /api/dots ($0.01): current band dots across 66 pairs.
-- GET /api/coin/:symbol ($0.005): WaveTrend 4h for one coin.
-- GET /api/verdict/:chain/:address ($0.02): token safety verdict. score 0-100, verdict safe (>=75) / caution (40-74) / danger (<40), reasons[], sources[] (GoPlus token security + DexScreener), fixed published rules, 10-min cache. Chains: base, ethereum, bsc, arbitrum, solana. Automated screen, not a guarantee.
-- GET /api/flows/:symbol ($0.02): large-print buy vs sell summary from Kraken public trades (last 1000 prints, threshold max($10k, 95th pct)) joined with WaveTrend 4h state. Single venue only: not on-chain whale wallets, not other exchanges.
-- GET /api/brief ($0.05): daily brief built once per Mountain Time day: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.
-- GET /api/rwa ($0.02): real-world asset feed (tokenized treasuries, private credit, stocks): top RWA protocols by TVL with 1d/7d change and estimated 7d flow (TVL change, includes price effects), 7d movers, protocols newly listed on DefiLlama in last 30 days, top RWA yield pools (apy, 30d avg, tvl), top RWA tokens by market cap (CoinGecko), sourceStatus, sources[], asOf. 10-min cache; partial data if one source fails, no charge if all fail.
-- GET /api/govcontracts ($0.02, optional ?ticker=PLTR ?sector=ai|defense-tech|defense-prime|drones|nuclear|space|quantum|robotics ?q=keyword): US federal contract actions from the last 14 days (USAspending.gov, by action date) to a curated list of AI, drone, nuclear, robotics, space, quantum and defense-tech companies. Per action: date, recipient, ticker (null for private), sector, amountUsd (obligation in that action), agency, subAgency, awardId, modification, description, USAspending link; plus per-company totals. $0 admin mods excluded. Also merges Department of War daily contract announcements (war.gov, awards >= $7.5M; source: dod-announcement, amountType ceiling/modification/announced value, contractNumber, branch, contracting activity), deduped by contract number; otherLargeDodAwards lists big unmapped DoD awards. sourceStatus per source; DoD awards appear on USAspending only after ~90 days. CURRENT STATUS: the war.gov announcements source is blocked from our host, so dodAnnouncements is "unavailable" and DoD awards currently appear only via USAspending (~90-day lag). The code retries every cache refresh and recovers automatically if unblocked; check free GET /api/govcontracts/status. 30-min cache; no charge if the source is down.
+## What agents search for
+| Need | Call | Price |
+| --- | --- | --- |
+| Crypto market regime (risk-on/risk-off) | GET /api/regime or POST /api/agent | $0.01 / $0.02 |
+| WaveTrend oversold/overbought dots | GET /api/dots or GET /api/coin/{symbol} | $0.01 / $0.005 |
+| Simulated hit-rate backtest | GET /api/history | $0.05 |
+| Kraken new listings | GET /api/kraken/listings | $0.02 |
+| Tokenized RWA flows | GET /api/rwa | $0.02 |
+| Federal contract awards | GET /api/govcontracts | $0.02 |
+| CFTC/SEC crypto rule changes | GET /api/rules | $0.02 |
+| Green-dot webhook alerts | POST /api/alerts/subscribe | $0.50 |
+| Day pass (24h, most paid routes) | POST /api/pass/day | $1.00 |
 
-## Day pass ($1.00)
-- POST /api/pass/day ($1.00 = 1000000 USDC units, x402; MCP tool buy_day_pass in-band): returns {pass, expiresAt}. For 24 hours send header X-GW8-Pass: <pass> on any paid data endpoint (MCP: add argument "pass") and the 402 is skipped.
-- Fair use: 2000 calls per pass, 60 calls/min (429 when exceeded). Calls that fail upstream are not counted. Excludes POST /api/alerts/subscribe and the pass endpoint itself.
-- The token is shown once and is bearer-style: anyone holding it can use it until expiry. We store only a hash of it. If our pass store is unavailable the pass check fails with 503 (pay per call instead). Signal only; no refunds of unused time.
-
-## Signed responses
-- When enabled, paid responses carry X-GW8-Signature (base64 Ed25519 over "<X-GW8-Signed-At>.<sha256 hex of body>"), X-GW8-Signed-At and X-GW8-Body-SHA256. Public key: GET /api/proof/pubkey (free).
-
-- POST /api/alerts/subscribe ($0.50): webhook alerts for NEW green band dots for 30 days or 300 alerts. JSON body {"webhookUrl":"https://…","filter":"outer|inner|all","pairs":["BTC"]}. Invalid bodies are rejected before payment. Response includes subscriptionId and a one-time secret; each alert POST carries X-GW8-Signature: t=<unix>,v1=<HMAC-SHA256(secret, "<t>.<rawBody>")>. Status: GET /api/alerts/{subscriptionId}.
-
-## Free
-- GET /track (HTML, phone-friendly) and GET /api/track (JSON): honest track record of the band-dot signals. Two separate sections: backtest (simulated, rolling ~90 days) and live-logged since the date shown. Per signal: date, coin, green/red, band, entry price, move after 1d/7d/30d (null until elapsed), hit/miss; summary hit rates by horizon including misses, avg/median/worst move. Signals from the last 24h are withheld (paid). No fees/slippage.
-- GET /api/proof/pubkey: signing public key.
-- GET /api/govcontracts/status: gov feed source health (sourceStatus per source, asOf, dodAnnouncementDays, dodAwardsParsed, count). No award rows.
-- GET /api/sample: live stage1 statuses, core WaveTrend values, band-dot count.
-- GET /api/stats (?days=1..30, optional ?format=md) and GET /stats.html: per-endpoint request tallies (402 payment quotes, paid 2xx, 404, 405, 5xx). No IPs, headers, or wallet addresses. Not a paid endpoint.
+## Paid endpoints (what you get / when to use)
+- POST /api/agent ($0.02): full snapshot — Stage 1 regime score 0-4 + WaveTrend 10/21/4 band dots on 66 Kraken 4h pairs. Use for a one-shot scan. Example shape: `{ signal: { stage1: { score, outOf, checks }, wavetrend: { bandDots, universe: 66 } } }`.
+- GET /api/regime ($0.01): Stage 1 detail only (ETF 3-day net flow, BTC quiet support, alt breadth, Fear & Greed). Use for regime context before other calls.
+- GET /api/dots ($0.01): current green/red WaveTrend band dots (inner ≤-53 / ≥53, outer ≤-60 / ≥60) across 66 pairs, last 6 closed 4h bars.
+- GET /api/coin/:symbol ($0.005): WaveTrend 4h for one coin (cheapest). Example: `{ name: "BTC", wt1, wt2, dots }`.
+- GET /api/history ($0.05, optional ?pair=BTC): **simulated** 90-day band-dot backtest with forward %+4h/+24h/+3d and hit-rate summary. Not a live trade log. Past performance ≠ future results.
+- GET /api/verdict/:chain/:address ($0.02): token safety score 0-100 → safe/caution/danger (GoPlus + DexScreener, fixed rules). Automated screen, not a guarantee. Chains: base, ethereum, bsc, arbitrum, solana.
+- GET /api/flows/:symbol ($0.02): Kraken large-print buy/sell summary (single venue, not on-chain) + WaveTrend 4h state.
+- GET /api/brief ($0.05): once-per-day (Mountain Time) digest — regime, dot counts, top coins, BTC/ETH/SOL flows.
+- GET /api/rwa ($0.02): tokenized RWA flows — protocol TVL, 7d change/estimated flows, movers, yields, top RWA tokens (DefiLlama + CoinGecko, 10-min cache).
+- GET /api/govcontracts ($0.02, optional ?ticker= ?sector= ?q=): federal contract awards (14-day USAspending actions) to AI/drone/nuclear/robotics/space/quantum/defense-tech. **Defense/DoD awards are about 90 days late** via USAspending; war.gov announcements currently unavailable from our host (check /api/govcontracts/status).
+- GET /api/kraken/listings ($0.02): Kraken new USD pairs (30 days) with price, volume, % since listing, WaveTrend state.
+- GET /api/rules ($0.02): CFTC + SEC crypto rule-change feed (90 days) with RIN, comment deadlines, stage changes.
+- POST /api/alerts/subscribe ($0.50): webhook for NEW green WaveTrend band dots (30 days or 300 alerts, HMAC-signed). Body `{ "webhookUrl": "https://…", "filter": "outer|inner|all", "pairs?": ["BTC"] }`. Invalid bodies rejected before payment.
+- POST /api/brief/weekly/subscribe ($0.25): 4 Monday webhook briefs (regime, dots, hit rates, RWA, gov; DoD ~90d lag).
+- POST /api/pass/day ($1.00): 24h access to paid data endpoints via `X-GW8-Pass` (fair use 2000/day, 60/min). Excludes alert subscribe. Token shown once.
 
 ## Payment
-- x402 v2, scheme exact, network eip155:8453, asset USDC 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, amount 20000, payTo 0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd
-- Send PAYMENT-SIGNATURE (or X-PAYMENT). Unpaid requests return 402 with PAYMENT-REQUIRED.
-- Manifest: /.well-known/x402.json
+- x402 v2, scheme exact, network eip155:8453, asset USDC `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`, payTo `0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd`.
+- Unpaid requests return **402** with `PAYMENT-REQUIRED`. Retry with `PAYMENT-SIGNATURE`.
+- Discovery: `/openapi.json` (preferred), `/.well-known/x402` (fan-out). CDP Bazaar lists a route after the first successful facilitator **settlement** for that resource.
+
+## Honesty labels
+- History/track **backtest** = simulated.
+- Track **live log** = starts empty until the running service logs its first band dot.
+- Gov **DoD/defense** awards ≈ 90-day USAspending lag; no live war.gov scrape from our host today.
+- All outputs are signal only — not financial advice, no trade execution.

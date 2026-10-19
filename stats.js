@@ -1,6 +1,8 @@
-// stats.js — free per-endpoint request counters. No PII (no IPs, headers, wallets).
-// Persistence: Upstash Redis REST via alerts.js helper; in-memory fallback.
+// stats.js — free per-endpoint request counters. No PII: no IPs or raw headers; a user-agent is reduced to a
+// fixed bot name or "buyer" (buyers.js), and payer wallets are stored only as truncated SHA-256 ids.
+// Persistence: Upstash Redis REST via alerts.js helper; in-memory fallback. All keys expire (~35d) or are capped.
 import { redis, hasRedis } from './alerts.js';
+import { classifyUA, payerId, isOwnPayer, GRADER_ROUTES_PER_HOUR } from './buyers.js';
 
 const TTL_SEC = 35 * 24 * 60 * 60; // ~35 days
 const KEY_PREFIX = 'gw8:stats:';
@@ -40,7 +42,8 @@ const EXACT = new Set([
     '/api/brief/teaser',
     '/api/track',
     '/api/proof/pubkey',
-        '/api/brief/weekly/subscribe',
+    '/.well-known/gw8-receipt-key',
+    '/api/brief/weekly/subscribe',
 ]);
 
 const PARAM = [
@@ -132,27 +135,98 @@ async function redisIncr(day, field) {
     return n;
 }
 
-/** Fire-and-forget record. Never throws to caller. */
-export function record(method, path, statusCode) {
+/** Fire-and-forget record. Never throws to caller. Returns the normalized route key (or null). */
+export function record(method, path, statusCode, opts = {}) {
     try {
         const route = normalizeRoute(method, path);
-        if (!route) return;
+        if (!route) return null;
         const day = mtDate();
-        const cls = statusClass(statusCode);
+        // A safe-retry replay of an already-settled payment is not a second sale: tallied as "other", not paid.
+        const cls = opts.replay ? 'replay' : statusClass(statusCode);
         const field = `${route}|${cls}`;
         // Always bump memory so local reads work even when Redis is configured
         memIncr(day, field);
-        if (!hasRedis()) return;
-        redisIncr(day, field).catch(e => console.error('[stats] redis incr failed', e.message));
+        if (hasRedis()) redisIncr(day, field).catch(e => console.error('[stats] redis incr failed', e.message));
+        return route;
     } catch (e) {
         console.error('[stats] record failed', e && e.message);
+        return null;
     }
+}
+
+// ---------- Audience split: bot vs likely buyer (vs self = GW8's own seeding wallets) ----------
+// Extra fields live in the same per-day hash, prefixed so the legacy route parser skips them:
+//   a|<bot|buyer|self>|<req|402|paid>|<METHOD route>   per-route counts by audience
+//   ua|<botName>                                       requests per named bot (fixed list, bounded)
+// Payers (ids only): gw8:stats:payers:<day> {pid: paidCalls}, gw8:stats:payer_first {pid: firstDay} (capped),
+// gw8:stats:graders {pid: dayFlagged}, gw8:stats:pr:<pid>:<hour> SET of routes (1h TTL) for the grader rule.
+const PAYERS = 'gw8:stats:payers:', FIRST = 'gw8:stats:payer_first', GRADERS = 'gw8:stats:graders', PR = 'gw8:stats:pr:';
+const MAX_PAYERS_TRACKED = 50000;
+const memP = { days: new Map(), first: new Map(), graders: new Map(), hourly: new Map() };
+const isAud = f => f.startsWith('a|') || f.startsWith('ua|');
+
+async function bump(day, field) {
+    memIncr(day, field);
+    if (hasRedis()) await redisIncr(day, field);
+}
+
+/** Track a settled payer; returns 'self' | 'bot' (grader) | null (no override). */
+async function trackPayer(day, pid, route) {
+    const own = isOwnPayer(pid);
+    const hour = Math.floor(Date.now() / 3600e3);
+    if (!hasRedis()) {
+        const pd = memP.days.get(day) || new Map(); memP.days.set(day, pd); pd.set(pid, (pd.get(pid) || 0) + 1);
+        if (!memP.first.has(pid) && memP.first.size < MAX_PAYERS_TRACKED) memP.first.set(pid, day);
+        const hk = pid + ':' + hour, hs = memP.hourly.get(hk) || new Set(); memP.hourly.set(hk, hs); hs.add(route);
+        if (memP.hourly.size > 2000) for (const k of memP.hourly.keys()) { if (!k.endsWith(':' + hour)) memP.hourly.delete(k); }
+        if (own) return 'self';
+        if (hs.size >= GRADER_ROUTES_PER_HOUR && !memP.graders.has(pid)) memP.graders.set(pid, day);
+        return memP.graders.has(pid) ? 'bot' : null;
+    }
+    const pk = PAYERS + day;
+    await redis(['HINCRBY', pk, pid, 1]);
+    await redis(['EXPIRE', pk, TTL_SEC]);
+    if ((await redis(['HLEN', FIRST])) < MAX_PAYERS_TRACKED) await redis(['HSETNX', FIRST, pid, day]);
+    if (own) return 'self';
+    const hk = PR + pid + ':' + hour;
+    await redis(['SADD', hk, route]);
+    await redis(['EXPIRE', hk, 3600]);
+    if ((await redis(['SCARD', hk])) >= GRADER_ROUTES_PER_HOUR) await redis(['HSETNX', GRADERS, pid, day]);
+    return (await redis(['HEXISTS', GRADERS, pid])) ? 'bot' : null;
+}
+
+/** Record audience fields for one finished request. Never throws. */
+export async function recordAudience({ route, statusCode, ua, payer, paidRoute, replay }) {
+    try {
+        if (!route) return;
+        const day = mtDate();
+        const c = classifyUA(ua);
+        let aud = c.cls;
+        const code = Number(statusCode) || 0;
+        const isPaid = !replay && paidRoute && code >= 200 && code < 300;
+        const pid = isPaid && payer ? payerId(payer) : null;
+        if (pid) { const o = await trackPayer(day, pid, route); if (o) aud = o; }
+        await bump(day, `a|${aud}|req|${route}`);
+        if (code === 402) await bump(day, `a|${aud}|402|${route}`);
+        if (isPaid) await bump(day, `a|${aud}|paid|${route}`);
+        if (c.cls === 'bot') await bump(day, `ua|${c.name}`);
+    } catch (e) { console.error('[stats] audience record failed', e && e.message); }
+}
+
+/** MCP in-band settlements (no HTTP 2xx on a paid path): count the paid call and the payer. */
+export function recordMcpPaid(toolName, payer) {
+    const route = `MCP ${String(toolName).replace(/[^a-z0-9_]/gi, '').slice(0, 40)}`;
+    recordAudience({ route, statusCode: 200, ua: 'mcp-inband', payer, paidRoute: true }).catch(() => {});
 }
 
 /** Express middleware: tally on response finish. Place before x402 handlers. */
 export function statsMiddleware(req, res, next) {
+    const ua = req.headers['user-agent'];
     res.on('finish', () => {
-        record(req.method, req.path || req.url, res.statusCode);
+        const replay = !!res.locals.gw8Replay;
+        const route = record(req.method, req.path || req.url, res.statusCode, { replay });
+        if (!route || route.endsWith(' /')) return; // home keep-warm stays out of the audience split too
+        recordAudience({ route, statusCode: res.statusCode, ua, payer: res.locals.gw8Payer, paidRoute: PAID_PATHS.has(pathOf(route)), replay });
     });
     next();
 }
@@ -225,10 +299,12 @@ export async function getStats(days = 1) {
     const byRoute = new Map();
     const totals = emptyBucket();
     const home = emptyBucket();
+    const audFields = [];
 
     for (const day of list) {
         const fields = await loadDay(day);
         for (const [field, count] of fields) {
+            if (isAud(field)) { audFields.push([field, count]); continue; }
             const pipe = field.lastIndexOf('|');
             if (pipe < 0) continue;
             const routeKey = field.slice(0, pipe);
@@ -249,6 +325,8 @@ export async function getStats(days = 1) {
         .map(([route, b]) => ({ route, ...b }))
         .sort((a, b) => b.requests - a.requests);
 
+    const audience = await buildAudience(list, audFields);
+
     return {
         asOf: new Date().toISOString(),
         timezone: TZ,
@@ -257,10 +335,76 @@ export async function getStats(days = 1) {
         store: hasRedis() ? 'upstash-redis' : 'memory',
         totals,
         routes,
+        audience,
         meta: {
             homeKeepWarm: home,
-            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats and /stats.html are not recorded. No IPs, headers, or wallet addresses stored.',
+            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats and /stats.html are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0).',
         },
+    };
+}
+
+async function loadPayers(day) {
+    if (hasRedis()) {
+        try { return toMap(await redis(['HGETALL', PAYERS + day])); } catch (e) { console.error('[stats] payers read failed', e.message); return new Map(); }
+    }
+    return new Map(memP.days.get(day) || []);
+}
+function toMap(flat) {
+    const m = new Map();
+    if (Array.isArray(flat)) for (let i = 0; i + 1 < flat.length; i += 2) m.set(flat[i], parseInt(flat[i + 1], 10) || 0);
+    else if (flat && typeof flat === 'object') for (const [k, v] of Object.entries(flat)) m.set(k, parseInt(v, 10) || 0);
+    return m;
+}
+
+async function buildAudience(list, audFields) {
+    const seg = () => ({ requests: 0, quotes: 0, paid: 0 });
+    const by = { bot: seg(), likelyBuyer: seg(), self: seg() };
+    const key = a => a === 'buyer' ? 'likelyBuyer' : a;
+    const perRoute = new Map(), bots = new Map();
+    for (const [f, c] of audFields) {
+        const p = f.split('|');
+        if (p[0] === 'ua') { bots.set(p[1], (bots.get(p[1]) || 0) + c); continue; }
+        const [, aud, metric, route] = p; const b = by[key(aud)]; if (!b) continue;
+        const m = metric === 'req' ? 'requests' : metric === '402' ? 'quotes' : metric === 'paid' ? 'paid' : null; if (!m) continue;
+        b[m] += c;
+        if (!perRoute.has(route)) perRoute.set(route, { route, bot: seg(), likelyBuyer: seg(), self: seg() });
+        perRoute.get(route)[key(aud)][m] += c;
+    }
+    // Payers in window
+    const calls = new Map(), daysPaid = new Map();
+    for (const day of list) for (const [pid, c] of await loadPayers(day)) {
+        calls.set(pid, (calls.get(pid) || 0) + c);
+        if (!daysPaid.has(pid)) daysPaid.set(pid, new Set()); daysPaid.get(pid).add(day);
+    }
+    const pids = [...calls.keys()];
+    let first = new Map(), graders = new Map();
+    if (pids.length) {
+        if (hasRedis()) {
+            try {
+                const f = await redis(['HMGET', FIRST, ...pids]);
+                pids.forEach((p, i) => f && f[i] && first.set(p, f[i]));
+                const g = await redis(['HMGET', GRADERS, ...pids]);
+                pids.forEach((p, i) => g && g[i] && graders.set(p, g[i]));
+            } catch (e) { console.error('[stats] payer meta read failed', e.message); }
+        } else { first = memP.first; graders = memP.graders; }
+    }
+    const pay = { unique: 0, repeat: 0, returning: 0, graderBots: 0, self: 0, buyerCalls: 0, graderCalls: 0, selfCalls: 0 };
+    for (const pid of pids) {
+        if (isOwnPayer(pid)) { pay.self++; pay.selfCalls += calls.get(pid); continue; }
+        if (graders.has(pid)) { pay.graderBots++; pay.graderCalls += calls.get(pid); continue; }
+        pay.unique++; pay.buyerCalls += calls.get(pid);
+        if (calls.get(pid) >= 2) pay.repeat++;
+        const days = [...daysPaid.get(pid)].sort(), f = first.get(pid);
+        if (days.length >= 2 || (f && f < days[days.length - 1])) pay.returning++;
+    }
+    return {
+        bot: by.bot, likelyBuyer: by.likelyBuyer, self: by.self,
+        payers: { likelyBuyers: pay.unique, repeat: pay.repeat, returning: pay.returning, graderBots: pay.graderBots, self: pay.self,
+            settledPaidCalls: { likelyBuyer: pay.buyerCalls, grader: pay.graderCalls, self: pay.selfCalls },
+            note: 'Settled x402 payers only (facilitator HTTP + MCP in-band), by anonymized id. Day-pass calls carry no payer. settledPaidCalls is re-classified at read time, so a grader\'s first calls (before it crossed the routes-per-hour rule) count as grader here even though the per-route paid split above recorded them as likelyBuyer. repeat = 2+ paid calls in window; returning = paid on 2+ different MT days (or first paid before the latest paid day).' },
+        topBots: [...bots.entries()].map(([name, requests]) => ({ name, requests })).sort((a, b) => b.requests - a.requests).slice(0, 15),
+        routes: [...perRoute.values()].sort((a, b) => (b.likelyBuyer.quotes + b.likelyBuyer.paid) - (a.likelyBuyer.quotes + a.likelyBuyer.paid) || (b.bot.requests - a.bot.requests)),
+        method: `bot = known x402 monitor/indexer/grader user-agents (Tanod list + x402 scanners), generic crawlers/uptime/security scanners, raw HTTP libraries and empty UA; plus any wallet that paid ${GRADER_ROUTES_PER_HOUR}+ different routes within an hour (grader). self = wallets in GW8_OWN_WALLETS. likelyBuyer = everything else (heuristic; a bot with a browser-like UA counts here).`,
     };
 }
 
@@ -292,6 +436,17 @@ export function renderStatsMd(s) {
         lines.push(`| ${r.route} | ${r.requests} | ${r.quotes} | ${r.paid} | ${r.served} | ${r.notFound} | ${r.methodNotAllowed} | ${r.errors} |`);
     }
     if (!s.routes.length) lines.push(`| _(none yet)_ | 0 | 0 | 0 | 0 | 0 | 0 | 0 |`);
+    const a = s.audience;
+    if (a) {
+        lines.push(``, `## Bots vs likely buyers`,
+            `| Audience | Req | 402 quotes | Paid |`, `| --- | ---: | ---: | ---: |`,
+            `| Likely buyer | ${a.likelyBuyer.requests} | ${a.likelyBuyer.quotes} | ${a.likelyBuyer.paid} |`,
+            `| Bot / monitor | ${a.bot.requests} | ${a.bot.quotes} | ${a.bot.paid} |`,
+            `| Self (own wallets) | ${a.self.requests} | ${a.self.quotes} | ${a.self.paid} |`,
+            ``, `- Unique likely-buyer payers: ${a.payers.likelyBuyers} (repeat ${a.payers.repeat}, returning ${a.payers.returning}); grader wallets: ${a.payers.graderBots}; self: ${a.payers.self}`,
+            `- Settled paid calls by payer (re-classified): buyer ${a.payers.settledPaidCalls.likelyBuyer}, grader ${a.payers.settledPaidCalls.grader}, self ${a.payers.settledPaidCalls.self}`,
+            `- Top bots: ${a.topBots.map(b => `${b.name} ${b.requests}`).join(', ') || 'none'}`);
+    }
     lines.push(``, `_Generated ${s.asOf}_`);
     return lines.join('\n');
 }
@@ -326,6 +481,7 @@ export function renderStatsHtml(s) {
   <div><div class="n">${t.notFound}</div><div class="l">404</div></div>
   <div><div class="n">${t.errors}</div><div class="l">5xx</div></div>
 </div>
+${audienceHtml(s.audience)}
 <h2>Home keep-warm (excluded from totals)</h2>
 <div class="card">${h.requests} hits · ${h.served} served 2xx</div>
 <h2>Per route</h2>
@@ -336,6 +492,25 @@ export function renderStatsHtml(s) {
 </div>
 <p class="note">${esc(s.meta.note)} · JSON: <a href="/api/stats">/api/stats</a> · md: <a href="/api/stats?format=md">?format=md</a></p>
 </body></html>`;
+}
+
+function audienceHtml(a) {
+    if (!a) return '';
+    const b = a.likelyBuyer, o = a.bot, me = a.self, p = a.payers;
+    const rows = a.routes.filter(r => r.likelyBuyer.requests || r.bot.quotes || r.likelyBuyer.paid).slice(0, 25).map(r => `<tr><td>${esc(r.route)}</td><td>${r.likelyBuyer.quotes}</td><td>${r.likelyBuyer.paid}</td><td>${r.bot.quotes}</td><td>${r.bot.paid}</td></tr>`).join('') || `<tr><td colspan="5"><em>none yet</em></td></tr>`;
+    return `<h2>Likely buyers vs bots</h2>
+<div class="card grid">
+  <div><div class="n">${b.quotes}</div><div class="l">Buyer 402 quotes</div></div>
+  <div><div class="n">${b.paid}</div><div class="l">Buyer paid calls</div></div>
+  <div><div class="n">${p.likelyBuyers}</div><div class="l">Unique buyer payers</div></div>
+  <div><div class="n">${p.returning}</div><div class="l">Returning payers</div></div>
+  <div><div class="n" style="color:#94a3b8">${o.quotes}</div><div class="l">Bot 402 quotes</div></div>
+  <div><div class="n" style="color:#94a3b8">${o.paid}</div><div class="l">Bot / grader paid</div></div>
+  <div><div class="n" style="color:#94a3b8">${me.paid}</div><div class="l">Self paid (seeding)</div></div>
+</div>
+<div class="card" style="font-size:.8rem">Repeat payers: ${p.repeat} · grader wallets: ${p.graderBots} · self wallets: ${p.self}<br>Settled paid calls by payer: buyer ${p.settledPaidCalls.likelyBuyer} · grader ${p.settledPaidCalls.grader} · self ${p.settledPaidCalls.self}<br>Top bots: ${esc(a.topBots.map(x => `${x.name} ${x.requests}`).join(', ') || 'none')}</div>
+<div class="card" style="overflow-x:auto"><table><thead><tr><th>Route</th><th>Buyer 402</th><th>Buyer paid</th><th>Bot 402</th><th>Bot paid</th></tr></thead><tbody>${rows}</tbody></table></div>
+<p class="note">${esc(a.method)}</p>`;
 }
 
 function esc(s) {

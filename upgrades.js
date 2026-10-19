@@ -209,6 +209,12 @@ try {
   }
 } catch { signKey = null; console.warn('[signing] SIGNING_KEY present but unusable; responses will be unsigned'); }
 export const signingEnabled = () => !!signKey;
+// Detached Ed25519 signature (base64) over bytes, or null when SIGNING_KEY is unset/unusable. Never throws.
+export function signDetached(bytes) {
+  if (!signKey) return null;
+  try { return crypto.sign(null, Buffer.isBuffer(bytes) ? bytes : Buffer.from(String(bytes)), signKey).toString('base64'); }
+  catch { return null; }
+}
 export function publicKeyInfo() {
   return signKey ? { enabled: true, algorithm: 'Ed25519', publicKeyPem: pubPem,
     publicKeySpkiBase64: crypto.createPublicKey(signKey).export({ type: 'spki', format: 'der' }).toString('base64'),

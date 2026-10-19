@@ -20,7 +20,10 @@ import { getKrakenListings, getKrakenStatus, snapshot as krakenSnapshot } from '
 import { getRules, getRulesStatus } from './rules.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
-import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd } from './stats.js';
+import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid } from './stats.js';
+import { funnel, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH } from './trust.js';
+import { payerFrom } from './buyers.js';
+import { redis, hasRedis } from './alerts.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -215,7 +218,9 @@ app.get('/', (req, res) => {
                 ]
             }
         },
-        free: { teaser: "/api/brief/teaser", sample: "/api/sample", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", proofPubkey: "/api/proof/pubkey" },
+        free: { teaser: "/api/brief/teaser", sample: "/api/sample", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH },
+        bestValue: { path: "/api/pass/day", method: "POST", priceUsd: "1.00", note: "one payment, 24h of every paid data endpoint" },
+        trust: TRUST_LINE + " Safe retry: same PAYMENT-SIGNATURE within 15 min is not charged twice.",
         docs: "/llms.txt",
         openapi: "/openapi.json",
         discovery: "/.well-known/x402",
@@ -240,7 +245,7 @@ function discoveryFanout() {
     return {
         version: 1,
         resources: PAID.map(p => `https://micro-saas-agent.onrender.com${p.ex || p.path.replace('{symbol}', 'BTC')}`),
-        instructions: 'OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base). Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.',
+        instructions: `OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Best value: POST /api/pass/day ($1.00, 24h). Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
         openapi: 'https://micro-saas-agent.onrender.com/openapi.json',
         llms: 'https://micro-saas-agent.onrender.com/llms.txt'
     };
@@ -280,24 +285,25 @@ function openApiDoc() {
             'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
             responses: {
                 '200': { description: 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: { type: 'object' } } } },
-                '402': { description: `Payment required: ${p.price} USDC on Base (eip155:8453) via x402 v2` }
+                '402': { description: `Payment required: ${p.price} USDC on Base (eip155:8453) via x402 v2. Free teaser: /api/brief/teaser. Best value: POST /api/pass/day. ${TRUST_LINE}` }
             }
         } };
     }
     paths['/api/proof/pubkey'] = { get: { operationId: 'proof_pubkey', summary: 'Free: Ed25519 public key used to sign paid responses (X-GW8-Signature, X-GW8-Signed-At, X-GW8-Body-SHA256)', security: [], responses: { '200': { description: 'Public key JSON' } } } };
+    paths[RECEIPT_KEY_PATH] = { get: { operationId: 'receipt_key', summary: 'Free: Ed25519 public key + format for verifying X-GW8-Receipt / X-GW8-Receipt-Signature on paid responses', security: [], responses: { '200': { description: 'Key JSON' } } } };
     paths['/api/govcontracts/status'] = { get: { operationId: 'govcontracts_status', summary: 'Free: gov-contract feed source health (sourceStatus, asOf, dodAnnouncementDays, dodAwardsParsed, count; no rows)', security: [], responses: { '200': { description: 'Status JSON' } } } };
     paths['/api/track'] = { get: { operationId: 'track', summary: 'Free: honest track record of band-dot signals (backtest simulated vs live-logged, hit rates 1d/7d/30d incl. misses). HTML at /track', security: [], responses: { '200': { description: 'Track JSON' } } } };
     paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample (regime statuses + core WaveTrend values)', security: [], responses: { '200': { description: 'Sample JSON' } } } };
     paths['/api/brief/teaser'] = { get: { operationId: 'brief_teaser', summary: 'Free: partial live brief — regime score, green/red counts, top 3 dots (symbol+band only), simulated 7d hit-rate headline; upsells full brief/dots/agent', security: [], responses: { '200': { description: 'Teaser JSON' } } } };
-    paths['/api/stats'] = { get: { operationId: 'stats', summary: 'Free: per-endpoint request tallies (402 quotes, paid 2xx, 404, 5xx) for the last 1-30 Mountain Time days. No IPs or PII. HTML at /stats.html; ?format=md for markdown', security: [], parameters: [
+    paths['/api/stats'] = { get: { operationId: 'stats', summary: 'Free: per-endpoint request tallies (402 quotes, paid 2xx, 404, 5xx) for the last 1-30 Mountain Time days, plus audience split (known bots vs likely buyers, unique/returning payers by anonymized id). No IPs or PII. HTML at /stats.html; ?format=md for markdown', security: [], parameters: [
         { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 30, default: 1 } },
         { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'md'], default: 'json' } }
     ], responses: { '200': { description: 'Stats JSON or markdown' } } } };
     return {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
-            description: 'Pay-per-call crypto market regime, WaveTrend oversold/overbought dots, Kraken new listings, tokenized RWA flows, federal contract awards, and simulated hit-rate backtests for AI agents via x402 (USDC on Base). Signal only, no trading, not financial advice.',
-            'x-guidance': 'Start free: GET /api/brief/teaser (partial live brief), GET /api/sample, GET /track (backtest simulated), GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Starter: GET /api/coin/{symbol} ($0.005), GET /api/regime ($0.01), GET /api/dots ($0.01). Research: POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/kraken/listings ($0.02), GET /api/rules ($0.02), GET /api/verdict/{chain}/{address} ($0.01). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge.' },
+            description: 'Pay-per-call crypto market regime, WaveTrend oversold/overbought dots, Kraken new listings, tokenized RWA flows, federal contract awards, and simulated hit-rate backtests for AI agents via x402 (USDC on Base). No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
+            'x-guidance': 'Start free: GET /api/brief/teaser (partial live brief), GET /api/sample, GET /track (backtest simulated), GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Starter: GET /api/coin/{symbol} ($0.005), GET /api/regime ($0.01), GET /api/dots ($0.01). Research: POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/kraken/listings ($0.02), GET /api/rules ($0.02), GET /api/verdict/{chain}/{address} ($0.01). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -305,6 +311,7 @@ function openApiDoc() {
 app.get(['/favicon.ico', '/favicon.svg'], (req, res) => res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#0b1220"/><path d="M8 40 Q20 10 32 32 T56 24" stroke="#22c55e" stroke-width="6" fill="none"/></svg>'));
 app.get('/openapi.json', (req, res) => res.json(openApiDoc()));
 app.get('/.well-known/x402', (req, res) => res.json(discoveryFanout()));
+app.get(RECEIPT_KEY_PATH, (req, res) => res.json(receiptKeyInfo()));
 
 // MCP (remote, streamable HTTP, stateless). Free tools return data. Paid tools take x402 payment in-band
 // (via @x402/mcp, _meta["x402/payment"]) when the facilitator is configured; otherwise they fall back to
@@ -333,7 +340,7 @@ async function buildMcp() {
             catch (e) { await refundPass(p); return mcpErr('upstream data unavailable, retry shortly (pass call not counted)'); }
         };
         const wrap = await paidWrapper(name, amount, `${title}: ${desc}`);
-        const pointer = async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).' });
+        const pointer = async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).', ...funnel(ORIGIN + path, { passUsd: PASS_PLAN.priceUsd, passHours: PASS_PLAN.hours, passCap: PASS_PLAN.dailyCap, noPass: !!opts.noPass }).body });
         if (!wrap) return m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base via x402. Returns the endpoint to call with an x402 client.`, inputSchema: schema }, async (a) => (!opts.noPass && a.pass) ? viaPass(a) : pointer(a));
         const run = wrap(async (a) => {
             try { const out = await deliver(a); return out && out.error ? mcpErr(String(out.error)) : txt(out); }
@@ -387,7 +394,24 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
 }));
 
 // Helper: Manual TX Fallback
+// Replay protection: in-memory set plus (when Upstash is configured) SET NX with a 90-day TTL so a
+// restart does not make an old tx hash spendable again. release() undoes the claim if delivery fails.
+const LEGACY_TX_TTL = 90 * 24 * 3600;
+async function claimLegacyTx(txHash) {
+    if (processedTxs.has(txHash)) return false;
+    if (hasRedis()) {
+        try { if ((await redis(['SET', `gw8:legacy_tx:${String(txHash).toLowerCase()}`, '1', 'NX', 'EX', LEGACY_TX_TTL])) !== 'OK') return false; }
+        catch (e) { console.error('[legacy-tx] redis claim failed, memory only', e.message); }
+    }
+    processedTxs.add(txHash);
+    return true;
+}
+async function releaseLegacyTx(txHash) {
+    processedTxs.delete(txHash);
+    if (hasRedis()) { try { await redis(['DEL', `gw8:legacy_tx:${String(txHash).toLowerCase()}`]); } catch { /* ignore */ } }
+}
 async function verifyManualUsdcTx(txHash) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(String(txHash || ''))) return { valid: false, reason: "Invalid tx hash" };
     if (processedTxs.has(txHash)) return { valid: false, reason: "Tx hash already spent" };
     try {
         const provider = getProvider();
@@ -402,8 +426,8 @@ async function verifyManualUsdcTx(txHash) {
                     const [from, to, value] = parsed.args;
                     const amountUsdc = parseFloat(formatUnits(value, 6));
                     if (to.toLowerCase() === VAULT_ADDRESS.toLowerCase() && amountUsdc >= 0.02) {
-                        processedTxs.add(txHash);
-                        return { valid: true, amount: amountUsdc, sender: from };
+                        if (!(await claimLegacyTx(txHash))) return { valid: false, reason: "Tx hash already spent" };
+                        return { valid: true, amount: amountUsdc, amountAtomic: value.toString(), sender: from };
                     }
                 }
             } catch (e) {}
@@ -430,6 +454,59 @@ function decodePaymentPayload(raw) {
     }
 }
 
+// Verify -> build data -> settle -> respond. Returns { status, headers, body, payer } and never sends.
+// Paid data is only ever returned after the facilitator reports a successful settlement.
+async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
+    const requirements = getX402ChallengeV2(product || {});
+    const paymentRequirements = requirements.accepts[0];
+    const facilitatorBody = { x402Version: 2, paymentPayload, paymentRequirements };
+
+    const verifyJwt = generateCdpJwt('POST', '/platform/v2/x402/verify');
+    const verifyRes = await fetch(`${CDP_FACILITATOR_URL}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${verifyJwt}` },
+        body: JSON.stringify(facilitatorBody)
+    });
+    if (!verifyRes.ok) {
+        const verifyErr = await verifyRes.text();
+        return { status: 400, body: { error: "Payment verification failed", details: verifyErr, note: 'no payment was taken' } };
+    }
+    const verifyData = await verifyRes.json().catch(() => ({}));
+    if (verifyData && verifyData.isValid === false) {
+        return { status: 400, body: { error: "Payment verification failed", reason: verifyData.invalidReason || 'invalid', note: 'no payment was taken' } };
+    }
+    // Standard x402 order: verify -> produce the resource -> settle -> return it only if settle succeeded.
+    // If the data fetch fails we never settle, so the buyer is not charged.
+    let out;
+    try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
+    if (!out || out.error) {
+        return { status: 503, body: { error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'no payment was taken (payment verified but not settled)' } };
+    }
+    const settleJwt = generateCdpJwt('POST', '/platform/v2/x402/settle');
+    let settleRes, settleData;
+    try {
+        settleRes = await fetch(`${CDP_FACILITATOR_URL}/settle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${settleJwt}` },
+            body: JSON.stringify(facilitatorBody)
+        });
+        settleData = await settleRes.json().catch(() => ({}));
+    } catch (e) { settleRes = { ok: false, status: 'network' }; settleData = {}; }
+    if (!settleRes.ok || settleData.success === false) {
+        console.error("[CDP FACILITATOR] settle failed", settleRes.status, settleData.errorReason);
+        // Paid data is withheld when settlement fails; undo side effects (pass / subscription) created for it.
+        if (product && product.rollback) { try { await product.rollback(out); } catch (e) { console.error('[x402] rollback failed', e.message); } }
+        return { status: 402, body: { error: "Payment settlement failed", reason: settleData.errorReason || settleRes.status, note: 'no data returned and nothing was created; you can retry' } };
+    }
+    const payer = payerFrom(paymentPayload, settleData);
+    const body = { status: 'success', accessType: 'X402_FACILITATOR_SETTLED', settlement: settleData, timestamp: new Date().toISOString(), signal: out };
+    const headers = {
+        'PAYMENT-RESPONSE': Buffer.from(JSON.stringify(settleData)).toString('base64'),
+        ...receiptHeaders({ route: `${req.method} ${req.path}`, resource: paymentRequirements && requirements.resource.url, amount: paymentRequirements.amount, payTo: VAULT_ADDRESS, tx: settleData.transaction, payer, accessType: 'X402_FACILITATOR_SETTLED' }, body)
+    };
+    return { status: 200, headers, body, payer };
+}
+
 // 4. Primary x402 v2 Handler
 async function handleX402Agent(req, res, product = null) {
     if (typeof product !== 'object') product = null; // Express passes next() as 3rd arg on /api/agent
@@ -442,8 +519,9 @@ async function handleX402Agent(req, res, product = null) {
         const p = await usePass(String(passHdr));
         if (!p.ok) return res.status(p.status).json({ error: p.reason, note: 'no payment was taken; buy a pass at POST /api/pass/day or pay per call via x402' });
         if (product && product.precheck) { const pc = await product.precheck(req); if (pc && pc.error) { await refundPass(p); return res.status(400).json({ error: pc.error }); } }
-        const out = await deliver();
-        if (out && out.error) { await refundPass(p); return res.status(503).json({ error: out.error, note: 'pass call not counted' }); }
+        let out;
+        try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
+        if (!out || out.error) { await refundPass(p); return res.status(503).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'pass call not counted' }); }
         return res.set('X-GW8-Pass-Remaining', String(p.remaining)).json({ status: 'success', accessType: 'DAY_PASS', pass: { remaining: p.remaining, expiresAt: p.expiresAt }, timestamp: new Date().toISOString(), signal: out });
     }
 
@@ -455,100 +533,55 @@ async function handleX402Agent(req, res, product = null) {
     if (paymentSigHeader) {
         if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) {
             console.error("[CDP FACILITATOR] KEYS_MISSING: CDP_API_KEY_ID or CDP_API_KEY_SECRET not set on Render.");
-            return res.status(500).json({ error: "Facilitator Configuration Error", code: "KEYS_MISSING" });
+            return res.status(500).json({ error: "Facilitator Configuration Error", code: "KEYS_MISSING", note: 'no payment was taken' });
         }
-
         try {
             const paymentPayload = decodePaymentPayload(paymentSigHeader);
-            const challenge = getX402ChallengeV2();
-            const paymentRequirements = getX402ChallengeV2(product || {}).accepts[0];
-
-            const facilitatorBody = {
-                x402Version: 2,
-                paymentPayload,
-                paymentRequirements
-            };
-
-            const verifyJwt = generateCdpJwt('POST', '/platform/v2/x402/verify');
-            const verifyRes = await fetch(`${CDP_FACILITATOR_URL}/verify`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${verifyJwt}`
-                },
-                body: JSON.stringify(facilitatorBody)
-            });
-
-            if (verifyRes.ok) {
-                // Standard x402 order: verify -> produce the resource -> settle -> return it only if settle succeeded.
-                // If the data fetch fails we never settle, so the buyer is not charged.
-                let out;
-                try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
-                if (!out || out.error) {
-                    return res.status(503).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'no payment was taken (payment verified but not settled)' });
-                }
-                const settleJwt = generateCdpJwt('POST', '/platform/v2/x402/settle');
-                const settleRes = await fetch(`${CDP_FACILITATOR_URL}/settle`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${settleJwt}`
-                    },
-                    body: JSON.stringify(facilitatorBody)
-                });
-                const settleData = await settleRes.json().catch(() => ({}));
-                if (!settleRes.ok || settleData.success === false) {
-                    console.error("[CDP FACILITATOR] settle failed", settleRes.status, settleData.errorReason);
-                    // Paid data is withheld when settlement fails; undo side effects (pass / subscription) created for it.
-                    if (product && product.rollback) { try { await product.rollback(out); } catch (e) { console.error('[x402] rollback failed', e.message); } }
-                    return res.status(402).json({ error: "Payment settlement failed", reason: settleData.errorReason || settleRes.status, note: 'no data returned and nothing was created; you can retry' });
-                }
-
-                return res
-                    .set('PAYMENT-RESPONSE', Buffer.from(JSON.stringify(settleData)).toString('base64'))
-                    .json({
-                        status: 'success',
-                        accessType: 'X402_FACILITATOR_SETTLED',
-                        settlement: settleData,
-                        timestamp: new Date().toISOString(),
-                        signal: out
-                    });
-            } else {
-                const verifyErr = await verifyRes.text();
-                return res.status(400).json({ error: "Payment verification failed", details: verifyErr });
+            if (!paymentPayload) return res.status(400).json({ error: 'Unreadable PAYMENT-SIGNATURE', note: 'no payment was taken' });
+            const url = getX402ChallengeV2(product || {}).resource.url;
+            // Safe retry: the same signed payload to the same resource returns the first successful response.
+            const r = await once(replayKey(url, paymentPayload), () => facilitatorPaidCall(req, product, paymentPayload, deliver));
+            if (r.status === 200) {
+                res.locals.gw8Payer = r.payer || null;
+                if (r.replay) { res.locals.gw8Replay = true; res.set('X-GW8-Replay', 'true'); }
             }
+            if (r.headers) res.set(r.headers);
+            return res.status(r.status).json(r.body);
         } catch (err) {
-            console.error("[CDP FACILITATOR ERROR]", err);
-            return res.status(500).json({ error: "Internal Facilitator Error" });
+            console.error("[CDP FACILITATOR ERROR]", err && err.message);
+            return res.status(500).json({ error: "Internal Facilitator Error", note: 'no data was returned; if a charge appears without data, the settle did not complete on our side' });
         }
     }
 
-    // FALLBACK ONLY: Manual Transfer Hash Check
+    // FALLBACK ONLY: Manual Transfer Hash Check (tx already on-chain, so deliver first and release the tx if data fails)
     if (legacyTx && !product) {
         const manualCheck = await verifyManualUsdcTx(legacyTx);
         if (manualCheck.valid) {
-            return res.json({
-                status: 'success',
-                accessType: 'MANUAL_TX_FALLBACK',
-                txHash: legacyTx,
-                amountPaid: manualCheck.amount,
-                timestamp: new Date().toISOString(),
-                signal: await deliver()
-            });
+            let out;
+            try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
+            if (!out || out.error) {
+                await releaseLegacyTx(legacyTx);
+                return res.status(503).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'your tx hash was not consumed; retry with the same X-Payment-Tx' });
+            }
+            const body = { status: 'success', accessType: 'MANUAL_TX_FALLBACK', txHash: legacyTx, amountPaid: manualCheck.amount, timestamp: new Date().toISOString(), signal: out };
+            res.locals.gw8Payer = manualCheck.sender;
+            return res.set(receiptHeaders({ route: `${req.method} ${req.path}`, resource: RESOURCE_URL, amount: manualCheck.amountAtomic, payTo: VAULT_ADDRESS, tx: legacyTx, payer: manualCheck.sender, accessType: 'MANUAL_TX_FALLBACK' }, body)).json(body);
         }
         return res.status(400).json({ error: "Invalid Payment", reason: manualCheck.reason });
     }
 
-    // PRIMARY CHALLENGE: 402 Payment Required (x402 Version 2)
+    // PRIMARY CHALLENGE: 402 Payment Required (x402 Version 2). v2 fields unchanged; GW8 extras ride alongside.
     const challenge = getX402ChallengeV2(product || {});
     const challengeBase64 = Buffer.from(JSON.stringify(challenge)).toString('base64');
+    const f = funnel(challenge.resource.url, { passUsd: PASS_PLAN.priceUsd, passHours: PASS_PLAN.hours, passCap: PASS_PLAN.dailyCap, noPass: !!(product && product.noPass) });
 
     return res.status(402)
         .set('PAYMENT-REQUIRED', challengeBase64)
         .set('X-402-Pay-To', VAULT_ADDRESS)
         .set('X-402-Amount-USDC', product ? String(Number(product.amount) / 1e6) : '0.02')
         .set('X-402-Chain', 'eip155:8453')
-        .json(challenge);
+        .set(f.headers)
+        .json({ ...challenge, gw8: f.body });
 }
 
 // Free public track record (backtest + live log)
@@ -770,7 +803,7 @@ app.get('/api/rules', (req, res) => handleX402Agent(req, res, {
     deliver: getRules
 }));
 
-initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt })
+initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: recordMcpPaid })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))
     .catch(() => console.log('[mcp-pay] mode: pointer (init error)'));
 app.listen(PORT, () => {

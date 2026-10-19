@@ -12,6 +12,13 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Buyer-vs-bot stats + trust/funnel (2026-10-19)
+- Stats: audience split (known x402 monitors/indexers/graders, crawlers, empty UA = bot; else likely buyer; GW8_OWN_WALLETS = self). Per-route buyer/bot quotes and paid calls, unique/repeat/returning payers by anonymized id, top bot names. Legacy totals unchanged except safe-retry replays are tallied as "other", not paid.
+- 402s: extra `gw8` body field + X-GW8-Free-Teaser / X-GW8-Best-Value / X-GW8-Paid-Adds / Link headers (free teaser, what the paid call adds, day pass). x402 v2 fields and PAYMENT-REQUIRED header unchanged.
+- Payments: verify now also rejects HTTP-200 `isValid:false`; settle network errors handled; day-pass and legacy-tx paths no longer consume a pass/tx when data fails; legacy tx replay guard persisted in Redis. Safe retry: same PAYMENT-SIGNATURE + same URL within 15 min returns the stored response (no second verify/settle).
+- Signed receipts: X-GW8-Receipt + X-GW8-Receipt-Signature (Ed25519 via SIGNING_KEY; unsigned when unset). Key at /.well-known/gw8-receipt-key.
+- Docs: pay.html, openapi, /.well-known/x402, llms.txt carry the "no charge on failure, signed receipts" line.
+
 
 
 \### Planned / Upcoming

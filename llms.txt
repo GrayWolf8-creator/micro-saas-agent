@@ -7,7 +7,13 @@
 - GET /llms.txt — this file. GET /openapi.json — OpenAPI. GET /.well-known/x402 — resource fan-out.
 - GET /pay.html — human wallet pay page (mobile-friendly).
 - GET /track and GET /api/track — honest track record. Backtest is **simulated**. Live log accrues after deploy.
-- GET /api/stats, /stats.html — request tallies (no PII). GET /api/proof/pubkey — signing key.
+- GET /api/stats, /stats.html — request tallies + bots vs likely buyers (no PII). GET /api/proof/pubkey, GET /.well-known/gw8-receipt-key — signing / receipt key.
+
+## Trust
+- No charge on failure: verify -> build data -> settle; if the data or the settle fails, nothing is charged and nothing is returned.
+- Signed receipts: paid responses carry X-GW8-Receipt (base64url JSON: route, amount, tx, payer, issuedAt, bodySha256) + X-GW8-Receipt-Signature (Ed25519). Key: /.well-known/gw8-receipt-key.
+- Safe retry: resending the same PAYMENT-SIGNATURE to the same URL within 15 min returns the same response (X-GW8-Replay: true), no second charge.
+- Best value: POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass.
 - GET /api/govcontracts/status, /api/kraken/listings/status, /api/rules/status — source health only.
 
 ## Menu tiers

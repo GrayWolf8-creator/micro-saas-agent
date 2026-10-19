@@ -11,7 +11,9 @@ const NETWORK = 'eip155:8453';
 let state = { mode: 'pointer', reason: 'not initialized' };
 const wrappers = new Map();
 
-export async function initMcpPayments({ facilitatorUrl, payTo, asset, makeJwt }) {
+let onPaidHook = null;
+export async function initMcpPayments({ facilitatorUrl, payTo, asset, makeJwt, onPaid }) {
+    onPaidHook = typeof onPaid === 'function' ? onPaid : null;
     if (process.env.MCP_PAYMENTS === 'off') { state = { mode: 'pointer', reason: 'MCP_PAYMENTS=off' }; return state; }
     if (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET) { state = { mode: 'pointer', reason: 'facilitator keys not set' }; return state; }
     try {
@@ -46,7 +48,11 @@ export async function paidWrapper(toolName, amountAtomic, description) {
     const w = createPaymentWrapper(state.rs, {
         accepts,
         resource: { url: `mcp://tool/${toolName}`, description, mimeType: 'application/json' },
-        hooks: { onAfterSettlement: async ({ settlement }) => console.log('[mcp-pay] settled', toolName, settlement && settlement.transaction) }
+        hooks: { onAfterSettlement: async ({ settlement, paymentPayload }) => {
+            console.log('[mcp-pay] settled', toolName, settlement && settlement.transaction);
+            // Stats only (anonymized payer id); never blocks or fails the paid result.
+            try { if (onPaidHook) onPaidHook(toolName, (settlement && settlement.payer) || (paymentPayload && paymentPayload.payload && paymentPayload.payload.authorization && paymentPayload.payload.authorization.from)); } catch { /* ignore */ }
+        } }
     });
     wrappers.set(key, w);
     return w;

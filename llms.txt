@@ -39,6 +39,8 @@
 | GET /api/govcontracts | $0.01 |
 | GET /api/kraken/listings | $0.02 |
 | GET /api/rules | $0.02 |
+| GET /api/rs | $0.02 |
+| GET /api/rails (?amount=) | $0.01 |
 | GET /api/verdict/{chain}/{address} | $0.01 |
 
 ### Access
@@ -61,6 +63,8 @@
 - GET /api/govcontracts ($0.01): federal awards (14-day USAspending). **DoD ~90 days late**.
 - GET /api/kraken/listings ($0.02): new Kraken USD pairs (30d) + WaveTrend state.
 - GET /api/rules ($0.02): CFTC + SEC crypto rule changes (90d).
+- GET /api/rs ($0.02): relative strength (1w/1m returns, ranks, 0-100 score) on 66 Kraken pairs + sector scores and breadth.
+- GET /api/rails ($0.01): cheapest/fastest rail now for ?amount= (Base USDC, XRPL live fees; card = static estimate).
 - POST /api/alerts/subscribe ($0.50): green-dot webhook alerts (HMAC). Body needs webhookUrl.
 - POST /api/brief/weekly/subscribe ($0.25): 4 Monday webhook briefs.
 - POST /api/pass/day ($1.00): 24h access via X-GW8-Pass (excludes alerts). Fair use 2000/day, 60/min.

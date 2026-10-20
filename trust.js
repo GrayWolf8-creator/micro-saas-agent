@@ -28,6 +28,8 @@ const ADDS = [
     [/^\/api\/govcontracts/, 'Recent federal contract awards with ticker, amount, agency and award link (not in the teaser).'],
     [/^\/api\/kraken\/listings/, 'New Kraken USD listings with volume, % since listing and WaveTrend state (not in the teaser).'],
     [/^\/api\/rules/, 'CFTC + SEC crypto rule-change rows with RIN and comment deadlines (not in the teaser).'],
+    [/^\/api\/rs/, 'Strength scores and ranks for all 66 Kraken pairs plus sector scores and breadth (not in the teaser).'],
+    [/^\/api\/rails/, 'Live fee and settlement comparison of Base USDC, XRPL and card with a recommended rail (not in the teaser).'],
     [/^\/api\/verdict\//, 'Token safety score 0-100 with reasons and sources (not in the teaser).'],
     [/^\/api\/pass\/day/, 'One payment, 24h of every paid data endpoint and MCP tool (fair use 2000 calls).'],
     [/^\/api\/alerts\/subscribe/, 'New green dots pushed to your webhook for 30 days (the teaser is pull-only).'],

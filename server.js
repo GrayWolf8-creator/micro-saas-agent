@@ -17,6 +17,8 @@ import { mintPass, usePass, refundPass, revokePass, PASS_PLAN, tail } from './pa
 import { getTrack, renderTrack, logDots } from './track.js';
 import { getKrakenListings, getKrakenStatus, snapshot as krakenSnapshot } from './kraken.js';
 import { getRules, getRulesStatus } from './rules.js';
+import { getRs } from './rs.js';
+import { getRails, validAmount } from './rails.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
 import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid } from './stats.js';
@@ -190,6 +192,8 @@ app.get('/', (req, res) => {
                     { path: "/api/govcontracts", priceUsd: "0.01" },
                     { path: "/api/kraken/listings", priceUsd: "0.02" },
                     { path: "/api/rules", priceUsd: "0.02" },
+                    { path: "/api/rs", priceUsd: "0.02" },
+                    { path: "/api/rails", priceUsd: "0.01" },
                     { path: "/api/verdict/{chain}/{address}", priceUsd: "0.01" }
                 ]
             },
@@ -247,6 +251,8 @@ const PAID = [
     { path: '/api/govcontracts', method: 'get', price: '0.01', summary: 'Federal contract awards (14-day USAspending actions) to AI/drone/nuclear/robotics/space/quantum/defense-tech. DoD awards ~90 days late via USAspending. $0.01.', query: { ticker: { type: 'string', description: 'Optional ticker, e.g. PLTR' }, sector: { type: 'string', enum: GOV_SECTORS }, q: { type: 'string', description: 'Optional keyword in recipient/description/agency' } } },
     { path: '/api/kraken/listings', method: 'get', price: '0.02', summary: 'Kraken new USD listings (last 30 days) with price, volume, % since listing, and WaveTrend 4h state. $0.02.' },
     { path: '/api/rules', method: 'get', price: '0.02', summary: 'CFTC + SEC crypto rule-change feed (90 days): ANPRM/NPRM/final/notice/press, RIN, comment deadlines. $0.02.' },
+    { path: '/api/rs', method: 'get', price: '0.02', summary: 'Relative strength: 1w/1m % return, percentile ranks and 0-100 strength score for 66 Kraken USD pairs, plus sector scores and breadth (L1, L2, DeFi, RWA, oracles/infra, payments, AI, memes). $0.02.' },
+    { path: '/api/rails', method: 'get', price: '0.01', summary: 'Cheapest/fastest payment rail right now for a USD amount: Base USDC vs XRPL (live fees) vs card (static estimate), with fee USD/%, settlement time and a recommended pick. Optional ?amount=100. $0.01.', query: { amount: { type: 'number', description: 'USD amount, default 100' } } },
     { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to paid data endpoints via X-GW8-Pass (excludes alert subscribe). Fair use ${PASS_PLAN.dailyCap}/day, ${PASS_PLAN.perMinute}/min. $1.00.` },
     ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly Monday brief webhook (${p.weeks} issues): regime, top WaveTrend dots, 7d hit rates, RWA, federal contracts (DoD ~90d lag). $${p.priceUsd}.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' } }, required: ['webhookUrl'] })),
     { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Webhook alerts for NEW green WaveTrend band dots (${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts), HMAC-signed. $0.50.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
@@ -286,7 +292,7 @@ function openApiDoc() {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call crypto market regime, WaveTrend oversold/overbought dots, Kraken new listings, tokenized RWA flows, federal contract awards, and simulated hit-rate backtests for AI agents via x402 (USDC on Base). No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
-            'x-guidance': 'Start free: GET /api/brief/teaser (partial live brief), GET /api/sample, GET /track (backtest simulated), GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Starter: GET /api/coin/{symbol} ($0.005), GET /api/regime ($0.01), GET /api/dots ($0.01). Research: POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/kraken/listings ($0.02), GET /api/rules ($0.02), GET /api/verdict/{chain}/{address} ($0.01). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
+            'x-guidance': 'Start free: GET /api/brief/teaser (partial live brief), GET /api/sample, GET /track (backtest simulated), GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Starter: GET /api/coin/{symbol} ($0.005), GET /api/regime ($0.01), GET /api/dots ($0.01). Research: POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/kraken/listings ($0.02), GET /api/rules ($0.02), GET /api/rs ($0.02), GET /api/rails ($0.01), GET /api/verdict/{chain}/{address} ($0.01). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -351,6 +357,9 @@ async function buildMcp() {
         a => { const p = new URLSearchParams(); for (const k of ['ticker', 'sector', 'q']) if (a[k]) p.set(k, a[k]); const qs = p.toString(); return '/api/govcontracts' + (qs ? '?' + qs : ''); }, a => getGovContracts(a));
     await paidTool('get_kraken_listings', 'Kraken new USD listings', '/api/kraken/listings', 'GET', '0.02', 'New Kraken USD pairs from the last 30 days: first-seen date (our snapshot, or first Kraken daily candle for pairs older than our snapshots), price, 24h volume, % change since listing, WaveTrend 4h dot state, plus Kraken blog listing posts.', {}, undefined, () => getKrakenListings());
     await paidTool('get_crypto_rules', 'Crypto rule-change feed (CFTC + SEC)', '/api/rules', 'GET', '0.02', 'CFTC and SEC crypto / digital-asset / stablecoin / tokenization rulemaking from the last 90 days: Federal Register docs (ANPRM/NPRM/final/notice) with RIN, comment deadline, stage-change flag and Unified Agenda presence, plus agency press releases. Each source labeled ok/unavailable; no stale fill.', {}, undefined, () => getRules());
+    await paidTool('get_relative_strength', 'Relative strength + sector scores', '/api/rs', 'GET', '0.02', 'Relative strength across 66 Kraken USD pairs: 1-week and 1-month % return, percentile ranks, 0-100 strength score (60% 1m rank + 40% 1w rank), leaders/laggards, and sector scores with breadth (% of coins with a positive 1m return).', {}, undefined, () => getRs());
+    await paidTool('get_payment_rails', 'Cheapest payment rail now', '/api/rails', 'GET', '0.01', 'Which payment rail is cheapest and fastest right now for a USD amount: Base USDC (live gas x ETH/USD), XRPL (live fee x XRP/USD) and card (static 2.9% + $0.30 estimate). Fee USD and %, settlement time, data timestamp, sources and a recommended pick. Arg amount (USD, default 100).', { amount: z.number().positive().max(1e7).optional() },
+        a => a.amount ? `/api/rails?amount=${a.amount}` : '/api/rails', a => getRails(a.amount || 100));
     await paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.02', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.', {}, undefined, () => getBrief());
     m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
     return m;
@@ -371,7 +380,7 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
     description: 'Crypto market signals for AI agents: Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Free sample; paid endpoints via x402 (USDC on Base). Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'buy_day_pass', 'get_signing_pubkey'],
+    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'buy_day_pass', 'get_signing_pubkey'],
     dayPass: { endpoint: `${ORIGIN}/api/pass/day`, mcpTool: 'buy_day_pass', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass' },
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
@@ -550,7 +559,7 @@ app.get('/stats.html', async (req, res) => {
     } catch (e) { res.status(503).type('text').send('Stats temporarily unavailable, retry shortly.'); }
 });
 
-app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules'], signResponses);
+app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails'], signResponses);
 app.all('/api/agent', handleX402Agent);
 
 // Cheaper single-purpose products (signal only)
@@ -733,6 +742,30 @@ app.get('/api/rules', (req, res) => handleX402Agent(req, res, {
     example: { count: 1, openComments: [{ rin: "3038-AF80", agency: "CFTC", docType: "ANPRM", commentDeadline: "2026-12-14" }], rows: [{ date: "2026-10-13", agency: "CFTC", docType: "ANPRM", title: "Regulation Crypto Asset Transactions", rin: "3038-AF80", commentDeadline: "2026-12-14", link: "https://www.federalregister.gov/", stageChange: { from: null, to: "ANPRM" } }] },
     deliver: getRules
 }));
+
+// Relative strength + sector scores (Kraken public daily OHLC, our own math). Warmed after boot so the first buyer doesn't wait ~75s.
+app.get('/api/rs', (req, res) => handleX402Agent(req, res, {
+    url: `${BASE_URL}/api/rs`, amount: "20000", name: "GW8 Relative Strength + Sector Scores (66 Kraken pairs)",
+    description: "Relative strength across 66 Kraken USD pairs: 1w and 1m % return, percentile ranks, 0-100 strength (60% 1m + 40% 1w rank), leaders/laggards, and sector scores with breadth (% positive 1m) for L1, L2, DeFi, RWA, oracles/infra, payments, AI, memes. Kraken public daily candles, 30-min cache. $0.02 USDC. Signal only.",
+    tags: ["relative-strength", "sectors", "crypto", "kraken", "x402"],
+    example: { universe: 66, scored: 64, breadth: { pctPositive1m: 41, n: 64 }, leaders: ["ZEC", "HYPE"], sectors: [{ sector: "payments", coins: 6, avgStrength: 68, breadth1mPct: 67, leader: "ZEC" }], coins: [{ symbol: "ZEC", sector: "payments", ret1wPct: 8.1, ret1mPct: 32.5, rank1wPct: 92.2, rank1mPct: 98.4, strength: 96 }] },
+    deliver: getRs
+}));
+setTimeout(() => getRs().catch(() => {}), 3 * 60e3).unref();
+
+// Payment-rail cost check (public keyless reads, 60s cache). Card is a static reference rate.
+app.get('/api/rails', (req, res) => {
+    const v = validAmount(req.query.amount);
+    if (v.error) return res.status(400).json({ error: v.error });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/rails`, amount: "10000", name: "GW8 Payment Rail Check (Base USDC vs XRPL vs card)",
+        description: "Which payment rail is cheapest and fastest right now for a USD amount (?amount=100): Base USDC (live eth_gasPrice x ~65k gas x Kraken ETH/USD, ~2s), XRPL RLUSD/XRP (live open-ledger fee x Kraken XRP/USD, ~3-5s), card (static 2.9% + $0.30 estimate, days). Fee USD/%, settlement, timestamps, sources, recommended pick. Failed live sources are marked unavailable. 60s cache. $0.01 USDC. Signal only.",
+        tags: ["payments", "rails", "base", "xrpl", "x402"],
+        inputProps: { amount: { type: "number", example: 100 } },
+        example: { amountUsd: 100, recommended: { rail: "xrpl-rlusd-xrp", fastest: "base-usdc" }, rails: [{ rail: "base-usdc", status: "live", feeUsd: 0.00095, feePct: 0.00095, settlement: "~2s" }, { rail: "xrpl-rlusd-xrp", status: "live", feeUsd: 0.000025, feePct: 0.000025, settlement: "~3-5s" }, { rail: "card", status: "static-estimate", feeUsd: 3.2, feePct: 3.2, settlement: "~1-3 business days" }] },
+        deliver: () => getRails(v.amount).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
+    });
+});
 
 initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: recordMcpPaid })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))

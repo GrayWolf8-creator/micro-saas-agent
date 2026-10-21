@@ -1,5 +1,6 @@
 // reputation.js — x402 seller reputation check for AI agents: "is this seller real before my agent pays it?"
-// Reads public USDC (Base) transfer history for a seller wallet from a keyless explorer API (Blockscout, no API key),
+// Reads public USDC (Base) transfer history for a seller wallet from a data source: the Alchemy Transfers API when the
+// server has ALCHEMY_API_KEY set (keyed; read from process.env at call time only), else the keyless Blockscout explorer,
 // optionally resolving the wallet from an x402 endpoint's unpaid 402 challenge (payTo). Scores it 0-100 with a fixed,
 // documented formula (scoreReputation is pure: same transfers + same `now` => same result). Stateless: the queried
 // address/endpoint is not stored or logged. Not custody, never pays anyone, no keys. Signed receipt via trust.js buildReceipt.
@@ -13,6 +14,21 @@ export const REPUTATION_ENGINE = 'gw8-seller-reputation/1';
 export const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 // Keyless Blockscout explorer for Base (Etherscan-compatible tokentx). Overridable for ops (public URL, not a secret).
 export const EXPLORER_URL = (process.env.REPUTATION_EXPLORER_URL || 'https://base.blockscout.com').replace(/\/+$/, '');
+// Keyed source: Alchemy Transfers API (alchemy_getAssetTransfers) on Base mainnet. The key is read from process.env at call
+// time only, sent only in the Authorization header (never in a URL), and never logged, cached, returned or put in an error.
+export const KEY_ENV = 'ALCHEMY_API_KEY';
+export const ALCHEMY_URL = 'https://base-mainnet.g.alchemy.com/v2';     // fixed public URL, no key in it
+const BLOCKS_PER_DAY = 43200;                                           // Base: 2s blocks
+const keyOf = env => { const k = env && typeof env[KEY_ENV] === 'string' ? env[KEY_ENV].trim() : ''; return k || null; };
+/** Which source this server uses right now: {name, keyed}. Never returns the key. */
+export function activeSource(env = process.env) { return keyOf(env) ? { name: 'alchemy', keyed: true } : { name: 'blockscout', keyed: false }; }
+/** Strip anything key-like from a message before it can reach a response or a log. */
+export function scrub(msg, env = process.env) {
+    let s = String(msg ?? '');
+    const k = keyOf(env);
+    if (k) s = s.split(k).join('[redacted]');
+    return s.replace(/(\/v[23]\/)[^\s/?#"')]+/gi, '$1[redacted]').replace(/(bearer\s+)[^\s"',)]+/gi, '$1[redacted]').slice(0, 300);
+}
 export const LIMITS = {
     maxLookbackDays: 90, defaultLookbackDays: 90, maxTransfers: 1000,     // newest 1000 USDC transfers (in + out), at most 90 days back
     explorerTimeoutMs: 8000, endpointTimeoutMs: 5000, maxBodyBytes: 8 * 1024 * 1024, maxChallengeBytes: 64 * 1024,
@@ -142,14 +158,67 @@ export function normalizeTransfers(rows) {
     }
     return out;
 }
-/** Newest LIMITS.maxTransfers USDC transfers (in+out) + the address's first-ever USDC transfer. Throws if the source is unavailable. */
-export async function fetchSellerTransfers(address, f = fetch) {
+// ---------- data source: Alchemy Transfers API (keyed, Base mainnet) ----------
+async function alchemyRpc(method, params, key, f) {
+    const r = await f(ALCHEMY_URL, { method: 'POST', redirect: 'manual', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${key}`, 'user-agent': 'GW8-Seller-Reputation/1' },
+        signal: AbortSignal.timeout(LIMITS.explorerTimeoutMs) });
+    if (!r.ok) {
+        try { await r.body?.cancel(); } catch {}
+        throw new Error(r.status === 401 || r.status === 403 ? `keyed source rejected the request (HTTP ${r.status})` : r.status === 429 ? 'keyed source rate limited (HTTP 429)' : `keyed source HTTP ${r.status}`);
+    }
+    let j;
+    try { j = JSON.parse(await readCapped(r, LIMITS.maxBodyBytes)); }
+    catch (e) { throw new Error(e && e.message === 'response too large' ? 'keyed source response too large' : 'keyed source returned invalid JSON'); }
+    if (j && j.error) throw new Error(`keyed source RPC error${Number.isInteger(j.error.code) ? ' ' + j.error.code : ''}`);   // code only, never the provider's text
+    if (!j || !('result' in j)) throw new Error('keyed source returned no result');
+    return j.result;
+}
+const transferQuery = (dir, address, extra) => ({ [dir]: address, category: ['erc20'], contractAddresses: [USDC_BASE], excludeZeroValue: false, withMetadata: true, ...extra });
+const transfersOf = res => { if (!isObj(res) || !Array.isArray(res.transfers)) throw new Error('keyed source returned no transfer list'); return res; };
+/** Normalize alchemy_getAssetTransfers rows to the same {from, to, value, ts, hash} as Blockscout. Only canonical USDC. Pure. */
+export function normalizeAlchemyTransfers(rows) {
+    const out = [];
+    for (const t of rows || []) {
+        if (!t || !isObj(t.rawContract) || low(t.rawContract.address) !== USDC_BASE) continue;
+        const hex = String(t.rawContract.value ?? ''), ms = Date.parse(isObj(t.metadata) ? t.metadata.blockTimestamp : '');
+        if (!ADDR.test(t.from || '') || !ADDR.test(t.to || '') || !/^0x[0-9a-fA-F]{1,40}$/.test(hex) || !Number.isFinite(ms) || ms < 0) continue;
+        out.push({ from: low(t.from), to: low(t.to), value: BigInt(hex), ts: Math.floor(ms / 1000), hash: low(t.hash), id: String(t.uniqueId || low(t.hash)), block: parseInt(t.blockNum, 16) || 0 });
+    }
+    return out;
+}
+/** Same contract as the Blockscout loader: newest LIMITS.maxTransfers USDC transfers (in + out) within ~maxLookbackDays,
+ *  plus the address's first-ever USDC transfer (wallet age). 5 calls: blockNumber + 4 x getAssetTransfers (~490 CU). */
+export async function fetchAlchemyTransfers(address, f, key) {
+    const latest = parseInt(await alchemyRpc('eth_blockNumber', [], key, f), 16);
+    if (!Number.isFinite(latest) || latest <= 0) throw new Error('keyed source returned a bad block number');
+    const fromBlock = '0x' + Math.max(0, latest - (LIMITS.maxLookbackDays + 1) * BLOCKS_PER_DAY).toString(16);
+    const window = { fromBlock, toBlock: 'latest', order: 'desc', maxCount: '0x' + LIMITS.maxTransfers.toString(16) };
+    const first = { fromBlock: '0x0', toBlock: 'latest', order: 'asc', maxCount: '0x1' };
+    const [inc, outg, firstIn, firstOut] = (await Promise.all([
+        transferQuery('toAddress', address, window), transferQuery('fromAddress', address, window),
+        transferQuery('toAddress', address, first), transferQuery('fromAddress', address, first),
+    ].map(q => alchemyRpc('alchemy_getAssetTransfers', [q], key, f)))).map(transfersOf);
+    const seen = new Set(), merged = [];
+    for (const t of [...normalizeAlchemyTransfers(inc.transfers), ...normalizeAlchemyTransfers(outg.transfers)]) if (!seen.has(t.id) && seen.add(t.id)) merged.push(t);   // self-transfers appear in both
+    merged.sort((a, b) => b.block - a.block || b.ts - a.ts || (a.id < b.id ? -1 : 1));
+    const more = !!(inc.pageKey || outg.pageKey) || merged.length > LIMITS.maxTransfers;
+    const transfers = merged.slice(0, LIMITS.maxTransfers).map(({ from, to, value, ts, hash }) => ({ from, to, value, ts, hash }));
+    const firsts = [...normalizeAlchemyTransfers(firstIn.transfers), ...normalizeAlchemyTransfers(firstOut.transfers)].map(t => t.ts);
+    return { transfers, rawCount: more ? LIMITS.maxTransfers : transfers.length, firstActivityTs: firsts.length ? Math.min(...firsts) : null };
+}
+
+/** Newest LIMITS.maxTransfers USDC transfers (in + out) + the address's first-ever USDC transfer. Throws if the source is unavailable.
+ *  Uses the keyed Alchemy source when ALCHEMY_API_KEY is set (read at call time), else keyless Blockscout. */
+export async function fetchSellerTransfers(address, f = fetch, { env = process.env } = {}) {
+    const key = keyOf(env);
+    if (key) return { ...(await fetchAlchemyTransfers(address, f, key)), provider: 'alchemy', source: `Alchemy Transfers API (keyed) base-mainnet erc20 USDC ${USDC_BASE}` };
     const [recent, first] = await Promise.all([
         explorerJson({ address, sort: 'desc', page: '1', offset: String(LIMITS.maxTransfers) }, f),
         explorerJson({ address, sort: 'asc', page: '1', offset: '1' }, f),
     ]);
     const firstRow = normalizeTransfers(first)[0];
-    return { transfers: normalizeTransfers(recent), rawCount: recent.length, firstActivityTs: firstRow ? firstRow.ts : null, source: `${EXPLORER_URL} (Blockscout, keyless) tokentx USDC ${USDC_BASE}` };
+    return { transfers: normalizeTransfers(recent), rawCount: recent.length, firstActivityTs: firstRow ? firstRow.ts : null, provider: 'blockscout', source: `${EXPLORER_URL} (Blockscout, keyless) tokentx USDC ${USDC_BASE}` };
 }
 
 // ---------- scoring (pure + deterministic) ----------
@@ -247,7 +316,7 @@ export function reputationReceipt(v, out, dataSha256) {
 
 /** Evaluate an already-validated request (from validateReputation). Returns {error} when it cannot evaluate (caller does not
  *  charge), else {out, dataSha256} without a receipt. Shared by /api/seller/reputation and /api/pay/should-i-pay. */
-export async function evaluateSellerReputation(v, { now = new Date(), fetchImpl = fetch, resolve = resolveEndpoint, load = fetchSellerTransfers } = {}) {
+export async function evaluateSellerReputation(v, { now = new Date(), fetchImpl = fetch, resolve = resolveEndpoint, load = fetchSellerTransfers, env = process.env } = {}) {
     const seller = { address: v.address, endpoint: v.endpoint, endpointHost: v.endpoint ? new URL(v.endpoint).hostname : null, payTo: null, payToSource: v.address ? 'request' : null };
     let payToMismatch = false;
     if (v.endpoint) {
@@ -261,12 +330,12 @@ export async function evaluateSellerReputation(v, { now = new Date(), fetchImpl 
         } else seller.endpointNote = `endpoint did not return a readable x402 challenge (${ep.err || 'no 402'}); scored the address you sent`;
     }
     let data;
-    try { data = await load(seller.address, fetchImpl); }
-    catch (e) { return { error: `verdict unknown: public transfer data unavailable (${(e && e.message) || 'error'}), retry shortly` }; }
+    try { data = await load(seller.address, fetchImpl, { env }); }
+    catch (e) { return { error: `verdict unknown: public transfer data unavailable (${scrub((e && e.message) || 'error', env)}), retry shortly` }; }
     const truncated = data.rawCount >= LIMITS.maxTransfers;
     const scored = scoreReputation({ address: seller.address, transfers: data.transfers, firstActivityTs: data.firstActivityTs, now, lookbackDays: v.lookbackDays, truncated, payToMismatch });
     const dataSha256 = sha(data.transfers.map(t => `${t.hash}|${t.from}|${t.to}|${t.value}|${t.ts}`).join('\n'));
-    const out = { engine: REPUTATION_ENGINE, seller, ...scored, data: { source: data.source, chain: 'base', asset: 'USDC', transfersScanned: data.transfers.length, dataSha256 }, evaluatedFor: new Date(now).toISOString() };
+    const out = { engine: REPUTATION_ENGINE, seller, ...scored, data: { provider: data.provider || null, source: data.source, chain: 'base', asset: 'USDC', transfersScanned: data.transfers.length, dataSha256 }, evaluatedFor: new Date(now).toISOString() };
     return { out, dataSha256 };
 }
 
@@ -280,33 +349,44 @@ export async function checkSellerReputation(body, opts = {}) {
 }
 
 // ---------- free data-source status (GET /api/seller/reputation/status) ----------
-// One tiny fixed request (newest 1 USDC transfer of the USDC contract itself, never user input), 4s timeout, 64 KB cap.
-// Result cached ~60s and concurrent callers share one in-flight probe, so it can't hammer Blockscout or act as a proxy.
-// Returns only {source, reachable, http_status, latency_ms, checked_at, cached, cache_ttl_s, error?}: no URL, env, or keys.
+// One tiny fixed request to the ACTIVE source (newest 1 USDC transfer to the USDC contract itself, never user input), 4s
+// timeout, 64 KB cap. Result cached ~60s and concurrent callers share one in-flight probe, so it can't hammer the source or
+// act as a proxy. Returns only {source, keyed, reachable, http_status, latency_ms, checked_at, cached, cache_ttl_s, error?}:
+// no URL, no env values, no key (the key only ever travels in the Authorization header of the outgoing probe).
 export const STATUS_TTL_MS = 60_000, STATUS_TIMEOUT_MS = 4000;
 let statusCache = null, statusInflight = null;
 export function _resetSourceStatusCache() { statusCache = null; statusInflight = null; }
-async function probeSource(f, clock) {
+async function probeSource(f, clock, key) {
     const t0 = clock();
     const q = new URLSearchParams({ module: 'account', action: 'tokentx', contractaddress: USDC_BASE, address: USDC_BASE, sort: 'desc', page: '1', offset: '1' });
+    const req = key
+        ? [ALCHEMY_URL, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'alchemy_getAssetTransfers', params: [{ toAddress: USDC_BASE, category: ['erc20'], contractAddresses: [USDC_BASE], order: 'desc', maxCount: '0x1', withMetadata: false }] }),
+            headers: { accept: 'application/json', 'content-type': 'application/json', authorization: `Bearer ${key}`, 'user-agent': 'GW8-Seller-Reputation/1 (status)' } }]
+        : [`${EXPLORER_URL}/api?${q}`, { headers: { accept: 'application/json', 'user-agent': 'GW8-Seller-Reputation/1 (status)' } }];
     try {
-        const r = await f(`${EXPLORER_URL}/api?${q}`, { headers: { accept: 'application/json', 'user-agent': 'GW8-Seller-Reputation/1 (status)' }, redirect: 'manual', signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
-        let ok = false;
-        if (r.status === 200) { try { const j = JSON.parse(await readCapped(r, LIMITS.maxChallengeBytes)); ok = !!j && Array.isArray(j.result); } catch { ok = false; } }
-        else { try { await r.body?.cancel(); } catch {} }
-        return { reachable: ok, http_status: r.status, latency_ms: Math.max(0, Math.round(clock() - t0)), ...(ok ? {} : { error: r.status === 200 ? 'unexpected response (not explorer JSON)' : `HTTP ${r.status}` }) };
+        const r = await f(req[0], { ...req[1], redirect: 'manual', signal: AbortSignal.timeout(STATUS_TIMEOUT_MS) });
+        let ok = false, err = null;
+        if (r.status === 200) {
+            try {
+                const j = JSON.parse(await readCapped(r, LIMITS.maxChallengeBytes));
+                if (key) { ok = !!j && isObj(j.result) && Array.isArray(j.result.transfers); if (!ok && j && j.error) err = `RPC error${Number.isInteger(j.error.code) ? ' ' + j.error.code : ''}`; }
+                else ok = !!j && Array.isArray(j.result);
+            } catch { ok = false; }
+        } else { try { await r.body?.cancel(); } catch {} }
+        return { reachable: ok, http_status: r.status, latency_ms: Math.max(0, Math.round(clock() - t0)), ...(ok ? {} : { error: err || (r.status === 200 ? `unexpected response (not ${key ? 'transfers' : 'explorer'} JSON)` : `HTTP ${r.status}`) }) };
     } catch (e) {
         const timeout = e && (e.name === 'TimeoutError' || e.name === 'AbortError');
         return { reachable: false, http_status: null, latency_ms: Math.max(0, Math.round(clock() - t0)), error: timeout ? `timeout after ${STATUS_TIMEOUT_MS}ms` : 'network error' };
     }
 }
 /** Free status check. Never throws. Options are for tests only (not reachable from HTTP). */
-export async function getSourceStatus({ fetchImpl = fetch, clock = Date.now } = {}) {
-    const now = clock();
+export async function getSourceStatus({ fetchImpl = fetch, clock = Date.now, env = process.env } = {}) {
+    const now = clock(), key = keyOf(env), src = activeSource(env);
+    if (statusCache && statusCache.body.source !== src.name) statusCache = null;      // source switched (key added/removed)
     if (statusCache && now - statusCache.at < STATUS_TTL_MS) return { ...statusCache.body, cached: true, cache_ttl_s: Math.ceil((STATUS_TTL_MS - (now - statusCache.at)) / 1000) };
     if (!statusInflight) statusInflight = (async () => {
-        const p = await probeSource(fetchImpl, clock);
-        const body = { source: 'blockscout', ...p, checked_at: new Date(clock()).toISOString() };
+        const p = await probeSource(fetchImpl, clock, key);
+        const body = { source: src.name, keyed: src.keyed, ...p, checked_at: new Date(clock()).toISOString() };
         statusCache = { at: clock(), body }; statusInflight = null;
         return body;
     })();

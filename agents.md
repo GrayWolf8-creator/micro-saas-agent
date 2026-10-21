@@ -40,7 +40,7 @@ Body `{payment, policy}` (same shape as above). Returns `{decision: allow|deny|n
 **Use this when** you want to know if an x402 seller is real before paying it.
 Body `{"address": "0x…"}` (seller wallet on Base) and/or `{"endpoint": "https://…"}` (we read `payTo` from its unpaid 402), optional `lookbackDays` 1-90.
 Returns `{score 0-100, verdict: trusted|caution|avoid|unknown, components:{distinctBuyers, washShare, walletAge, concentration, volume30d}, reasons, flags, reputationReceipt}`.
-Data: public USDC transfers on Base (keyless Blockscout). Heuristic, not a guarantee. **Free first:** `GET /api/seller/reputation/status` → `{reachable, http_status}`. If `reachable` is false, paid calls return 503 and are not charged.
+Data: public USDC transfers on Base (Alchemy Transfers API; keyless Blockscout fallback). Heuristic, not a guarantee. **Free first:** `GET /api/seller/reputation/status` → `{source, keyed, reachable, http_status}`. If `reachable` is false, paid calls return 503 and are not charged.
 
 ## Featured: verdicts and payment rails
 - **GET /api/verdict/{chain}/{address} · $0.01 · MCP `get_token_verdict`.** Use this when you're about to buy, hold or accept a token and want a 0-100 safety verdict (safe / caution / danger) with reasons (GoPlus + DexScreener). Example: `/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.

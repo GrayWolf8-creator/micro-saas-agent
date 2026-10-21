@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 globalThis.fetch = async () => { throw new Error('offline test'); };
+delete process.env.ALCHEMY_API_KEY;                    // these tests cover the keyless Blockscout path (keyed: test/keyed-source.test.js)
 const R = await import('../reputation.js');
 const { scoreReputation, validateReputation, normalizeTransfers, payToFromChallenge, checkEndpointSyntax, checkSellerReputation, USDC_BASE, LIMITS } = R;
 
@@ -147,7 +148,8 @@ test('status: reachable -> reachable:true, http 200, latency, fixed probe (no us
   assert.equal(st.source, 'blockscout'); assert.equal(st.reachable, true); assert.equal(st.http_status, 200);
   assert.equal(st.latency_ms, 42); assert.equal(st.cached, false); assert.equal(st.checked_at, new Date(1042).toISOString());
   assert.match(url, /module=account&action=tokentx&contractaddress=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&address=0x833589fcd6edb6e08f4c7c32d4f71b54bda02913&sort=desc&page=1&offset=1$/);
-  assert.deepEqual(Object.keys(st).sort(), ['cache_ttl_s', 'cached', 'checked_at', 'http_status', 'latency_ms', 'reachable', 'source']);
+  assert.deepEqual(Object.keys(st).sort(), ['cache_ttl_s', 'cached', 'checked_at', 'http_status', 'keyed', 'latency_ms', 'reachable', 'source']);
+  assert.equal(st.keyed, false);
 });
 
 test('status: Cloudflare 403 -> reachable:false, http_status 403', async () => {

@@ -12,6 +12,13 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Keyed seller-reputation data source (2026-10-21)
+- Blockscout answers Render with a Cloudflare 403, so the seller reputation and should-i-pay checks always returned 503 (free). `reputation.js` now has a provider layer: when the server env var `ALCHEMY_API_KEY` is set it reads Base USDC transfers from the Alchemy Transfers API (`alchemy_getAssetTransfers` on base-mainnet: erc20, USDC contract only, fromBlock = last ~91 days, newest 1000 in + out, plus the first-ever transfer for wallet age); without it, keyless Blockscout as before.
+- Same filters (canonical USDC only, $0.001 floor, 90-day window, 8s timeouts, 8 MB cap), same scoring, same "not charged when the data is unavailable". Should-i-pay uses the same layer.
+- The key is read from process.env at call time only and sent only in the `Authorization: Bearer` header (never in a URL). Errors carry no provider text, and a scrubber removes anything key-like before an error can reach a response.
+- `GET /api/seller/reputation/status` now reports the active `source` (alchemy | blockscout) and `keyed`, probing the active source. It never shows the key or a URL.
+- Output `data.provider` says which source scored the seller. Tests: `test/keyed-source.test.js` (10, offline, fake placeholder key, including "key never appears in output, errors or logs").
+
 ### Should-I-pay, agents.md, repricing, featured cleanup (2026-10-21)
 - New paid POST /api/pay/should-i-pay ($0.02, x402; day pass accepted) + MCP tool should_i_pay: {payment, policy, seller, sellerRules?} -> spend-policy check + seller reputation -> one verdict pay / dont_pay / ask_human (worst wins), reasons, both sub-results and ONE signed decisionReceipt (accessType PAY_DECISION). Validate-first 400; not charged when the seller data source is unavailable. New paydecision.js; reputation.js gains evaluateSellerReputation (shared, no behavior change).
 - New /agents.md (linked from /, llms.txt, README, pay.html): "use this when" per endpoint, examples, prices, idempotency, receipt verification.

@@ -257,9 +257,9 @@ const RAW_PAID = [
     { path: '/api/history', method: 'get', price: '0.05', summary: 'Simulated 90-day WaveTrend band-dot hit-rate backtest (+4h/+24h/+3d). Optional ?pair=BTC. Past performance is not indicative of future results. $0.05.', query: { pair: { type: 'string', description: 'Optional coin symbol, e.g. BTC' } } },
     { path: '/api/regime', method: 'get', price: '0.01', summary: 'Stage 1 crypto market regime check detail (ETF flows, BTC support, alt breadth, Fear & Greed). $0.01.' },
     { path: '/api/dots', method: 'get', price: '0.01', summary: 'Current WaveTrend oversold/overbought band dots across 66 Kraken 4h USD pairs. $0.01.' },
-    { path: '/api/coin/{symbol}', method: 'get', price: '0.002', summary: 'WaveTrend 4h snapshot for one coin (cheapest call). $0.002.', pathParam: true, ex: '/api/coin/BTC' },
-    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.01', summary: 'Token safety verdict 0-100 (safe/caution/danger) from GoPlus + DexScreener. Automated screen, not a guarantee. $0.01.', params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS) }, address: { type: 'string', description: 'Token contract (0x...) or Solana mint' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
-    { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Kraken large-print buy/sell flow summary joined with WaveTrend 4h state (single venue, not on-chain). $0.02.', pathParam: true, ex: '/api/flows/BTC' },
+    { path: '/api/coin/{symbol}', method: 'get', price: '0.002', summary: 'WaveTrend 4h snapshot for one coin (cheapest call). $0.002.', pathParam: true, ex: '/api/coin/BTC', pathEx: { symbol: 'BTC' } },
+    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.01', summary: 'Token safety verdict 0-100 (safe/caution/danger) from GoPlus + DexScreener. Automated screen, not a guarantee. $0.01.', params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS) }, address: { type: 'string', description: 'Token contract (0x...) or Solana mint' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', pathEx: { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' } },
+    { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Kraken large-print buy/sell flow summary joined with WaveTrend 4h state (single venue, not on-chain). $0.02.', pathParam: true, ex: '/api/flows/BTC', pathEx: { symbol: 'BTC' } },
     { path: '/api/brief', method: 'get', price: '0.02', summary: 'Once-per-day (Mountain Time) crypto brief: regime, WaveTrend dot counts, top coins, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser. $0.02.' },
     { path: '/api/rwa', method: 'get', price: '0.02', summary: 'Tokenized RWA flows: protocol TVL, 7d change/estimated flows, movers, yields, top RWA tokens (DefiLlama + CoinGecko). $0.02.' },
     { path: '/api/govcontracts', method: 'get', price: '0.01', summary: 'Federal contract awards (14-day USAspending actions) to AI/drone/nuclear/robotics/space/quantum/defense-tech. DoD awards ~90 days late via USAspending. $0.01.', query: { ticker: { type: 'string', description: 'Optional ticker, e.g. PLTR' }, sector: { type: 'string', enum: GOV_SECTORS }, q: { type: 'string', description: 'Optional keyword in recipient/description/agency' } } },
@@ -267,20 +267,31 @@ const RAW_PAID = [
     { path: '/api/rules', method: 'get', price: '0.02', summary: 'CFTC + SEC crypto rule-change feed (90 days): ANPRM/NPRM/final/notice/press, RIN, comment deadlines. $0.02.' },
     { path: '/api/rs', method: 'get', price: '0.02', summary: 'Relative strength: 1w/1m % return, percentile ranks and 0-100 strength score for 66 Kraken USD pairs, plus sector scores and breadth (L1, L2, DeFi, RWA, oracles/infra, payments, AI, memes). $0.02.' },
     { path: '/api/rails', method: 'get', price: '0.002', summary: 'Cheapest/fastest payment rail right now for a USD amount: Base USDC, XRPL, Tempo, Arc (live fees) vs card (static estimate), with agent-protocol support per rail, with fee USD/%, settlement time and a recommended pick. Optional ?amount=100. $0.002.', query: { amount: { type: 'number', description: 'USD amount, default 100' } } },
-    { path: '/api/pay/should-i-pay', method: 'post', price: PAYDECISION_PLAN.priceUsd, summary: `Should my agent pay this? One call runs the spend-policy check (your limits, caps, categories, lists, hours) AND the x402 seller reputation check (public Base USDC history) and returns one verdict pay / dont_pay / ask_human, the reasons, both sub-results and one signed receipt. Deterministic; stateless; never pays anyone. Free when the seller data source is down. $${PAYDECISION_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'as in /api/spend/check' }, policy: { type: 'object', description: 'as in /api/spend/check' }, seller: { type: 'object', description: '{address (Base 0x...), endpoint (x402 https URL), lookbackDays}' }, sellerRules: { type: 'object', description: 'optional {onCaution, onUnknown: pay|ask_human|dont_pay (default ask_human), minScore 0-100}' } }, required: ['payment', 'policy', 'seller'] },
-    { path: '/api/spend/check', method: 'post', price: SPEND_PLAN.priceUsd, summary: `Spend-policy check for AI agents: POST a proposed payment + the buyer's rules (per-tx limit, rolling cap with your spent-so-far, categories, allow/deny lists, hours+timezone, assets/chains, human-approval threshold). Returns allow / deny / needs_approval, which rules fired, and a signed decision receipt. Stateless, deterministic; not custody, does not move money. $${SPEND_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'amount (decimal string), currency, recipientId and/or recipientDomain, merchantCategory, chain, timestamp (ISO), agentId, memo' }, policy: { type: 'object', description: 'currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted, allowedHours {start, end, timezone, days}, allowedAssets, allowedChains, requireApprovalAbove' } }, required: ['payment', 'policy'] },
-    { path: '/api/seller/reputation', method: 'post', price: REPUTATION_PLAN.priceUsd, summary: `x402 seller reputation for AI agents: before paying a seller, POST its Base wallet and/or x402 endpoint URL. Reads public USDC (Base) transfer history (Alchemy Transfers API, or keyless Blockscout as fallback when no key is configured) and returns a 0-100 score, verdict trusted / caution / avoid / unknown, components (distinct paying buyers, wash/self-dealing share, wallet age, top-payer concentration, 30-day organic volume), reasons and a signed receipt. Deterministic formula; stateless; never pays anyone. $${REPUTATION_PLAN.priceUsd}.`, body: { address: { type: 'string', description: 'seller wallet on Base (0x...)' }, endpoint: { type: 'string', format: 'uri', description: 'x402 https URL; payTo is read from its unpaid 402 challenge' }, lookbackDays: { type: 'integer', minimum: 1, maximum: 90, default: 90 } } },
+    { path: '/api/pay/should-i-pay', method: 'post', price: PAYDECISION_PLAN.priceUsd, summary: `Should my agent pay this? One call runs the spend-policy check (your limits, caps, categories, lists, hours) AND the x402 seller reputation check (public Base USDC history) and returns one verdict pay / dont_pay / ask_human, the reasons, both sub-results and one signed receipt. Deterministic; stateless; never pays anyone. Free when the seller data source is down. $${PAYDECISION_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'as in /api/spend/check' }, policy: { type: 'object', description: 'as in /api/spend/check' }, seller: { type: 'object', description: '{address (Base 0x...), endpoint (x402 https URL), lookbackDays}' }, sellerRules: { type: 'object', description: 'optional {onCaution, onUnknown: pay|ask_human|dont_pay (default ask_human), minScore 0-100}' } }, required: ['payment', 'policy', 'seller'], bodyEx: 'should-i-pay' },
+    { path: '/api/spend/check', method: 'post', price: SPEND_PLAN.priceUsd, summary: `Spend-policy check for AI agents: POST a proposed payment + the buyer's rules (per-tx limit, rolling cap with your spent-so-far, categories, allow/deny lists, hours+timezone, assets/chains, human-approval threshold). Returns allow / deny / needs_approval, which rules fired, and a signed decision receipt. Stateless, deterministic; not custody, does not move money. $${SPEND_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'amount (decimal string), currency, recipientId and/or recipientDomain, merchantCategory, chain, timestamp (ISO), agentId, memo' }, policy: { type: 'object', description: 'currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted, allowedHours {start, end, timezone, days}, allowedAssets, allowedChains, requireApprovalAbove' } }, required: ['payment', 'policy'], bodyEx: 'spend' },
+    { path: '/api/seller/reputation', method: 'post', price: REPUTATION_PLAN.priceUsd, summary: `x402 seller reputation for AI agents: before paying a seller, POST its Base wallet and/or x402 endpoint URL. Reads public USDC (Base) transfer history (Alchemy Transfers API, or keyless Blockscout as fallback when no key is configured) and returns a 0-100 score, verdict trusted / caution / avoid / unknown, components (distinct paying buyers, wash/self-dealing share, wallet age, top-payer concentration, 30-day organic volume), reasons and a signed receipt. Deterministic formula; stateless; never pays anyone. $${REPUTATION_PLAN.priceUsd}.`, body: { address: { type: 'string', description: 'seller wallet on Base (0x...)' }, endpoint: { type: 'string', format: 'uri', description: 'x402 https URL; payTo is read from its unpaid 402 challenge' }, lookbackDays: { type: 'integer', minimum: 1, maximum: 90, default: 90 } }, bodyRequired: true, anyOf: [{ required: ['address'] }, { required: ['endpoint'] }], bodyEx: 'reputation' },
     { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to paid data endpoints via X-GW8-Pass (excludes alert subscribe). Fair use ${PASS_PLAN.dailyCap}/day, ${PASS_PLAN.perMinute}/min. $1.00.` },
     ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly Monday brief webhook (${p.weeks} issues): regime, top WaveTrend dots, 7d hit rates, RWA, federal contracts (DoD ~90d lag). $${p.priceUsd}.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' } }, required: ['webhookUrl'] })),
     { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Webhook alerts for NEW green WaveTrend band dots (${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts), HMAC-signed. $0.50.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
 ];
+// Proposal 25: request examples in /openapi.json so scanners (x402scan) and agents can build a valid call. Unpaid calls
+// still get the 402 first regardless of input.
+const EX_ADDR = '0x1111111111111111111111111111111111111111';
+const EX_PAYMENT = { amount: '0.05', currency: 'USDC', chain: 'base', recipientId: EX_ADDR, merchantCategory: 'data-api', timestamp: '2026-10-21T15:30:00Z', agentId: 'research-agent-1' };
+const EX_POLICY = { currency: 'USDC', perTxLimit: '1', rollingCap: { limit: '10', spentSoFar: '2.40' }, allowedChains: ['base'], allowedAssets: ['USDC'], requireApprovalAbove: '0.50' };
+const BODY_EXAMPLES = {
+    spend: { payment: EX_PAYMENT, policy: EX_POLICY },
+    reputation: { address: EX_ADDR, lookbackDays: 90 },
+    'should-i-pay': { payment: EX_PAYMENT, policy: EX_POLICY, seller: { address: EX_ADDR }, sellerRules: { onCaution: 'ask_human', onUnknown: 'ask_human' } }
+};
 const PAID = RAW_PAID.map(p => ({ ...p, summary: withCategory(p.path, p.summary), category: categoryOf(p.path), featured: isFeatured(p.path) }));
 function openApiDoc() {
     const paths = {};
     for (const p of PAID) {
         const parameters = [];
-        if (p.pathParam) parameters.push({ name: 'symbol', in: 'path', required: true, schema: { type: 'string', enum: COINS } });
-        for (const [name, schema] of Object.entries(p.params || {})) parameters.push({ name, in: 'path', required: true, schema });
+        const pex = p.pathEx || {};
+        if (p.pathParam) parameters.push({ name: 'symbol', in: 'path', required: true, schema: { type: 'string', enum: COINS, example: pex.symbol }, example: pex.symbol });
+        for (const [name, schema] of Object.entries(p.params || {})) parameters.push({ name, in: 'path', required: true, schema: { ...schema, ...(pex[name] ? { example: pex[name] } : {}) }, ...(pex[name] ? { example: pex[name] } : {}) });
         for (const [name, schema] of Object.entries(p.query || {})) parameters.push({ name, in: 'query', required: false, schema });
         paths[p.path] = { [p.method]: {
             operationId: p.path.replace(/[^a-z]/gi, '_'),
@@ -289,7 +300,9 @@ function openApiDoc() {
             description: p.summary,
             security: [],
             ...(parameters.length ? { parameters } : {}),
-            ...(p.method === 'post' ? { requestBody: { required: !!p.required, content: { 'application/json': { schema: { type: 'object', properties: p.body || {}, ...(p.required ? { required: p.required } : {}) } } } } } : {}),
+            ...(p.method === 'post' ? { requestBody: { required: !!(p.required || p.bodyRequired), content: { 'application/json': {
+                schema: { type: 'object', properties: p.body || {}, ...(p.required ? { required: p.required } : {}), ...(p.anyOf ? { anyOf: p.anyOf } : {}) },
+                ...(p.bodyEx && BODY_EXAMPLES[p.bodyEx] ? { example: BODY_EXAMPLES[p.bodyEx] } : {}) } } } } : {}),
             'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
             responses: {
                 '200': { description: 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: { type: 'object' } } } },
@@ -312,7 +325,7 @@ function openApiDoc() {
     ], responses: { '200': { description: 'Stats JSON or markdown' } } } };
     return {
         openapi: '3.1.0',
-        info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
+        info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { name: 'GW8', email: 'mariostefano3@gmail.com', url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call tools for AI agents via x402 (USDC on Base): should-I-pay decisions (spend policy + seller reputation in one call), spend-policy risk checks, x402 seller reputation verdicts, token safety verdicts, payment-rail cost checks, and crypto market data (regime, WaveTrend band dots, relative strength, flows, simulated hit-rate backtests). Agent guide: /agents.md. No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
             'x-guidance': 'Start free: GET /agents.md (when to use each call, examples), GET /api/brief/teaser, GET /api/sample, GET /api/seller/reputation/status, GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Agent payments (risk checks before paying): POST /api/pay/should-i-pay ($0.02, spend policy + seller reputation -> pay / dont_pay / ask_human, one signed receipt), POST /api/spend/check ($0.02, allow/deny/needs_approval against the buyer policy), POST /api/seller/reputation ($0.01, 0-100 score + trusted/caution/avoid/unknown for an x402 seller). Verdicts: GET /api/verdict/{chain}/{address} ($0.01, token safety). Payment rails: GET /api/rails ($0.002). Market data: GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/rs ($0.02), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/history ($0.05). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
@@ -693,16 +706,28 @@ onWaveTrendRefresh(wt => logDots(wt).then(r => r.added && console.log('[track] l
 onWaveTrendRefresh(wt => onRefresh(wt).then(r => r && (r.sent || r.seeded) && console.log('[alerts]', JSON.stringify(r))));
 setInterval(() => getWaveTrend().catch(() => {}), 10 * 60 * 1000).unref();
 console.log('[alerts] persistence:', persistenceMode());
+// Proposal 25 (x402scan): paywall before input validation. An UNPAID request (no PAYMENT-SIGNATURE / X-PAYMENT and no
+// X-GW8-Pass) always gets the 402 challenge, even with an empty body or a literal path template like /api/coin/%7Bsymbol%7D,
+// so scanners can read the price. Bad input is still rejected with 400/404 BEFORE any payment is verified or settled and
+// before a pass call is used (route check below + product.precheck in handleX402Agent), so invalid input is never charged.
+const hasPaymentOrPass = req => !!(req.headers['payment-signature'] || req.headers['x-payment'] || req.headers['x-gw8-pass']);
+// For an unpaid request with unusable path params, quote the canonical template URL with example params (no data is served).
+const SYM_EXAMPLE = COINS.includes('BTC') ? 'BTC' : COINS[0];
+const VERDICT_EXAMPLE = { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' };
+
 app.get('/api/coin/:symbol', (req, res) => {
-    const sym = String(req.params.symbol || '').toUpperCase();
-    if (!COINS.includes(sym)) return res.status(404).json({ error: 'unknown symbol', supported: COINS });
+    const raw = String(req.params.symbol || '').toUpperCase();
+    const ok = COINS.includes(raw);
+    if (!ok && hasPaymentOrPass(req)) return res.status(404).json({ error: 'unknown symbol', supported: COINS, note: 'no payment was taken' });
+    const sym = ok ? raw : SYM_EXAMPLE;
     return handleX402Agent(req, res, {
-        url: `${BASE_URL}/api/coin/${sym}`, amount: "2000", name: `GW8 WaveTrend 4h: ${sym}/USD`,
-        description: `WaveTrend 4h snapshot for ${sym}/USD on Kraken (wt1/wt2, previous values, recent oversold/overbought band dots). Cheapest paid call. $0.002 USDC. Signal only.`,
+        url: ok ? `${BASE_URL}/api/coin/${sym}` : `${BASE_URL}/api/coin/{symbol}`, amount: "2000", name: ok ? `GW8 WaveTrend 4h: ${sym}/USD` : 'GW8 WaveTrend 4h: one coin',
+        description: `WaveTrend 4h snapshot for ${ok ? sym : 'one coin'}/USD on Kraken (wt1/wt2, previous values, recent oversold/overbought band dots). Cheapest paid call. $0.002 USDC. Signal only.`,
         tags: ["wavetrend", "crypto", "kraken", "x402", "agents"],
         routeTemplate: "/api/coin/:symbol",
         pathParams: { symbol: sym },
         example: { name: sym, wt1: -41.2, wt2: -38.9, prevWt1: -44.0, prevWt2: -39.5, dots: [] },
+        precheck: async () => ok ? null : { error: 'unknown symbol' },
         deliver: () => getCoin(sym)
     });
 });
@@ -710,29 +735,34 @@ app.get('/api/coin/:symbol', (req, res) => {
 // Upgrades-4: token verdict, flows, daily brief (signal only, public data)
 app.get('/api/proof/pubkey', (req, res) => res.json(publicKeyInfo()));
 app.get('/api/verdict/:chain/:address', (req, res) => {
-    const chain = String(req.params.chain).toLowerCase(), address = String(req.params.address);
-    const bad = validVerdictInput(chain, address);
-    if (bad) return res.status(400).json({ error: bad, chains: Object.keys(VERDICT_CHAINS) });
+    const rawChain = String(req.params.chain).toLowerCase(), rawAddress = String(req.params.address);
+    const bad = validVerdictInput(rawChain, rawAddress);
+    if (bad && hasPaymentOrPass(req)) return res.status(400).json({ error: bad, chains: Object.keys(VERDICT_CHAINS), note: 'no payment was taken' });
+    const chain = bad ? VERDICT_EXAMPLE.chain : rawChain, address = bad ? VERDICT_EXAMPLE.address : rawAddress;
     return handleX402Agent(req, res, {
-        url: `${BASE_URL}/api/verdict/${chain}/${address}`, amount: "10000", name: "GW8 Token Safety Verdict (GoPlus + DexScreener)",
+        url: bad ? `${BASE_URL}/api/verdict/{chain}/{address}` : `${BASE_URL}/api/verdict/${chain}/${address}`, amount: "10000", name: "GW8 Token Safety Verdict (GoPlus + DexScreener)",
         description: "Token safety verdict: score 0-100 and safe/caution/danger with reasons + source URLs (GoPlus token security + DexScreener liquidity, fixed published rules). Chains: base, ethereum, bsc, arbitrum, solana. Automated screen, not a guarantee. 10-min cache. $0.01 USDC.",
         tags: ["token-safety", "crypto", "goplus", "dexscreener", "x402"],
         routeTemplate: "/api/verdict/:chain/:address",
         pathParams: { chain, address },
         example: { chain: "base", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", score: 85, verdict: "safe", reasons: ["liquidity ok"], sources: ["https://api.gopluslabs.io/", "https://api.dexscreener.com/"] },
+        precheck: async () => bad ? { error: bad } : null,
         deliver: () => getVerdict(chain, address).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
     });
 });
 app.get('/api/flows/:symbol', (req, res) => {
-    const sym = String(req.params.symbol || '').toUpperCase();
-    if (!COINS.includes(sym)) return res.status(404).json({ error: 'unknown symbol', supported: COINS });
+    const raw = String(req.params.symbol || '').toUpperCase();
+    const ok = COINS.includes(raw);
+    if (!ok && hasPaymentOrPass(req)) return res.status(404).json({ error: 'unknown symbol', supported: COINS, note: 'no payment was taken' });
+    const sym = ok ? raw : SYM_EXAMPLE;
     return handleX402Agent(req, res, {
-        url: `${BASE_URL}/api/flows/${sym}`, amount: "20000", name: `GW8 Large-Print Flows + WaveTrend: ${sym}/USD`,
-        description: `Kraken large-print buy vs sell summary for ${sym}/USD (last 1000 public trades; single venue, not on-chain whales) joined with WaveTrend 4h state. Use for short-horizon flow context. $0.02 USDC. Signal only.`,
+        url: ok ? `${BASE_URL}/api/flows/${sym}` : `${BASE_URL}/api/flows/{symbol}`, amount: "20000", name: ok ? `GW8 Large-Print Flows + WaveTrend: ${sym}/USD` : 'GW8 Large-Print Flows + WaveTrend: one coin',
+        description: `Kraken large-print buy vs sell summary for ${ok ? sym : 'one coin'}/USD (last 1000 public trades; single venue, not on-chain whales) joined with WaveTrend 4h state. Use for short-horizon flow context. $0.02 USDC. Signal only.`,
         tags: ["flows", "kraken", "wavetrend", "crypto", "x402"],
         routeTemplate: "/api/flows/:symbol",
         pathParams: { symbol: sym },
         example: { symbol: sym, flows: { largePrints: { count: 12, buyUsd: 420000, sellUsd: 180000, netUsd: 240000 }, bias: "large buyers dominant" }, wavetrend: { wt1: -41.2, wt2: -38.9, zone: "neutral" } },
+        precheck: async () => ok ? null : { error: 'unknown symbol' },
         deliver: () => getFlows(sym).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
     });
 });
@@ -817,9 +847,10 @@ app.get('/api/rails', (req, res) => {
 });
 
 // Spend-policy check for AI agents (pure rule evaluation; stateless; no custody, no payment execution).
-// Validate first: a malformed body gets 400 before the x402 challenge or any pass/payment header is looked at,
-// so it is never charged and never uses a pass call. Valid bodies fall through to the paid route below.
-app.post('/api/spend/check', (req, res, next) => { const v = validateSpend(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
+// Unpaid (no payment / pass header): always the 402 challenge, even for an empty body (proposal 25, x402scan probe).
+// With a payment or pass header: a malformed body gets 400 before the payment is verified or a pass call is used,
+// so it is never charged. Valid bodies fall through to the paid route below.
+app.post('/api/spend/check', (req, res, next) => { if (!hasPaymentOrPass(req)) return next(); const v = validateSpend(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
 app.post('/api/spend/check', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/spend/check`, method: "POST", amount: SPEND_PLAN.amount, name: "GW8 Spend-Policy Check (AI agent payments)",
     description: `Before an AI agent pays an invoice or merchant: POST {payment, policy} -> allow / deny / needs_approval plus the rules that fired (per-tx limit, rolling cap, merchant categories, allow/deny lists, hours + timezone, assets/chains, approval threshold) and an Ed25519-signed receipt bound to your request hash. Deterministic, stateless, no custody, moves no money. Bad bodies rejected before payment. $${SPEND_PLAN.priceUsd} USDC.`,
@@ -839,10 +870,10 @@ app.get('/api/seller/reputation/status', async (req, res) => { res.set('Cache-Co
 
 // x402 seller reputation for AI agents (public Base USDC history via Alchemy when ALCHEMY_API_KEY is set, else keyless
 // Blockscout; the key is only read in reputation.js and never returned or logged; stateless; never pays anyone).
-// Validate first: a malformed body gets 400 before the x402 challenge or any pass/payment header is looked at, so it is
+// Unpaid: always the 402 challenge (proposal 25). Paid/pass: a malformed body gets 400 before verify / pass use, so it is
 // never charged. If the data source is down (or an endpoint-only request has no readable payTo), deliver returns
 // {error}: the payment is verified but not settled / the pass call is refunded, so "unknown because no data" is free.
-app.post('/api/seller/reputation', (req, res, next) => { const v = validateReputation(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
+app.post('/api/seller/reputation', (req, res, next) => { if (!hasPaymentOrPass(req)) return next(); const v = validateReputation(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
 app.post('/api/seller/reputation', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/seller/reputation`, method: "POST", amount: REPUTATION_PLAN.amount, name: "GW8 x402 Seller Reputation (AI agent payments)",
     description: `Before an AI agent pays an x402 seller: POST {address} (Base wallet) and/or {endpoint} (x402 URL; payTo read from its 402). Returns score 0-100 + trusted / caution / avoid / unknown from public USDC history: distinct buyers, wash share, wallet age, top-payer share, 30d volume, with reasons and a signed receipt. Stateless; never pays anyone. No charge on bad body or if data is down. $${REPUTATION_PLAN.priceUsd} USDC.`,
@@ -858,8 +889,8 @@ app.post('/api/seller/reputation', (req, res) => handleX402Agent(req, res, {
 }));
 
 // Should my agent pay this? spend policy + seller reputation -> one verdict and one signed receipt.
-// Validate first (400 before any 402/pass). Seller data unavailable -> deliver {error} -> not settled / pass refunded.
-app.post('/api/pay/should-i-pay', (req, res, next) => { const v = validatePayDecision(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
+// Unpaid: always the 402 (proposal 25). Paid/pass: validate first (400 before verify / pass use). Seller data unavailable -> deliver {error} -> not settled / pass refunded.
+app.post('/api/pay/should-i-pay', (req, res, next) => { if (!hasPaymentOrPass(req)) return next(); const v = validatePayDecision(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
 app.post('/api/pay/should-i-pay', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/pay/should-i-pay`, method: "POST", amount: PAYDECISION_PLAN.amount, name: "GW8 Should-I-Pay (spend policy + seller reputation)",
     description: `Right before an AI agent pays: POST {payment, policy, seller} -> ONE verdict pay / dont_pay / ask_human. Runs the spend-policy check (limits, rolling cap, categories, allow/deny, hours, assets/chains, approval threshold) and the x402 seller reputation check (buyers, wash share, age, concentration), with reasons and one signed receipt. Stateless; never pays anyone. No charge if seller data is down. $${PAYDECISION_PLAN.priceUsd} USDC.`,

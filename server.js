@@ -27,7 +27,7 @@ import { payerFrom } from './buyers.js';
 import { checkSpend, validateSpend, SPEND_PLAN } from './spend.js';
 import { checkSellerReputation, validateReputation, REPUTATION_PLAN, getSourceStatus } from './reputation.js';
 import { checkShouldIPay, validatePayDecision, PAYDECISION_PLAN } from './paydecision.js';
-import { withCategory, categoryOf, isFeatured } from './catalog.js';
+import { withCategory, capDescription, categoryOf, isFeatured } from './catalog.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -86,10 +86,11 @@ function getX402ChallengeV2(o = {}) {
     const queryExample = exampleFromProps(inProps);
     const bodyExample = (o.body !== undefined) ? o.body : exampleFromProps(inProps);
 
-    const description = withCategory(o.url ? new URL(o.url).pathname : '/api/agent', o.description || (
+    // Capped at 500: CDP /verify rejects longer resource.description (see catalog.js capDescription).
+    const description = capDescription(withCategory(o.url ? new URL(o.url).pathname : '/api/agent', o.description || (
         'Crypto market regime (Stage 1 score 0-4: ETF flows, BTC support, alt breadth, Fear & Greed) plus WaveTrend oversold/overbought band dots on 66 Kraken 4h USD pairs. ' +
         'Use when an agent needs a compact risk-on/risk-off + oversold scan. $0.02 USDC on Base. Free sample: GET /api/sample. Signal only, not financial advice.'
-    ));
+    )));
     const url = o.url || RESOURCE_URL;
     const amount = o.amount || '20000';
     const tags = (o.tags || ['crypto', 'wavetrend', 'market-regime', 'kraken', 'x402']).slice(0, 5);
@@ -448,6 +449,10 @@ function decodePaymentPayload(raw) {
 async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
     const requirements = getX402ChallengeV2(product || {});
     const paymentRequirements = requirements.accepts[0];
+    // A client holding a challenge issued before the 500-char cap would still echo an over-long resource.description and
+    // get CDP's schema 400. resource is not covered by the EIP-3009 signature, so capping it changes nothing that was signed.
+    if (paymentPayload && paymentPayload.resource && typeof paymentPayload.resource.description === 'string')
+        paymentPayload = { ...paymentPayload, resource: { ...paymentPayload.resource, description: capDescription(paymentPayload.resource.description) } };
     const facilitatorBody = { x402Version: 2, paymentPayload, paymentRequirements };
 
     const verifyJwt = generateCdpJwt('POST', '/platform/v2/x402/verify');
@@ -803,7 +808,7 @@ app.get('/api/rails', (req, res) => {
     if (v.error) return res.status(400).json({ error: v.error });
     return handleX402Agent(req, res, {
         url: `${BASE_URL}/api/rails`, amount: "2000", name: "GW8 Payment Rail Check (Base USDC, XRPL, Tempo, Arc, card)",
-        description: "Which payment rail is cheapest and fastest right now for a USD amount (?amount=100): Base USDC (live eth_gasPrice x ~65k gas x Kraken ETH/USD, ~2s), XRPL RLUSD/XRP (live open-ledger fee x Kraken XRP/USD, ~3-5s), Tempo and Circle Arc (live eth_gasPrice, fees in USD stablecoins, ~1s), card (static 2.9% + $0.30 estimate, days). Fee USD/%, settlement, timestamps, sources, agent protocols per rail, recommended pick. Failed live sources are marked unavailable. 60s cache. $0.002 USDC. Signal only.",
+        description: "Cheapest and fastest payment rail right now for a USD amount (?amount=100): Base USDC (live gas x ETH/USD, ~2s), XRPL RLUSD/XRP (live fee x XRP/USD, ~3-5s), Tempo and Circle Arc (live gas, USD fees, ~1s), card (static 2.9% + $0.30, days). Fee USD/%, settlement time, sources, agent protocols per rail, recommended pick. Dead sources marked unavailable. 60s cache. $0.002 USDC. Signal only.",
         tags: ["payments", "rails", "base", "xrpl", "x402"],
         inputProps: { amount: { type: "number", example: 100 } },
         example: { amountUsd: 100, recommended: { rail: "xrpl-rlusd-xrp", fastest: "base-usdc" }, rails: [{ rail: "base-usdc", status: "live", feeUsd: 0.00095, feePct: 0.00095, settlement: "~2s" }, { rail: "xrpl-rlusd-xrp", status: "live", feeUsd: 0.000025, feePct: 0.000025, settlement: "~3-5s" }, { rail: "card", status: "static-estimate", feeUsd: 3.2, feePct: 3.2, settlement: "~1-3 business days" }] },
@@ -817,7 +822,7 @@ app.get('/api/rails', (req, res) => {
 app.post('/api/spend/check', (req, res, next) => { const v = validateSpend(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
 app.post('/api/spend/check', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/spend/check`, method: "POST", amount: SPEND_PLAN.amount, name: "GW8 Spend-Policy Check (AI agent payments)",
-    description: `Before an AI agent pays an invoice or merchant: POST {payment, policy} and get allow / deny / needs_approval, the rules that fired (per-tx limit, rolling cap using your spent-so-far, blocked/allowed merchant categories, allow/deny lists, allowed hours + timezone, assets/chains, human-approval threshold) and an Ed25519-signed decision receipt bound to a hash of your request. Deterministic and stateless: nothing is stored. Not custody, does not move money. Invalid bodies rejected before payment. $${SPEND_PLAN.priceUsd} USDC.`,
+    description: `Before an AI agent pays an invoice or merchant: POST {payment, policy} -> allow / deny / needs_approval plus the rules that fired (per-tx limit, rolling cap, merchant categories, allow/deny lists, hours + timezone, assets/chains, approval threshold) and an Ed25519-signed receipt bound to your request hash. Deterministic, stateless, no custody, moves no money. Bad bodies rejected before payment. $${SPEND_PLAN.priceUsd} USDC.`,
     tags: ["agent-payments", "spend-policy", "guardrails", "x402", "usdc"],
     inputProps: {
         payment: { type: "object", example: { amount: "420.00", currency: "USDC", chain: "base", recipientId: "acct_acme_supplies", recipientDomain: "acme-supplies.com", merchantCategory: "office-supplies", timestamp: "2026-10-21T15:30:00Z", agentId: "ap-agent-7", memo: "INV-10442" } },
@@ -840,7 +845,7 @@ app.get('/api/seller/reputation/status', async (req, res) => { res.set('Cache-Co
 app.post('/api/seller/reputation', (req, res, next) => { const v = validateReputation(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
 app.post('/api/seller/reputation', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/seller/reputation`, method: "POST", amount: REPUTATION_PLAN.amount, name: "GW8 x402 Seller Reputation (AI agent payments)",
-    description: `Before an AI agent pays an x402 seller: POST {address} (seller wallet on Base) and/or {endpoint} (x402 URL; payTo read from its unpaid 402 challenge). Returns a 0-100 score and verdict trusted / caution / avoid / unknown from public USDC transfer history: distinct paying buyers, wash/self-dealing share (self-transfers, round-trips), wallet age, top-payer concentration, 30-day organic volume, with reasons and an Ed25519-signed receipt. Deterministic formula; stateless; never pays anyone. Invalid bodies rejected before payment; no charge when the data source is unavailable. $${REPUTATION_PLAN.priceUsd} USDC.`,
+    description: `Before an AI agent pays an x402 seller: POST {address} (Base wallet) and/or {endpoint} (x402 URL; payTo read from its 402). Returns score 0-100 + trusted / caution / avoid / unknown from public USDC history: distinct buyers, wash share, wallet age, top-payer share, 30d volume, with reasons and a signed receipt. Stateless; never pays anyone. No charge on bad body or if data is down. $${REPUTATION_PLAN.priceUsd} USDC.`,
     tags: ["agent-payments", "seller-reputation", "trust", "x402", "usdc", "base"],
     inputProps: {
         address: { type: "string", example: "0x1111111111111111111111111111111111111111" },
@@ -857,7 +862,7 @@ app.post('/api/seller/reputation', (req, res) => handleX402Agent(req, res, {
 app.post('/api/pay/should-i-pay', (req, res, next) => { const v = validatePayDecision(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
 app.post('/api/pay/should-i-pay', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/pay/should-i-pay`, method: "POST", amount: PAYDECISION_PLAN.amount, name: "GW8 Should-I-Pay (spend policy + seller reputation)",
-    description: `Use right before an AI agent pays: POST {payment, policy, seller} and get ONE verdict pay / dont_pay / ask_human. Runs the spend-policy check (per-tx limit, rolling cap with your spent-so-far, categories, allow/deny lists, hours + timezone, assets/chains, approval threshold) and the x402 seller reputation check (public Base USDC history: distinct buyers, wash share, wallet age, concentration, 30d volume), with reasons, both sub-results and one Ed25519-signed receipt. Deterministic; stateless; never pays anyone. Invalid bodies rejected before payment; not charged if seller data is unavailable. $${PAYDECISION_PLAN.priceUsd} USDC.`,
+    description: `Right before an AI agent pays: POST {payment, policy, seller} -> ONE verdict pay / dont_pay / ask_human. Runs the spend-policy check (limits, rolling cap, categories, allow/deny, hours, assets/chains, approval threshold) and the x402 seller reputation check (buyers, wash share, age, concentration), with reasons and one signed receipt. Stateless; never pays anyone. No charge if seller data is down. $${PAYDECISION_PLAN.priceUsd} USDC.`,
     tags: ["agent-payments", "risk-check", "spend-policy", "seller-reputation", "x402"],
     inputProps: {
         payment: { type: "object", example: { amount: "0.05", currency: "USDC", chain: "base", recipientId: "0x1111111111111111111111111111111111111111", merchantCategory: "data-api", timestamp: "2026-10-21T15:30:00Z", agentId: "research-agent-1" } },

@@ -6,6 +6,7 @@
 import { createPaymentWrapper, x402ResourceServer } from '@x402/mcp';
 import { HTTPFacilitatorClient } from '@x402/core/server';
 import { ExactEvmScheme } from '@x402/evm/exact/server';
+import { capDescription } from './catalog.js';
 
 const NETWORK = 'eip155:8453';
 let state = { mode: 'pointer', reason: 'not initialized' };
@@ -47,7 +48,7 @@ export async function paidWrapper(toolName, amountAtomic, description) {
     });
     const w = createPaymentWrapper(state.rs, {
         accepts,
-        resource: { url: `mcp://tool/${toolName}`, description, mimeType: 'application/json' },
+        resource: { url: `mcp://tool/${toolName}`, description: capDescription(description), mimeType: 'application/json' }, // CDP: <= 500 chars
         hooks: { onAfterSettlement: async ({ settlement, paymentPayload }) => {
             console.log('[mcp-pay] settled', toolName, settlement && settlement.transaction);
             // Stats only (anonymized payer id); never blocks or fails the paid result.

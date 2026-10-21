@@ -45,6 +45,7 @@ const EXACT = new Set([
     '/api/track',
     '/api/proof/pubkey',
     '/.well-known/gw8-receipt-key',
+    '/api/receipt/verify',
     '/api/brief/weekly/subscribe',
 ]);
 

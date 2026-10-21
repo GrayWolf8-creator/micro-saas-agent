@@ -11,7 +11,7 @@
 
 ## Trust
 - No charge on failure: verify -> build data -> settle; if the data or the settle fails, nothing is charged and nothing is returned.
-- Signed receipts: paid responses carry X-GW8-Receipt (base64url JSON: route, amount, tx, payer, issuedAt, bodySha256) + X-GW8-Receipt-Signature (Ed25519). Key: /.well-known/gw8-receipt-key.
+- Signed receipts: every paid call returns a signed receipt your agent can keep as an audit trail. JSON body field `receipt` {endpoint, query, timestamp, response_sha256, tx, payer, payload, signature, pubkey_url} (Ed25519 over utf8(payload), key /api/proof/pubkey; `signed:false` if signing is not configured). Free check: GET/POST /api/receipt/verify. Headers: X-GW8-Receipt (base64url JSON: route, amount, tx, payer, issuedAt, bodySha256) + X-GW8-Receipt-Signature (Ed25519). Key: /.well-known/gw8-receipt-key.
 - Safe retry: resending the same PAYMENT-SIGNATURE to the same URL within 15 min returns the same response (X-GW8-Replay: true), no second charge.
 - Best value: POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass.
 - Raw USDC transfer + tx hash (X-Payment-Tx) is retired (410); pay with x402 only.
@@ -64,7 +64,7 @@
 - GET /api/kraken/listings ($0.02): new Kraken USD pairs (30d) + WaveTrend state.
 - GET /api/rules ($0.02): CFTC + SEC crypto rule changes (90d).
 - GET /api/rs ($0.02): relative strength (1w/1m returns, ranks, 0-100 score) on 66 Kraken pairs + sector scores and breadth.
-- GET /api/rails ($0.01): cheapest/fastest rail now for ?amount= (Base USDC, XRPL live fees; card = static estimate).
+- GET /api/rails ($0.01): cheapest/fastest rail now for ?amount= (Base USDC, XRPL, Tempo, Arc live fees; card = static estimate) + agent protocols per rail (x402/MPP/card networks; unconfirmed ones marked unverified).
 - POST /api/alerts/subscribe ($0.50): green-dot webhook alerts (HMAC). Body needs webhookUrl.
 - POST /api/brief/weekly/subscribe ($0.25): 4 Monday webhook briefs.
 - POST /api/pass/day ($1.00): 24h access via X-GW8-Pass (excludes alerts). Fair use 2000/day, 60/min.

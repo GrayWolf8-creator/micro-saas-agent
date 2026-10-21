@@ -22,7 +22,7 @@ import { getRails, validAmount } from './rails.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
 import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid } from './stats.js';
-import { funnel, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH } from './trust.js';
+import { funnel, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH, buildReceipt, verifyReceipt, VERIFY_PATH } from './trust.js';
 import { payerFrom } from './buyers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -205,7 +205,7 @@ app.get('/', (req, res) => {
                 ]
             }
         },
-        free: { teaser: "/api/brief/teaser", sample: "/api/sample", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH },
+        free: { teaser: "/api/brief/teaser", sample: "/api/sample", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH, receiptVerify: VERIFY_PATH },
         bestValue: { path: "/api/pass/day", method: "POST", priceUsd: "1.00", note: "one payment, 24h of every paid data endpoint" },
         trust: TRUST_LINE + " Safe retry: same PAYMENT-SIGNATURE within 15 min is not charged twice.",
         docs: "/llms.txt",
@@ -252,7 +252,7 @@ const PAID = [
     { path: '/api/kraken/listings', method: 'get', price: '0.02', summary: 'Kraken new USD listings (last 30 days) with price, volume, % since listing, and WaveTrend 4h state. $0.02.' },
     { path: '/api/rules', method: 'get', price: '0.02', summary: 'CFTC + SEC crypto rule-change feed (90 days): ANPRM/NPRM/final/notice/press, RIN, comment deadlines. $0.02.' },
     { path: '/api/rs', method: 'get', price: '0.02', summary: 'Relative strength: 1w/1m % return, percentile ranks and 0-100 strength score for 66 Kraken USD pairs, plus sector scores and breadth (L1, L2, DeFi, RWA, oracles/infra, payments, AI, memes). $0.02.' },
-    { path: '/api/rails', method: 'get', price: '0.01', summary: 'Cheapest/fastest payment rail right now for a USD amount: Base USDC vs XRPL (live fees) vs card (static estimate), with fee USD/%, settlement time and a recommended pick. Optional ?amount=100. $0.01.', query: { amount: { type: 'number', description: 'USD amount, default 100' } } },
+    { path: '/api/rails', method: 'get', price: '0.01', summary: 'Cheapest/fastest payment rail right now for a USD amount: Base USDC, XRPL, Tempo, Arc (live fees) vs card (static estimate), with agent-protocol support per rail, with fee USD/%, settlement time and a recommended pick. Optional ?amount=100. $0.01.', query: { amount: { type: 'number', description: 'USD amount, default 100' } } },
     { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to paid data endpoints via X-GW8-Pass (excludes alert subscribe). Fair use ${PASS_PLAN.dailyCap}/day, ${PASS_PLAN.perMinute}/min. $1.00.` },
     ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly Monday brief webhook (${p.weeks} issues): regime, top WaveTrend dots, 7d hit rates, RWA, federal contracts (DoD ~90d lag). $${p.priceUsd}.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' } }, required: ['webhookUrl'] })),
     { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Webhook alerts for NEW green WaveTrend band dots (${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts), HMAC-signed. $0.50.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
@@ -279,6 +279,8 @@ function openApiDoc() {
         } };
     }
     paths['/api/proof/pubkey'] = { get: { operationId: 'proof_pubkey', summary: 'Free: Ed25519 public key used to sign paid responses (X-GW8-Signature, X-GW8-Signed-At, X-GW8-Body-SHA256)', security: [], responses: { '200': { description: 'Public key JSON' } } } };
+    paths[VERIFY_PATH] = { get: { operationId: 'receipt_verify', summary: 'Free: verify a paid-call receipt signature (Ed25519). Query payload (receipt.payload or X-GW8-Receipt) and signature (URL-encoded base64).', security: [], parameters: [{ name: 'payload', in: 'query', required: true, schema: { type: 'string' } }, { name: 'signature', in: 'query', required: true, schema: { type: 'string' } }], responses: { '200': { description: '{valid, fields, reason?}' } } },
+        post: { operationId: 'receipt_verify_post', summary: 'Free: verify a receipt; body {payload, signature, data?} or {receipt, data?}. dataMatches checks response_sha256 against data.', security: [], requestBody: { content: { 'application/json': { schema: { type: 'object' } } } }, responses: { '200': { description: '{valid, dataMatches?, fields}' } } } };
     paths[RECEIPT_KEY_PATH] = { get: { operationId: 'receipt_key', summary: 'Free: Ed25519 public key + format for verifying X-GW8-Receipt / X-GW8-Receipt-Signature on paid responses', security: [], responses: { '200': { description: 'Key JSON' } } } };
     paths['/api/govcontracts/status'] = { get: { operationId: 'govcontracts_status', summary: 'Free: gov-contract feed source health (sourceStatus, asOf, dodAnnouncementDays, dodAwardsParsed, count; no rows)', security: [], responses: { '200': { description: 'Status JSON' } } } };
     paths['/api/track'] = { get: { operationId: 'track', summary: 'Free: honest track record of band-dot signals (backtest simulated vs live-logged, hit rates 1d/7d/30d incl. misses). HTML at /track', security: [], responses: { '200': { description: 'Track JSON' } } } };
@@ -301,6 +303,9 @@ app.get(['/favicon.ico', '/favicon.svg'], (req, res) => res.type('image/svg+xml'
 app.get('/openapi.json', (req, res) => res.json(openApiDoc()));
 app.get('/.well-known/x402', (req, res) => res.json(discoveryFanout()));
 app.get(RECEIPT_KEY_PATH, (req, res) => res.json(receiptKeyInfo()));
+// Free receipt check (public key only). POST {payload, signature, data?} or GET ?payload=&signature=.
+app.get(VERIFY_PATH, (req, res) => res.json(verifyReceipt({ payload: req.query.payload, signature: typeof req.query.signature === 'string' ? req.query.signature.replace(/ /g, '+') : undefined })));
+app.post(VERIFY_PATH, (req, res) => { const b = req.body || {}, r = b.receipt && typeof b.receipt === 'object' ? b.receipt : b; res.json(verifyReceipt({ payload: r.payload, signature: r.signature, data: b.data })); });
 
 // MCP (remote, streamable HTTP, stateless). Free tools return data. Paid tools take x402 payment in-band
 // (via @x402/mcp, _meta["x402/payment"]) when the facilitator is configured; otherwise they fall back to
@@ -325,14 +330,16 @@ async function buildMcp() {
         const viaPass = async (a) => {
             const p = await usePass(a.pass); if (!p.ok) return mcpErr(`${p.reason} (no payment was taken)`);
             if (precheck) { const bad = await precheck(a); if (bad) { await refundPass(p); return mcpErr(bad); } }
-            try { const out = await deliver(a); if (out && out.error) { await refundPass(p); return mcpErr(String(out.error) + ' (pass call not counted)'); } return txt({ ...out, _pass: { remaining: p.remaining, expiresAt: p.expiresAt } }); }
+            try { const out = await deliver(a); if (out && out.error) { await refundPass(p); return mcpErr(String(out.error) + ' (pass call not counted)'); } return txt({ ...out, _pass: { remaining: p.remaining, expiresAt: p.expiresAt }, _receipt: mcpReceipt(a, out, null, 'DAY_PASS') }); }
             catch (e) { await refundPass(p); return mcpErr('upstream data unavailable, retry shortly (pass call not counted)'); }
         };
+        // Tool-call receipt (tx hash is in _meta["x402/payment-response"], set after this result is built, so tx is null here).
+        const mcpReceipt = (a, out, amt, accessType) => { const { pass, ...q } = a || {}; return buildReceipt({ endpoint: `MCP ${name} (${method} ${build(a)})`, query: q, amount: amt, tx: null, accessType }, out); };
         const wrap = await paidWrapper(name, amount, `${title}: ${desc}`);
         const pointer = async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).', ...funnel(ORIGIN + path, { passUsd: PASS_PLAN.priceUsd, passHours: PASS_PLAN.hours, passCap: PASS_PLAN.dailyCap, noPass: !!opts.noPass }).body });
         if (!wrap) return m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base via x402. Returns the endpoint to call with an x402 client.`, inputSchema: schema }, async (a) => (!opts.noPass && a.pass) ? viaPass(a) : pointer(a));
         const run = wrap(async (a) => {
-            try { const out = await deliver(a); return out && out.error ? mcpErr(String(out.error)) : txt(out); }
+            try { const out = await deliver(a); return out && out.error ? mcpErr(String(out.error)) : txt({ ...out, _receipt: mcpReceipt(a, out, amount, 'X402_MCP_INBAND') }); }
             catch (e) { return mcpErr('upstream data unavailable, retry shortly (not charged)'); }
         });
         return m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base, paid in-band via x402 MCP (@x402/mcp; _meta "x402/payment"). Also at ${method} ${ORIGIN}${path}.`, inputSchema: schema },
@@ -358,7 +365,7 @@ async function buildMcp() {
     await paidTool('get_kraken_listings', 'Kraken new USD listings', '/api/kraken/listings', 'GET', '0.02', 'New Kraken USD pairs from the last 30 days: first-seen date (our snapshot, or first Kraken daily candle for pairs older than our snapshots), price, 24h volume, % change since listing, WaveTrend 4h dot state, plus Kraken blog listing posts.', {}, undefined, () => getKrakenListings());
     await paidTool('get_crypto_rules', 'Crypto rule-change feed (CFTC + SEC)', '/api/rules', 'GET', '0.02', 'CFTC and SEC crypto / digital-asset / stablecoin / tokenization rulemaking from the last 90 days: Federal Register docs (ANPRM/NPRM/final/notice) with RIN, comment deadline, stage-change flag and Unified Agenda presence, plus agency press releases. Each source labeled ok/unavailable; no stale fill.', {}, undefined, () => getRules());
     await paidTool('get_relative_strength', 'Relative strength + sector scores', '/api/rs', 'GET', '0.02', 'Relative strength across 66 Kraken USD pairs: 1-week and 1-month % return, percentile ranks, 0-100 strength score (60% 1m rank + 40% 1w rank), leaders/laggards, and sector scores with breadth (% of coins with a positive 1m return).', {}, undefined, () => getRs());
-    await paidTool('get_payment_rails', 'Cheapest payment rail now', '/api/rails', 'GET', '0.01', 'Which payment rail is cheapest and fastest right now for a USD amount: Base USDC (live gas x ETH/USD), XRPL (live fee x XRP/USD) and card (static 2.9% + $0.30 estimate). Fee USD and %, settlement time, data timestamp, sources and a recommended pick. Arg amount (USD, default 100).', { amount: z.number().positive().max(1e7).optional() },
+    await paidTool('get_payment_rails', 'Cheapest payment rail now', '/api/rails', 'GET', '0.01', 'Which payment rail is cheapest and fastest right now for a USD amount: Base USDC (live gas x ETH/USD), XRPL (live fee x XRP/USD), Tempo and Circle Arc (live gas, USD-denominated) and card (static 2.9% + $0.30 estimate), with documented agent protocols (x402, MPP, card networks) per rail. Fee USD and %, settlement time, data timestamp, sources and a recommended pick. Arg amount (USD, default 100).', { amount: z.number().positive().max(1e7).optional() },
         a => a.amount ? `/api/rails?amount=${a.amount}` : '/api/rails', a => getRails(a.amount || 100));
     await paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.02', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.', {}, undefined, () => getBrief());
     m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
@@ -446,7 +453,8 @@ async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
         return { status: 402, body: { error: "Payment settlement failed", reason: settleData.errorReason || settleRes.status, note: 'no data returned and nothing was created; you can retry' } };
     }
     const payer = payerFrom(paymentPayload, settleData);
-    const body = { status: 'success', accessType: 'X402_FACILITATOR_SETTLED', settlement: settleData, timestamp: new Date().toISOString(), signal: out };
+    const body = { status: 'success', accessType: 'X402_FACILITATOR_SETTLED', settlement: settleData, timestamp: new Date().toISOString(), signal: out,
+        receipt: buildReceipt({ endpoint: `${req.method} ${req.path}`, query: req.query, amount: paymentRequirements.amount, tx: settleData.transaction, payer, accessType: 'X402_FACILITATOR_SETTLED' }, out) };
     const headers = {
         'PAYMENT-RESPONSE': Buffer.from(JSON.stringify(settleData)).toString('base64'),
         ...receiptHeaders({ route: `${req.method} ${req.path}`, resource: paymentRequirements && requirements.resource.url, amount: paymentRequirements.amount, payTo: VAULT_ADDRESS, tx: settleData.transaction, payer, accessType: 'X402_FACILITATOR_SETTLED' }, body)
@@ -469,7 +477,8 @@ async function handleX402Agent(req, res, product = null) {
         let out;
         try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
         if (!out || out.error) { await refundPass(p); return res.status(503).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'pass call not counted' }); }
-        return res.set('X-GW8-Pass-Remaining', String(p.remaining)).json({ status: 'success', accessType: 'DAY_PASS', pass: { remaining: p.remaining, expiresAt: p.expiresAt }, timestamp: new Date().toISOString(), signal: out });
+        return res.set('X-GW8-Pass-Remaining', String(p.remaining)).json({ status: 'success', accessType: 'DAY_PASS', pass: { remaining: p.remaining, expiresAt: p.expiresAt }, timestamp: new Date().toISOString(), signal: out,
+            receipt: buildReceipt({ endpoint: `${req.method} ${req.path}`, query: req.query, amount: null, tx: null, accessType: 'DAY_PASS' }, out) });
     }
 
     // PRIMARY PATH: x402 v2 EIP-3009 Signature Verification via CDP Facilitator
@@ -758,8 +767,8 @@ app.get('/api/rails', (req, res) => {
     const v = validAmount(req.query.amount);
     if (v.error) return res.status(400).json({ error: v.error });
     return handleX402Agent(req, res, {
-        url: `${BASE_URL}/api/rails`, amount: "10000", name: "GW8 Payment Rail Check (Base USDC vs XRPL vs card)",
-        description: "Which payment rail is cheapest and fastest right now for a USD amount (?amount=100): Base USDC (live eth_gasPrice x ~65k gas x Kraken ETH/USD, ~2s), XRPL RLUSD/XRP (live open-ledger fee x Kraken XRP/USD, ~3-5s), card (static 2.9% + $0.30 estimate, days). Fee USD/%, settlement, timestamps, sources, recommended pick. Failed live sources are marked unavailable. 60s cache. $0.01 USDC. Signal only.",
+        url: `${BASE_URL}/api/rails`, amount: "10000", name: "GW8 Payment Rail Check (Base USDC, XRPL, Tempo, Arc, card)",
+        description: "Which payment rail is cheapest and fastest right now for a USD amount (?amount=100): Base USDC (live eth_gasPrice x ~65k gas x Kraken ETH/USD, ~2s), XRPL RLUSD/XRP (live open-ledger fee x Kraken XRP/USD, ~3-5s), Tempo and Circle Arc (live eth_gasPrice, fees in USD stablecoins, ~1s), card (static 2.9% + $0.30 estimate, days). Fee USD/%, settlement, timestamps, sources, agent protocols per rail, recommended pick. Failed live sources are marked unavailable. 60s cache. $0.01 USDC. Signal only.",
         tags: ["payments", "rails", "base", "xrpl", "x402"],
         inputProps: { amount: { type: "number", example: 100 } },
         example: { amountUsd: 100, recommended: { rail: "xrpl-rlusd-xrp", fastest: "base-usdc" }, rails: [{ rail: "base-usdc", status: "live", feeUsd: 0.00095, feePct: 0.00095, settlement: "~2s" }, { rail: "xrpl-rlusd-xrp", status: "live", feeUsd: 0.000025, feePct: 0.000025, settlement: "~3-5s" }, { rail: "card", status: "static-estimate", feeUsd: 3.2, feePct: 3.2, settlement: "~1-3 business days" }] },

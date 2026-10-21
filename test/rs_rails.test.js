@@ -53,3 +53,15 @@ test('validAmount', () => {
   assert.deepEqual(validAmount('250'), { amount: 250 });
   assert.ok(validAmount('-1').error); assert.ok(validAmount('abc').error); assert.ok(validAmount('1e9').error);
 });
+
+test('buildRails: Tempo + Arc live math, protocols on every rail', () => {
+  const at = '2026-10-21T00:50:00.000Z';
+  const d = buildRails(100, { gas: null, fee: null, tick: null, tempo: { wei: 6e8, at }, arc: { wei: 2e10, at } });
+  const by = Object.fromEntries(d.rails.map(r => [r.rail, r]));
+  assert.equal(by.tempo.feeUsd, 0.00003); assert.equal(by.tempo.status, 'live');
+  assert.equal(by['arc-usdc'].feeUsd, 0.0013);
+  assert.equal(d.recommended.rail, 'tempo');
+  for (const r of d.rails) { assert.ok(Array.isArray(r.protocols) && r.protocols.length, r.rail); for (const p of r.protocols) assert.ok(['documented', 'unverified'].includes(p.status)); }
+  const none = buildRails(100, {});
+  assert.equal(none.rails.filter(r => r.status === 'unavailable').length, 4);
+});

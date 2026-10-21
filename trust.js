@@ -12,7 +12,9 @@ export const ORIGIN = 'https://micro-saas-agent.onrender.com';
 export const TEASER_PATH = '/api/brief/teaser';
 export const PASS_PATH = '/api/pass/day';
 export const RECEIPT_KEY_PATH = '/.well-known/gw8-receipt-key';
-export const TRUST_LINE = 'No charge on failure: payment settles only after your data is ready. Signed receipts on every paid response.';
+export const PUBKEY_PATH = '/api/proof/pubkey';
+export const VERIFY_PATH = '/api/receipt/verify';
+export const TRUST_LINE = 'No charge on failure: payment settles only after your data is ready. Every paid call returns a signed receipt your agent can keep as an audit trail.';
 
 // One line per route: what the paid call adds over the free teaser.
 const ADDS = [
@@ -29,7 +31,7 @@ const ADDS = [
     [/^\/api\/kraken\/listings/, 'New Kraken USD listings with volume, % since listing and WaveTrend state (not in the teaser).'],
     [/^\/api\/rules/, 'CFTC + SEC crypto rule-change rows with RIN and comment deadlines (not in the teaser).'],
     [/^\/api\/rs/, 'Strength scores and ranks for all 66 Kraken pairs plus sector scores and breadth (not in the teaser).'],
-    [/^\/api\/rails/, 'Live fee and settlement comparison of Base USDC, XRPL and card with a recommended rail (not in the teaser).'],
+    [/^\/api\/rails/, 'Live fee and settlement comparison of Base USDC, XRPL, Tempo, Arc and card, with agent protocols and a recommended rail (not in the teaser).'],
     [/^\/api\/verdict\//, 'Token safety score 0-100 with reasons and sources (not in the teaser).'],
     [/^\/api\/pass\/day/, 'One payment, 24h of every paid data endpoint and MCP tool (fair use 2000 calls).'],
     [/^\/api\/alerts\/subscribe/, 'New green dots pushed to your webhook for 30 days (the teaser is pull-only).'],
@@ -50,7 +52,7 @@ export function funnel(url, { passUsd = '1.00', passHours = 24, passCap = 2000, 
         freeTeaser: ORIGIN + TEASER_PATH,
         paidAdds: paidAdds(url),
         bestValue,
-        trust: { noChargeOnFailure: 'Payment is verified, then the data is built, then settled. If the data fails or settlement fails, nothing is charged and no data is returned.', safeRetry: 'Resend the same PAYMENT-SIGNATURE to the same URL within 15 minutes to get the same response again; it is not charged twice.', receipts: `Paid responses carry X-GW8-Receipt + X-GW8-Receipt-Signature (Ed25519). Public key: ${ORIGIN}${RECEIPT_KEY_PATH}` },
+        trust: { noChargeOnFailure: 'Payment is verified, then the data is built, then settled. If the data fails or settlement fails, nothing is charged and no data is returned.', safeRetry: 'Resend the same PAYMENT-SIGNATURE to the same URL within 15 minutes to get the same response again; it is not charged twice.', receipts: `Every paid call returns a signed receipt your agent can keep as an audit trail: body field "receipt" plus X-GW8-Receipt + X-GW8-Receipt-Signature headers (Ed25519). Public key: ${ORIGIN}${PUBKEY_PATH}. Free check: ${ORIGIN}${VERIFY_PATH}` },
     };
     const headers = {
         'X-GW8-Free-Teaser': ORIGIN + TEASER_PATH,
@@ -81,6 +83,41 @@ export function receiptHeaders(r, body) {
         return h;
     } catch (e) { console.error('[receipt] build failed', e && e.message); return {}; }
 }
+/**
+ * Body receipt for a paid response (kept by the buyer as an audit trail). Never throws.
+ * payload = base64url(JSON of the signed fields); signature = Ed25519 over utf8(payload), same key as /api/proof/pubkey.
+ * response_sha256 = sha256 hex of JSON.stringify(data), i.e. of the "signal" field the buyer received.
+ * When no signing key is configured: signed=false, signature=null (never a fake signature).
+ */
+export function buildReceipt(r, data) {
+    try {
+        const f = { v: 1, service: 'GW8 Signal API', endpoint: r.endpoint, query: r.query && Object.keys(r.query).length ? r.query : null,
+            timestamp: new Date().toISOString(), response_sha256: sha256hex(JSON.stringify(data)), amountUsd: r.amount != null ? (Number(r.amount) / 1e6).toString() : null,
+            network: 'eip155:8453', tx: r.tx || null, payer: r.payer || null, accessType: r.accessType };
+        f.id = 'rcpt_' + sha256hex(`${f.tx}|${f.endpoint}|${f.timestamp}|${f.response_sha256}`).slice(0, 20);
+        const payload = b64u(JSON.stringify(f)), signature = signDetached(Buffer.from(payload, 'utf8'));
+        return { ...f, payload, signed: !!signature, alg: signature ? 'Ed25519' : 'none', signature: signature || null,
+            ...(signature ? {} : { unsigned: 'signing key not configured on the server; this receipt is unsigned' }),
+            pubkey_url: ORIGIN + PUBKEY_PATH, verify_url: ORIGIN + VERIFY_PATH };
+    } catch (e) { console.error('[receipt] body receipt failed', e && e.message); return { signed: false, alg: 'none', signature: null, unsigned: 'receipt build failed' }; }
+}
+/** Check a receipt (body receipt {payload, signature} or X-GW8-Receipt header + signature). Public key only. Never throws. */
+export function verifyReceipt({ payload, signature, data } = {}) {
+    try {
+        if (typeof payload !== 'string' || !/^[A-Za-z0-9_-]{10,20000}$/.test(payload)) return { valid: false, reason: 'payload must be the receipt payload (base64url) exactly as received' };
+        let fields; try { fields = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return { valid: false, reason: 'payload is not base64url JSON' }; }
+        const k = publicKeyInfo();
+        if (!k.enabled) return { valid: false, signingEnabled: false, reason: 'server signing key not configured; receipts are unsigned and cannot be verified', fields };
+        if (!signature) return { valid: false, reason: 'missing signature (receipt is unsigned)', fields };
+        const pub = crypto.createPublicKey({ key: Buffer.from(k.publicKeySpkiBase64, 'base64'), format: 'der', type: 'spki' });
+        const valid = crypto.verify(null, Buffer.from(payload, 'utf8'), pub, Buffer.from(String(signature), 'base64'));
+        const out = { valid, alg: 'Ed25519', pubkey_url: ORIGIN + PUBKEY_PATH, fields };
+        if (data !== undefined && fields.response_sha256) out.dataMatches = sha256hex(JSON.stringify(data)) === fields.response_sha256;
+        if (data !== undefined && fields.bodySha256) out.dataMatches = sha256hex(JSON.stringify(data)) === fields.bodySha256;
+        if (!valid) out.reason = 'signature does not match this payload and key';
+        return out;
+    } catch (e) { return { valid: false, reason: 'could not verify (bad signature encoding?)' }; }
+}
 export function receiptKeyInfo() {
     const k = publicKeyInfo();
     return {
@@ -91,6 +128,8 @@ export function receiptKeyInfo() {
             format: 'base64url(JSON) with fields v, id, service, route, resource, amount (USDC atomic, 6 decimals), amountUsd, asset, network, payTo, tx, payer, accessType, issuedAt, bodySha256 (sha256 hex of the exact response body).',
             verify: 'Ed25519.verify(publicKey, utf8(X-GW8-Receipt header value exactly as received), base64decode(X-GW8-Receipt-Signature)). Then check tx on Base (basescan) and bodySha256 against the body you received.',
             unsigned: 'If signing is not configured the receipt is still sent with X-GW8-Receipt-Alg: none.',
+            bodyReceipt: 'Paid JSON responses also carry a "receipt" field: {endpoint, query, timestamp, response_sha256 (sha256 hex of JSON.stringify(signal)), tx, payer, payload, signature, alg, signed, pubkey_url}. Verify: Ed25519.verify(publicKey, utf8(receipt.payload), base64decode(receipt.signature)); payload decodes (base64url) to the signed fields.',
+            verifyEndpoint: `Free: POST ${ORIGIN}${VERIFY_PATH} {payload, signature, data?} or GET ?payload=&signature= (URL-encode the signature).`,
         },
         terms: TRUST_LINE,
     };

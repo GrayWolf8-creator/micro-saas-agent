@@ -12,6 +12,11 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Spend-policy check for AI agents (2026-10-21)
+- New paid POST /api/spend/check ($0.02, x402; day pass accepted) + MCP tool check_spend_policy. Agent sends {payment, policy}; returns allow / deny / needs_approval, the rules that fired, every check, remaining limits and a signed decision receipt built with trust.js buildReceipt (same Ed25519 key, /api/proof/pubkey; checkable at free /api/receipt/verify; signed:false when no key). The receipt's signed fields carry query.requestSha256 (hash of the exact request) and response_sha256 (hash of the evaluation).
+- Rules: currency match (no FX), deny list, allow list (onUnlisted deny|needs_approval), blocked/allowed merchant categories, allowed assets, allowed chains, allowed hours + IANA timezone (+days, overnight windows), per-tx limit, rolling cap (caller supplies spentSoFar), human-approval threshold. Exact decimal math (BigInt), deterministic.
+- Stateless: nothing about the payment/policy/memo is stored or logged. Invalid bodies get 400 before payment (no charge). New spend.js; listed in /, openapi, /.well-known/x402, llms.txt, MCP server card, stats, 402 paid-adds. Not custody, no payment execution.
+
 ### Retire manual tx-hash redemption (2026-10-19)
 - `/api/agent` with X-Payment-Tx or ?tx= now returns 410 MANUAL_TX_RETIRED plus the x402 challenge; no data. Anyone could redeem a public transfer to the payout wallet. Stats showed 0 uses. ethers import dropped from server.js (dependency left in package.json). x402 flows unchanged.
 

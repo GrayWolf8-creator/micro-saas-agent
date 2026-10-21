@@ -43,6 +43,11 @@
 | GET /api/rails (?amount=) | $0.01 |
 | GET /api/verdict/{chain}/{address} | $0.01 |
 
+### Agent payments
+| Call | Price |
+| --- | --- |
+| POST /api/spend/check | $0.02 |
+
 ### Access
 | Call | Price |
 | --- | --- |
@@ -65,6 +70,7 @@
 - GET /api/rules ($0.02): CFTC + SEC crypto rule changes (90d).
 - GET /api/rs ($0.02): relative strength (1w/1m returns, ranks, 0-100 score) on 66 Kraken pairs + sector scores and breadth.
 - GET /api/rails ($0.01): cheapest/fastest rail now for ?amount= (Base USDC, XRPL, Tempo, Arc live fees; card = static estimate) + agent protocols per rail (x402/MPP/card networks; unconfirmed ones marked unverified).
+- POST /api/spend/check ($0.02): spend-policy check before an agent pays. Body {payment, policy}. payment: amount (decimal string), currency, recipientId and/or recipientDomain, merchantCategory, chain, timestamp (ISO), agentId, memo. policy: currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours=24}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted (deny|needs_approval), allowedHours {start "HH:MM", end, timezone IANA, days}, allowedAssets, allowedChains, requireApprovalAbove. Returns decision allow|deny|needs_approval (deny beats needs_approval), reasons (rules that fired), every check, remaining limits, and an Ed25519-signed decisionReceipt bound to sha256 of your request. Stateless: nothing stored, you send spentSoFar. No FX: a payment in another currency than policy.currency is denied. Invalid bodies get 400 before payment. MCP tool: check_spend_policy. Not custody, does not move money.
 - POST /api/alerts/subscribe ($0.50): green-dot webhook alerts (HMAC). Body needs webhookUrl.
 - POST /api/brief/weekly/subscribe ($0.25): 4 Monday webhook briefs.
 - POST /api/pass/day ($1.00): 24h access via X-GW8-Pass (excludes alerts). Fair use 2000/day, 60/min.

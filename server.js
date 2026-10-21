@@ -24,6 +24,7 @@ import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStat
 import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid } from './stats.js';
 import { funnel, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH, buildReceipt, verifyReceipt, VERIFY_PATH } from './trust.js';
 import { payerFrom } from './buyers.js';
+import { checkSpend, validateSpend, SPEND_PLAN } from './spend.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -197,6 +198,11 @@ app.get('/', (req, res) => {
                     { path: "/api/verdict/{chain}/{address}", priceUsd: "0.01" }
                 ]
             },
+            agentPayments: {
+                paid: [
+                    { path: "/api/spend/check", method: "POST", priceUsd: SPEND_PLAN.priceUsd, note: "spend-policy check: allow / deny / needs_approval + signed decision receipt" }
+                ]
+            },
             access: {
                 paid: [
                     { path: "/api/pass/day", method: "POST", priceUsd: "1.00" },
@@ -253,6 +259,7 @@ const PAID = [
     { path: '/api/rules', method: 'get', price: '0.02', summary: 'CFTC + SEC crypto rule-change feed (90 days): ANPRM/NPRM/final/notice/press, RIN, comment deadlines. $0.02.' },
     { path: '/api/rs', method: 'get', price: '0.02', summary: 'Relative strength: 1w/1m % return, percentile ranks and 0-100 strength score for 66 Kraken USD pairs, plus sector scores and breadth (L1, L2, DeFi, RWA, oracles/infra, payments, AI, memes). $0.02.' },
     { path: '/api/rails', method: 'get', price: '0.01', summary: 'Cheapest/fastest payment rail right now for a USD amount: Base USDC, XRPL, Tempo, Arc (live fees) vs card (static estimate), with agent-protocol support per rail, with fee USD/%, settlement time and a recommended pick. Optional ?amount=100. $0.01.', query: { amount: { type: 'number', description: 'USD amount, default 100' } } },
+    { path: '/api/spend/check', method: 'post', price: SPEND_PLAN.priceUsd, summary: `Spend-policy check for AI agents: POST a proposed payment + the buyer's rules (per-tx limit, rolling cap with your spent-so-far, categories, allow/deny lists, hours+timezone, assets/chains, human-approval threshold). Returns allow / deny / needs_approval, which rules fired, and a signed decision receipt. Stateless, deterministic; not custody, does not move money. $${SPEND_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'amount (decimal string), currency, recipientId and/or recipientDomain, merchantCategory, chain, timestamp (ISO), agentId, memo' }, policy: { type: 'object', description: 'currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted, allowedHours {start, end, timezone, days}, allowedAssets, allowedChains, requireApprovalAbove' } }, required: ['payment', 'policy'] },
     { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to paid data endpoints via X-GW8-Pass (excludes alert subscribe). Fair use ${PASS_PLAN.dailyCap}/day, ${PASS_PLAN.perMinute}/min. $1.00.` },
     ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly Monday brief webhook (${p.weeks} issues): regime, top WaveTrend dots, 7d hit rates, RWA, federal contracts (DoD ~90d lag). $${p.priceUsd}.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' } }, required: ['webhookUrl'] })),
     { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Webhook alerts for NEW green WaveTrend band dots (${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts), HMAC-signed. $0.50.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
@@ -294,7 +301,7 @@ function openApiDoc() {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call crypto market regime, WaveTrend oversold/overbought dots, Kraken new listings, tokenized RWA flows, federal contract awards, and simulated hit-rate backtests for AI agents via x402 (USDC on Base). No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
-            'x-guidance': 'Start free: GET /api/brief/teaser (partial live brief), GET /api/sample, GET /track (backtest simulated), GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Starter: GET /api/coin/{symbol} ($0.005), GET /api/regime ($0.01), GET /api/dots ($0.01). Research: POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/kraken/listings ($0.02), GET /api/rules ($0.02), GET /api/rs ($0.02), GET /api/rails ($0.01), GET /api/verdict/{chain}/{address} ($0.01). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
+            'x-guidance': 'Start free: GET /api/brief/teaser (partial live brief), GET /api/sample, GET /track (backtest simulated), GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Starter: GET /api/coin/{symbol} ($0.005), GET /api/regime ($0.01), GET /api/dots ($0.01). Research: POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/kraken/listings ($0.02), GET /api/rules ($0.02), GET /api/rs ($0.02), GET /api/rails ($0.01), GET /api/verdict/{chain}/{address} ($0.01). Agent payments: POST /api/spend/check ($0.02, allow/deny/needs_approval for a proposed payment against the buyer policy, signed decision receipt). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -367,6 +374,13 @@ async function buildMcp() {
     await paidTool('get_relative_strength', 'Relative strength + sector scores', '/api/rs', 'GET', '0.02', 'Relative strength across 66 Kraken USD pairs: 1-week and 1-month % return, percentile ranks, 0-100 strength score (60% 1m rank + 40% 1w rank), leaders/laggards, and sector scores with breadth (% of coins with a positive 1m return).', {}, undefined, () => getRs());
     await paidTool('get_payment_rails', 'Cheapest payment rail now', '/api/rails', 'GET', '0.01', 'Which payment rail is cheapest and fastest right now for a USD amount: Base USDC (live gas x ETH/USD), XRPL (live fee x XRP/USD), Tempo and Circle Arc (live gas, USD-denominated) and card (static 2.9% + $0.30 estimate), with documented agent protocols (x402, MPP, card networks) per rail. Fee USD and %, settlement time, data timestamp, sources and a recommended pick. Arg amount (USD, default 100).', { amount: z.number().positive().max(1e7).optional() },
         a => a.amount ? `/api/rails?amount=${a.amount}` : '/api/rails', a => getRails(a.amount || 100));
+    const spendSchema = {
+        payment: z.object({ amount: z.union([z.string(), z.number()]), currency: z.string(), recipientId: z.string().optional(), recipientDomain: z.string().optional(), merchantCategory: z.string().optional(), chain: z.string().optional(), timestamp: z.string().optional(), agentId: z.string().optional(), memo: z.string().optional() }).passthrough(),
+        policy: z.object({}).passthrough().describe('currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted (deny|needs_approval), allowedHours {start, end, timezone, days}, allowedAssets, allowedChains, requireApprovalAbove')
+    };
+    const spendBody = a => ({ payment: a.payment, policy: a.policy });
+    await paidTool('check_spend_policy', 'Spend-policy check (allow / deny / needs_approval)', '/api/spend/check', 'POST', SPEND_PLAN.priceUsd, "Before an agent pays: check a proposed payment against the buyer's rules (per-tx limit, rolling cap with spent-so-far, merchant categories, allow/deny lists, allowed hours + timezone, assets/chains, human-approval threshold). Returns decision, the rules that fired, every check, and a signed decision receipt. Stateless, deterministic; not custody, does not execute payments.",
+        spendSchema, undefined, a => checkSpend(spendBody(a)), a => validateSpend(spendBody(a)).error || null);
     await paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.02', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.', {}, undefined, () => getBrief());
     m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
     return m;
@@ -387,7 +401,7 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
     description: 'Crypto market signals for AI agents: Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Free sample; paid endpoints via x402 (USDC on Base). Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'buy_day_pass', 'get_signing_pubkey'],
+    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'check_spend_policy', 'buy_day_pass', 'get_signing_pubkey'],
     dayPass: { endpoint: `${ORIGIN}/api/pass/day`, mcpTool: 'buy_day_pass', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass' },
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
@@ -568,7 +582,7 @@ app.get('/stats.html', async (req, res) => {
     } catch (e) { res.status(503).type('text').send('Stats temporarily unavailable, retry shortly.'); }
 });
 
-app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails'], signResponses);
+app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/spend/check'], signResponses);
 app.all('/api/agent', handleX402Agent);
 
 // Cheaper single-purpose products (signal only)
@@ -775,6 +789,22 @@ app.get('/api/rails', (req, res) => {
         deliver: () => getRails(v.amount).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
     });
 });
+
+// Spend-policy check for AI agents (pure rule evaluation; stateless; no custody, no payment execution).
+// Invalid bodies are refused with 400 before any payment is requested (precheck), so they are never charged.
+app.post('/api/spend/check', (req, res) => handleX402Agent(req, res, {
+    url: `${BASE_URL}/api/spend/check`, method: "POST", amount: SPEND_PLAN.amount, name: "GW8 Spend-Policy Check (AI agent payments)",
+    description: `Before an AI agent pays an invoice or merchant: POST {payment, policy} and get allow / deny / needs_approval, the rules that fired (per-tx limit, rolling cap using your spent-so-far, blocked/allowed merchant categories, allow/deny lists, allowed hours + timezone, assets/chains, human-approval threshold) and an Ed25519-signed decision receipt bound to a hash of your request. Deterministic and stateless: nothing is stored. Not custody, does not move money. Invalid bodies rejected before payment. $${SPEND_PLAN.priceUsd} USDC.`,
+    tags: ["agent-payments", "spend-policy", "guardrails", "x402", "usdc"],
+    inputProps: {
+        payment: { type: "object", example: { amount: "420.00", currency: "USDC", chain: "base", recipientId: "acct_acme_supplies", recipientDomain: "acme-supplies.com", merchantCategory: "office-supplies", timestamp: "2026-10-21T15:30:00Z", agentId: "ap-agent-7", memo: "INV-10442" } },
+        policy: { type: "object", example: { currency: "USDC", perTxLimit: "1000", rollingCap: { limit: "5000", spentSoFar: "1200", windowHours: 24 }, blockedCategories: ["gambling", "crypto-exchange"], allowList: ["acme-supplies.com"], allowedHours: { start: "08:00", end: "18:00", timezone: "America/Denver", days: ["mon", "tue", "wed", "thu", "fri"] }, allowedAssets: ["USDC"], allowedChains: ["base"], requireApprovalAbove: "750" } }
+    },
+    bodyRequired: ["payment", "policy"],
+    example: { engine: "gw8-spend-policy/1", decision: "allow", reasons: [], checks: [{ rule: "per_tx_limit", result: "pass", detail: "420 <= per-tx limit 1000" }], remaining: { perTx: "1000", rollingCapBefore: "3800", rollingCapAfter: "3380" }, decisionReceipt: { endpoint: "POST /api/spend/check", accessType: "SPEND_POLICY_DECISION", query: { decision: "allow", requestSha256: "7faa…" }, response_sha256: "…", payload: "eyJ2Ijox…", signature: "base64…", signed: true, alg: "Ed25519", verify_url: "https://micro-saas-agent.onrender.com/api/receipt/verify" } },
+    precheck: async (r) => { const v = validateSpend(r.body); return v.error ? { error: v.error } : null; },
+    deliver: async () => checkSpend(req.body)
+}));
 
 initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: recordMcpPaid })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))

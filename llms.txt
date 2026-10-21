@@ -1,10 +1,11 @@
-# GW8 Crypto Regime + WaveTrend Signal API (x402)
-> Pay-per-call crypto market signals for AI agents. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
+# GW8 Signal API (x402): agent payment risk checks + crypto market data
+> Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), token verdicts, payment-rail costs, crypto market data. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
+> Agent guide with "use this when", examples, idempotency and receipt verification: GET /agents.md
 
 ## Start here (free)
 - GET /api/brief/teaser — partial live brief: regime score x/4, green/red counts, top 3 dots (symbol+band only), simulated 7d hit-rate headline + upsells.
 - GET /api/sample — Stage 1 statuses + core WaveTrend values (BTC/ETH/SOL/LINK/XRP).
-- GET /llms.txt — this file. GET /openapi.json — OpenAPI. GET /.well-known/x402 — resource fan-out.
+- GET /agents.md — agent guide. GET /llms.txt — this file. GET /openapi.json — OpenAPI. GET /.well-known/x402 — resource fan-out.
 - GET /pay.html — human wallet pay page (mobile-friendly).
 - GET /track and GET /api/track — honest track record. Backtest is **simulated**. Live log accrues after deploy.
 - GET /api/stats, /stats.html — request tallies + bots vs likely buyers (no PII). GET /api/proof/pubkey, GET /.well-known/gw8-receipt-key — signing / receipt key.
@@ -24,7 +25,7 @@
 | --- | --- |
 | GET /api/brief/teaser (free) | $0 |
 | GET /api/sample (free) | $0 |
-| GET /api/coin/{symbol} | $0.005 |
+| GET /api/coin/{symbol} | $0.002 |
 | GET /api/regime | $0.01 |
 | GET /api/dots | $0.01 |
 
@@ -35,19 +36,17 @@
 | GET /api/brief | $0.02 |
 | GET /api/history (?pair=) | $0.05 |
 | GET /api/flows/{symbol} | $0.02 |
-| GET /api/rwa | $0.02 |
-| GET /api/govcontracts | $0.01 |
 | GET /api/kraken/listings | $0.02 |
-| GET /api/rules | $0.02 |
 | GET /api/rs | $0.02 |
-| GET /api/rails (?amount=) | $0.01 |
+| GET /api/rails (?amount=) | $0.002 |
 | GET /api/verdict/{chain}/{address} | $0.01 |
 
 ### Agent payments
 | Call | Price |
 | --- | --- |
+| POST /api/pay/should-i-pay | $0.02 |
 | POST /api/spend/check | $0.02 |
-| POST /api/seller/reputation | $0.02 |
+| POST /api/seller/reputation | $0.01 |
 
 ### Access
 | Call | Price |
@@ -60,19 +59,17 @@
 - POST /api/agent ($0.02): full Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs.
 - GET /api/regime ($0.01): Stage 1 detail (ETF flows, BTC support, alt breadth, Fear & Greed).
 - GET /api/dots ($0.01): every green/red WaveTrend band dot (inner/outer) with wt1/wt2 and closes.
-- GET /api/coin/:symbol ($0.005): WaveTrend 4h for one coin (cheapest).
+- GET /api/coin/:symbol ($0.002): WaveTrend 4h for one coin (cheapest).
 - GET /api/history ($0.05): **simulated** 90-day hit-rate backtest (+4h/+24h/+3d). Not a live trade log.
 - GET /api/brief ($0.02): once-per-day MT digest — regime, top 10 dots with strength, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser.
 - GET /api/verdict/:chain/:address ($0.01): token safety 0-100 (GoPlus + DexScreener). Automated screen, not a guarantee.
 - GET /api/flows/:symbol ($0.02): Kraken large-print flows + WaveTrend (single venue).
-- GET /api/rwa ($0.02): tokenized RWA TVL/flows (DefiLlama + CoinGecko).
-- GET /api/govcontracts ($0.01): federal awards (14-day USAspending). **DoD ~90 days late**.
 - GET /api/kraken/listings ($0.02): new Kraken USD pairs (30d) + WaveTrend state.
-- GET /api/rules ($0.02): CFTC + SEC crypto rule changes (90d).
 - GET /api/rs ($0.02): relative strength (1w/1m returns, ranks, 0-100 score) on 66 Kraken pairs + sector scores and breadth.
-- GET /api/rails ($0.01): cheapest/fastest rail now for ?amount= (Base USDC, XRPL, Tempo, Arc live fees; card = static estimate) + agent protocols per rail (x402/MPP/card networks; unconfirmed ones marked unverified).
+- GET /api/rails ($0.002): cheapest/fastest rail now for ?amount= (Base USDC, XRPL, Tempo, Arc live fees; card = static estimate) + agent protocols per rail (x402/MPP/card networks; unconfirmed ones marked unverified).
+- POST /api/pay/should-i-pay ($0.02): one call before an agent pays. Body {payment, policy, seller:{address and/or endpoint, lookbackDays}, sellerRules?:{onCaution, onUnknown: pay|ask_human|dont_pay (default ask_human), minScore}}. Runs the spend-policy check + seller reputation; returns verdict pay|dont_pay|ask_human (worst wins: spend deny or seller avoid -> dont_pay; needs_approval, caution, unknown, or recipientId != seller address -> ask_human), reasons, both sub-results and one signed decisionReceipt. Invalid bodies get 400 before payment; not charged if seller data is unavailable. MCP tool: should_i_pay.
 - POST /api/spend/check ($0.02): spend-policy check before an agent pays. Body {payment, policy}. payment: amount (decimal string), currency, recipientId and/or recipientDomain, merchantCategory, chain, timestamp (ISO), agentId, memo. policy: currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours=24}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted (deny|needs_approval), allowedHours {start "HH:MM", end, timezone IANA, days}, allowedAssets, allowedChains, requireApprovalAbove. Returns decision allow|deny|needs_approval (deny beats needs_approval), reasons (rules that fired), every check, remaining limits, and an Ed25519-signed decisionReceipt bound to sha256 of your request. Stateless: nothing stored, you send spentSoFar. No FX: a payment in another currency than policy.currency is denied. Invalid bodies get 400 before payment. MCP tool: check_spend_policy. Not custody, does not move money.
-- POST /api/seller/reputation ($0.02): x402 seller reputation before an agent pays. Body {address} (seller wallet on Base) and/or {endpoint} (x402 https URL; payTo read from its unpaid 402 challenge), optional lookbackDays (1-90, default 90). Reads public USDC transfers on Base (keyless Blockscout; newest 1000 transfers, max 90 days). Returns score 0-100, verdict trusted|caution|avoid|unknown, components (distinct organic paying buyers /30, wash share = self-transfers + round-trip payers /25, wallet age /15, top-payer concentration /20, 30-day organic USD volume /10), reasons, flags (self_transfers, round_trips, wash_majority, single_payer_repeating, payto_mismatch) and an Ed25519-signed reputationReceipt. Only canonical USDC counts (lookalike tokens and < $0.001 dust ignored). Deterministic, stateless, never pays anyone. Invalid bodies get 400 before payment; if the data source is down you are not charged. Heuristic, not a guarantee. MCP tool: check_seller_reputation. Free: GET /api/seller/reputation/status shows whether the data source is reachable (check before paying).
+- POST /api/seller/reputation ($0.01): x402 seller reputation before an agent pays. Body {address} (seller wallet on Base) and/or {endpoint} (x402 https URL; payTo read from its unpaid 402 challenge), optional lookbackDays (1-90, default 90). Reads public USDC transfers on Base (keyless Blockscout; newest 1000 transfers, max 90 days). Returns score 0-100, verdict trusted|caution|avoid|unknown, components (distinct organic paying buyers /30, wash share = self-transfers + round-trip payers /25, wallet age /15, top-payer concentration /20, 30-day organic USD volume /10), reasons, flags (self_transfers, round_trips, wash_majority, single_payer_repeating, payto_mismatch) and an Ed25519-signed reputationReceipt. Only canonical USDC counts (lookalike tokens and < $0.001 dust ignored). Deterministic, stateless, never pays anyone. Invalid bodies get 400 before payment; if the data source is down you are not charged. Heuristic, not a guarantee. MCP tool: check_seller_reputation. Free: GET /api/seller/reputation/status shows whether the data source is reachable (check before paying).
 - POST /api/alerts/subscribe ($0.50): green-dot webhook alerts (HMAC). Body needs webhookUrl.
 - POST /api/brief/weekly/subscribe ($0.25): 4 Monday webhook briefs.
 - POST /api/pass/day ($1.00): 24h access via X-GW8-Pass (excludes alerts). Fair use 2000/day, 60/min.
@@ -85,5 +82,5 @@
 ## Honesty
 - History/track **backtest** = simulated.
 - Track **live log** starts empty until the first logged dot.
-- Gov **DoD/defense** ≈ 90-day USAspending lag.
+- Also live but not featured (see /openapi.json): /api/rules, /api/rwa, /api/govcontracts (DoD awards ≈ 90-day USAspending lag).
 - Signal only — not financial advice, no trade execution.

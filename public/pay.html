@@ -17,13 +17,13 @@ optgroup{color:#94a3b8;font-weight:700}
 @media (max-width:380px){body{padding:12px}h1{font-size:1.2rem}button{font-size:1rem;padding:14px}}
 </style></head><body>
 <h1>GW8 x402 Pay</h1>
-<div class="box free">Free (no wallet): <a href="/api/brief/teaser">brief teaser</a> <a href="/api/sample">sample</a> <a href="/track">track</a> <a href="/llms.txt">docs</a></div>
+<div class="box free">Free (no wallet): <a href="/api/brief/teaser">brief teaser</a> <a href="/api/sample">sample</a> <a href="/track">track</a> <a href="/llms.txt">docs</a> <a href="/agents.md">agent guide</a></div>
 <div class="box">✅ No charge on failure: payment settles only after your data is ready. Every paid response carries a signed receipt (<a href="/.well-known/gw8-receipt-key">key</a>). Best value: <b>day pass $1.00</b> = 24h of every paid endpoint.</div>
 <div class="box">Open this page inside the MetaMask or Coinbase Wallet app browser. Use a wallet that is <b>not</b> the payout wallet, on Base, holding a little USDC. No gas needed — you only sign; the facilitator pays gas.</div>
 <label for="ep">Endpoint</label>
 <select id="ep">
 <optgroup label="Starter">
-<option value="/api/coin/BTC|GET">/api/coin/BTC — $0.005</option>
+<option value="/api/coin/BTC|GET">/api/coin/BTC — $0.002</option>
 <option value="/api/regime|GET">/api/regime — $0.01</option>
 <option value="/api/dots|GET">/api/dots — $0.01</option>
 </optgroup>
@@ -32,13 +32,15 @@ optgroup{color:#94a3b8;font-weight:700}
 <option value="/api/brief|GET">/api/brief — $0.02</option>
 <option value="/api/history|GET">/api/history — $0.05</option>
 <option value="/api/flows/BTC|GET">/api/flows/BTC — $0.02</option>
-<option value="/api/rwa|GET">/api/rwa — $0.02</option>
-<option value="/api/govcontracts|GET">/api/govcontracts — $0.01</option>
 <option value="/api/kraken/listings|GET">/api/kraken/listings — $0.02</option>
-<option value="/api/rules|GET">/api/rules — $0.02</option>
 <option value="/api/rs|GET">/api/rs — $0.02</option>
-<option value="/api/rails|GET">/api/rails — $0.01</option>
+<option value="/api/rails|GET">/api/rails — $0.002</option>
 <option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict (USDC on Base) — $0.01</option>
+</optgroup>
+<optgroup label="Agent payments (sample request body is sent for you)">
+<option value="/api/pay/should-i-pay|POST">/api/pay/should-i-pay — $0.02</option>
+<option value="/api/spend/check|POST">/api/spend/check — $0.02</option>
+<option value="/api/seller/reputation|POST">/api/seller/reputation — $0.01</option>
 </optgroup>
 <optgroup label="Access">
 <option value="/api/pass/day|POST">/api/pass/day — $1.00</option>
@@ -101,9 +103,17 @@ async function usdcBalance(a) {
   const r = await eth.request({ method: 'eth_call', params: [{ to: USDC, data }, 'latest'] });
   return Number(BigInt(r)) / 1e6;
 }
-function postBody() { const h = $('hook').value.trim(); return JSON.stringify(h ? { webhookUrl: h } : {}); }
+// Sample bodies for agent-payment routes (fixed examples; they need a valid body or the server answers 400 before 402).
+const SAMPLE_PAYMENT = { amount: '0.05', currency: 'USDC', chain: 'base', recipientId: '0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd', merchantCategory: 'data-api', timestamp: new Date().toISOString(), agentId: 'pay-page-sample' };
+const SAMPLE_POLICY = { currency: 'USDC', perTxLimit: '1', allowedChains: ['base'], allowedAssets: ['USDC'], requireApprovalAbove: '0.50' };
+const SAMPLE_BODIES = {
+  '/api/spend/check': () => ({ payment: SAMPLE_PAYMENT, policy: SAMPLE_POLICY }),
+  '/api/seller/reputation': () => ({ address: '0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd' }),
+  '/api/pay/should-i-pay': () => ({ payment: SAMPLE_PAYMENT, policy: SAMPLE_POLICY, seller: { address: '0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd' } }),
+};
+function postBody(path) { if (SAMPLE_BODIES[path]) return JSON.stringify(SAMPLE_BODIES[path]()); const h = $('hook').value.trim(); return JSON.stringify(h ? { webhookUrl: h } : {}); }
 async function challenge(path, method) {
-  const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? postBody() : undefined });
+  const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json' }, body: method === 'POST' ? postBody(path) : undefined });
   if (r.status !== 402) throw new Error('Expected 402, got ' + r.status);
   const h = r.headers.get('PAYMENT-REQUIRED');
   return h ? unb64(h) : await r.json();
@@ -148,7 +158,7 @@ $('pay').onclick = async () => {
     const signature = await eth.request({ method: 'eth_signTypedData_v4', params: [acct, JSON.stringify(typed)] });
     const paymentPayload = { x402Version: 2, payload: { authorization, signature }, extensions: pr.extensions, resource: pr.resource, accepted: req };
     say('Signed. Settling payment (can take up to a minute on a cold start)…');
-    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? postBody() : undefined });
+    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? postBody(path) : undefined });
     const j = await r.json().catch(() => ({}));
     let tx = j.settlement && j.settlement.transaction;
     const ph = r.headers.get('PAYMENT-RESPONSE'); if (!tx && ph) try { tx = unb64(ph).transaction; } catch {}

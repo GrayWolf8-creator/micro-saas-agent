@@ -33,6 +33,7 @@ const ADDS = [
     [/^\/api\/rs/, 'Strength scores and ranks for all 66 Kraken pairs plus sector scores and breadth (not in the teaser).'],
     [/^\/api\/rails/, 'Live fee and settlement comparison of Base USDC, XRPL, Tempo, Arc and card, with agent protocols and a recommended rail (not in the teaser).'],
     [/^\/api\/spend\/check/, 'allow / deny / needs_approval for your proposed payment, which rule fired, and a signed decision receipt (no free teaser; pure rule check).'],
+    [/^\/api\/pay\/should-i-pay/, 'one verdict pay / dont_pay / ask_human from your spend policy + the seller reputation, with reasons and one signed receipt (no free teaser).'],
     [/^\/api\/seller\/reputation/, '0-100 seller score, verdict, wash/self-dealing share, buyer count, concentration and wallet age from public Base USDC history, with a signed receipt (no free teaser).'],
     [/^\/api\/verdict\//, 'Token safety score 0-100 with reasons and sources (not in the teaser).'],
     [/^\/api\/pass\/day/, 'One payment, 24h of every paid data endpoint and MCP tool (fair use 2000 calls).'],

@@ -12,6 +12,14 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Should-I-pay, agents.md, repricing, featured cleanup (2026-10-21)
+- New paid POST /api/pay/should-i-pay ($0.02, x402; day pass accepted) + MCP tool should_i_pay: {payment, policy, seller, sellerRules?} -> spend-policy check + seller reputation -> one verdict pay / dont_pay / ask_human (worst wins), reasons, both sub-results and ONE signed decisionReceipt (accessType PAY_DECISION). Validate-first 400; not charged when the seller data source is unavailable. New paydecision.js; reputation.js gains evaluateSellerReputation (shared, no behavior change).
+- New /agents.md (linked from /, llms.txt, README, pay.html): "use this when" per endpoint, examples, prices, idempotency, receipt verification.
+- Category keywords (catalog.js) prefixed on openapi summaries (+ openapi tags), 402 descriptions and MCP tool descriptions: Payment decision, Spend policy, Seller reputation, Token risk check, Payment rails, Market data, Access.
+- Reprice: seller reputation $0.02 -> $0.01 (10000), rails $0.01 -> $0.002 (2000), coin snapshot $0.005 -> $0.002 (2000). Spend check stays $0.02.
+- pay.html: new "Agent payments" group (should-i-pay, spend check, seller reputation) that sends a fixed valid sample body, so a human can settle these POST routes from a wallet (the old page sent {} which now gets 400).
+- No longer featured (routes, MCP tools, openapi and /.well-known/x402 unchanged): /api/rules, /api/rwa, /api/govcontracts dropped from / tiers, llms.txt menus, x-guidance, agents.md and pay.html; openapi tags them not-featured.
+
 ### x402 seller reputation check (2026-10-21)
 - New paid POST /api/seller/reputation ($0.02, x402; day pass accepted) + MCP tool check_seller_reputation. Agent sends a seller wallet on Base and/or an x402 endpoint URL (payTo read from its unpaid 402 challenge; https only, public hosts only, no redirects, 5s timeout). Returns score 0-100, verdict trusted / caution / avoid / unknown, components, reasons, flags and a signed receipt built with trust.js buildReceipt (query carries requestSha256 and dataSha256 of the scored transfers).
 - Data: public USDC Transfer history from Blockscout's keyless Etherscan-compatible API (newest 1000 transfers + first-ever transfer, 8s timeouts, 8 MB cap, max 90-day window; REPUTATION_EXPLORER_URL can point at another Blockscout). Canonical USDC only; dust < $0.001 and lookalike tokens ignored.

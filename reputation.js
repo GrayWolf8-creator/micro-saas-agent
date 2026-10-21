@@ -8,7 +8,7 @@ import dns from 'dns';
 import net from 'net';
 import { buildReceipt } from './trust.js';
 
-export const REPUTATION_PLAN = { priceUsd: '0.02', amount: '20000' };
+export const REPUTATION_PLAN = { priceUsd: '0.01', amount: '10000' };
 export const REPUTATION_ENGINE = 'gw8-seller-reputation/1';
 export const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 // Keyless Blockscout explorer for Base (Etherscan-compatible tokentx). Overridable for ops (public URL, not a secret).
@@ -245,10 +245,9 @@ export function reputationReceipt(v, out, dataSha256) {
     return { ...r, verify: 'Free: POST /api/receipt/verify {payload, signature, data: <signal without reputationReceipt, stateless, disclaimer>} -> valid + dataMatches. Or Ed25519.verify(key from /api/proof/pubkey, utf8(payload), base64decode(signature)). query.requestSha256 = sha256 hex of canonical JSON (sorted keys, no spaces) of {address, endpoint, lookbackDays} as you sent them (null when omitted); query.dataSha256 = sha256 of the transfer list scored.' };
 }
 
-/** Full call: validate -> (resolve endpoint) -> fetch -> score -> receipt. Returns {error} when it cannot evaluate (caller does not charge). */
-export async function checkSellerReputation(body, { now = new Date(), fetchImpl = fetch, resolve = resolveEndpoint, load = fetchSellerTransfers } = {}) {
-    const v = validateReputation(body);
-    if (v.error) return { error: v.error };
+/** Evaluate an already-validated request (from validateReputation). Returns {error} when it cannot evaluate (caller does not
+ *  charge), else {out, dataSha256} without a receipt. Shared by /api/seller/reputation and /api/pay/should-i-pay. */
+export async function evaluateSellerReputation(v, { now = new Date(), fetchImpl = fetch, resolve = resolveEndpoint, load = fetchSellerTransfers } = {}) {
     const seller = { address: v.address, endpoint: v.endpoint, endpointHost: v.endpoint ? new URL(v.endpoint).hostname : null, payTo: null, payToSource: v.address ? 'request' : null };
     let payToMismatch = false;
     if (v.endpoint) {
@@ -268,7 +267,16 @@ export async function checkSellerReputation(body, { now = new Date(), fetchImpl 
     const scored = scoreReputation({ address: seller.address, transfers: data.transfers, firstActivityTs: data.firstActivityTs, now, lookbackDays: v.lookbackDays, truncated, payToMismatch });
     const dataSha256 = sha(data.transfers.map(t => `${t.hash}|${t.from}|${t.to}|${t.value}|${t.ts}`).join('\n'));
     const out = { engine: REPUTATION_ENGINE, seller, ...scored, data: { source: data.source, chain: 'base', asset: 'USDC', transfersScanned: data.transfers.length, dataSha256 }, evaluatedFor: new Date(now).toISOString() };
-    return { ...out, reputationReceipt: reputationReceipt(v, out, dataSha256), stateless: 'GW8 does not store the address or endpoint you check.', disclaimer: DISCLAIMER };
+    return { out, dataSha256 };
+}
+
+/** Full call: validate -> (resolve endpoint) -> fetch -> score -> receipt. Returns {error} when it cannot evaluate (caller does not charge). */
+export async function checkSellerReputation(body, opts = {}) {
+    const v = validateReputation(body);
+    if (v.error) return { error: v.error };
+    const r = await evaluateSellerReputation(v, opts);
+    if (r.error) return { error: r.error };
+    return { ...r.out, reputationReceipt: reputationReceipt(v, r.out, r.dataSha256), stateless: 'GW8 does not store the address or endpoint you check.', disclaimer: DISCLAIMER };
 }
 
 // ---------- free data-source status (GET /api/seller/reputation/status) ----------

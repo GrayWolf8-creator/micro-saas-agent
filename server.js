@@ -799,7 +799,9 @@ app.get('/api/rails', (req, res) => {
 });
 
 // Spend-policy check for AI agents (pure rule evaluation; stateless; no custody, no payment execution).
-// Invalid bodies are refused with 400 before any payment is requested (precheck), so they are never charged.
+// Validate first: a malformed body gets 400 before the x402 challenge or any pass/payment header is looked at,
+// so it is never charged and never uses a pass call. Valid bodies fall through to the paid route below.
+app.post('/api/spend/check', (req, res, next) => { const v = validateSpend(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
 app.post('/api/spend/check', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/spend/check`, method: "POST", amount: SPEND_PLAN.amount, name: "GW8 Spend-Policy Check (AI agent payments)",
     description: `Before an AI agent pays an invoice or merchant: POST {payment, policy} and get allow / deny / needs_approval, the rules that fired (per-tx limit, rolling cap using your spent-so-far, blocked/allowed merchant categories, allow/deny lists, allowed hours + timezone, assets/chains, human-approval threshold) and an Ed25519-signed decision receipt bound to a hash of your request. Deterministic and stateless: nothing is stored. Not custody, does not move money. Invalid bodies rejected before payment. $${SPEND_PLAN.priceUsd} USDC.`,

@@ -1,0 +1,13 @@
+{
+  "actorSpecification": 1,
+  "name": "gw8-signal-api",
+  "title": "GW8 Signal API: Federal Contracts, Crypto Flows & Regime",
+  "description": "Signal-only data: federal contract awards to AI/defense-tech/space companies, Kraken large-print flows, crypto market regime, WaveTrend dots, token safety verdicts, tokenized RWA flows, Kraken new listings and CFTC/SEC rule changes. Not financial advice.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 128,
+  "maxMemoryMbytes": 256,
+  "input": "./input_schema.json",
+  "dockerfile": "../Dockerfile",
+  "storages": { "dataset": "./dataset_schema.json" }
+}

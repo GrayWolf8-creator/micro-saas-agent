@@ -59,6 +59,8 @@ const PARAM = [
     [/^\/api\/flows\/[^/]+$/i, '/api/flows/:symbol'],
     [/^\/api\/alerts\/[^/]+$/i, '/api/alerts/:id'],
     [/^\/api\/brief\/weekly\/[^/]+$/i, '/api/brief/weekly/:id'],
+    [/^\/mkt\/rapidapi\/.+$/i, '/mkt/rapidapi/*'],
+    [/^\/mkt\/apify\/.+$/i, '/mkt/apify/*'],
 ];
 
 /** Paid data routes (normalized path without method). 2xx here counts as "paid". */

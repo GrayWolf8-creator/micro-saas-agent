@@ -1,0 +1,30 @@
+{
+  "title": "GW8 Signal API input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "endpoint": {
+      "title": "Data feed",
+      "type": "string",
+      "description": "Which feed to fetch. One result (and one charge) per successful call.",
+      "editor": "select",
+      "enum": ["govcontracts", "flows", "brief", "regime", "dots", "coin", "verdict", "rwa", "kraken-listings", "rules", "history"],
+      "enumTitles": ["Federal contract awards (14 days)", "Kraken large-print flows + WaveTrend (per symbol)", "Daily crypto brief", "Crypto market regime score", "WaveTrend band dots (66 pairs)", "WaveTrend 4h snapshot (per symbol)", "Token safety verdict", "Tokenized RWA flows", "Kraken new USD listings", "CFTC + SEC crypto rule changes", "90-day dot hit-rate backtest"],
+      "default": "govcontracts"
+    },
+    "symbols": {
+      "title": "Symbols (flows / coin)",
+      "type": "array",
+      "description": "Coin symbols for flows or coin, e.g. BTC, ETH. One result per symbol (max 10).",
+      "editor": "stringList",
+      "prefill": ["BTC"]
+    },
+    "ticker": { "title": "Ticker filter (govcontracts)", "type": "string", "description": "Optional, e.g. PLTR", "editor": "textfield" },
+    "sector": { "title": "Sector filter (govcontracts)", "type": "string", "description": "Optional", "editor": "select", "enum": ["ai", "defense-tech", "drones", "nuclear", "space", "quantum", "robotics", "defense-prime"] },
+    "q": { "title": "Keyword (govcontracts)", "type": "string", "description": "Optional free-text filter, e.g. NASA", "editor": "textfield" },
+    "chain": { "title": "Chain (verdict)", "type": "string", "editor": "select", "enum": ["base", "ethereum", "bsc", "arbitrum", "solana"], "default": "base" },
+    "address": { "title": "Token address (verdict)", "type": "string", "editor": "textfield" },
+    "pair": { "title": "Pair (history)", "type": "string", "description": "Optional coin symbol, e.g. BTC", "editor": "textfield" }
+  },
+  "required": ["endpoint"]
+}

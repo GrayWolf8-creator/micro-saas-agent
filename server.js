@@ -28,6 +28,7 @@ import { checkSpend, validateSpend, SPEND_PLAN } from './spend.js';
 import { checkSellerReputation, validateReputation, REPUTATION_PLAN, getSourceStatus } from './reputation.js';
 import { checkShouldIPay, validatePayDecision, PAYDECISION_PLAN } from './paydecision.js';
 import { withCategory, capDescription, categoryOf, isFeatured } from './catalog.js';
+import { mountMarketplace } from './marketplace.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -621,6 +622,8 @@ app.get('/stats.html', async (req, res) => {
     } catch (e) { res.status(503).type('text').send('Stats temporarily unavailable, retry shortly.'); }
 });
 
+// Card-paid marketplace channels (RapidAPI / Apify). Off unless GW8 sets the channel env var on Render.
+mountMarketplace(app, signResponses);
 app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/spend/check', '/api/seller/reputation', '/api/pay/should-i-pay'], signResponses);
 app.all('/api/agent', handleX402Agent);
 

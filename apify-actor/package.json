@@ -1,0 +1,10 @@
+{
+  "name": "gw8-signal-api-actor",
+  "version": "0.1.0",
+  "description": "Apify Actor wrapper for GW8 Signal API (signal-only crypto, federal contracts, RWA and rule-change data).",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": { "start": "node src/main.js" },
+  "dependencies": { "apify": "^3.4.0" },
+  "license": "ISC"
+}

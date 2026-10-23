@@ -1,0 +1,11 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Results",
+      "transformation": { "fields": ["endpoint", "symbol", "ok", "fetchedAt", "data", "error"] },
+      "display": { "component": "table" }
+    }
+  }
+}

@@ -655,10 +655,26 @@ app.get('/api/regime', (req, res) => handleX402Agent(req, res, {
     example: { score: 3, outOf: 4, checks: { btcQuietSupport: { status: "pass", detail: { pctAboveLow: 2.1, avgRange3dPct: 2.4 }, rule: "BTC within quiet band above 20d low" } } },
     deliver: getRegime
 }));
+// Proposal 26 (x402dash): its listing checker only sends GET, so POST-only paid routes never got listed.
+// An UNPAID GET (no PAYMENT-SIGNATURE / X-PAYMENT / X-GW8-Pass / tx) to a POST-only paid route now answers with the
+// exact same 402 challenge as an unpaid POST (same accepts, price, description, bazaar schema with method POST),
+// plus an Allow: POST header. A GET never delivers, verifies, settles or uses a pass: with any payment, pass or tx
+// it gets 405 "use POST" and nothing is taken. POST behavior and pricing are unchanged.
+function quoteOnlyGet(routePath, makeProduct) {
+    app.get(routePath, (req, res) => {
+        res.set('Allow', 'POST');
+        if (req.headers['payment-signature'] || req.headers['x-payment'] || req.headers['x-gw8-pass'] || req.headers['x-payment-tx'] || req.query.tx) {
+            return res.status(405).json({ error: 'METHOD_NOT_ALLOWED', method: 'POST', message: `${routePath} is POST-only. GET only returns the unpaid x402 quote (402). Retry as POST ${routePath} with a JSON body and your payment header.`, note: 'no payment was taken; nothing was verified or settled' });
+        }
+        // Quote only: strip every hook that could do work; handleX402Agent with no payment/pass/tx returns the 402.
+        const { precheck, deliver, rollback, ...quote } = makeProduct(req);
+        return handleX402Agent(req, res, { ...quote, deliver: async () => ({ error: 'quote only' }) });
+    });
+}
 const SUB_URL = `${BASE_URL}/api/alerts/subscribe`;
-app.post('/api/alerts/subscribe', (req, res) => {
+const alertsProduct = (req) => {
     let v = null;
-    return handleX402Agent(req, res, {
+    return {
         url: SUB_URL, method: "POST", amount: ALERT_PLAN.amount, noPass: true,
         name: "GW8 Green-Dot Webhook Alerts (30 days)",
         description: `Subscribe a public https webhook to NEW green WaveTrend oversold band dots on 66 Kraken 4h pairs (filter outer|inner|all, optional pairs). HMAC-signed POSTs for ${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts. Use when an agent should wake on fresh green dots. $${ALERT_PLAN.priceUsd} USDC. Invalid bodies rejected before payment. Signal only.`,
@@ -669,11 +685,13 @@ app.post('/api/alerts/subscribe', (req, res) => {
         precheck: async (r) => { v = await validateSubscribe(r.body, COINS); return v.error ? v : null; },
         deliver: async () => { if (!v) v = await validateSubscribe(req.body, COINS); return v.error ? { error: v.error } : createSubscription(v); },
         rollback: out => cancelSubscription(out && out.subscriptionId)
-    });
-});
-for (const plan of Object.values(WEEKLY_PLANS)) app.post(plan.path, (req, res) => {
+    };
+};
+app.post('/api/alerts/subscribe', (req, res) => handleX402Agent(req, res, alertsProduct(req)));
+quoteOnlyGet('/api/alerts/subscribe', alertsProduct);
+const weeklyProduct = (plan) => (req) => {
     let v = null;
-    return handleX402Agent(req, res, {
+    return {
         url: `${BASE_URL}${plan.path}`, method: "POST", amount: plan.amount, noPass: true,
         name: `GW8 Weekly Brief (${plan.weeks} weeks, webhook)`,
         description: `${plan.weeks} Monday webhook issues (HMAC-signed): crypto market regime, top WaveTrend dots, 7d hit rates, tokenized RWA flows, and federal contract highlights (DoD awards ~90 days late via USAspending). Undelivered weeks not counted. $${plan.priceUsd} USDC.`,
@@ -684,14 +702,18 @@ for (const plan of Object.values(WEEKLY_PLANS)) app.post(plan.path, (req, res) =
         precheck: async (r) => { v = await validateWeekly(r.body); return v.error ? v : null; },
         deliver: async () => { if (!v) v = await validateWeekly(req.body); return v.error ? { error: v.error } : createWeekly(v, plan); },
         rollback: out => cancelWeekly(out && out.subscriptionId)
-    });
-});
+    };
+};
+for (const plan of Object.values(WEEKLY_PLANS)) {
+    app.post(plan.path, (req, res) => handleX402Agent(req, res, weeklyProduct(plan)(req)));
+    quoteOnlyGet(plan.path, weeklyProduct(plan));
+}
 app.get('/api/brief/weekly/:id', async (req, res) => {
     const s = await getWeeklyStatus(String(req.params.id));
     return s ? res.json(s) : res.status(404).json({ error: 'unknown subscription' });
 });
 setInterval(() => weeklyTick().then(r => r && r.sent && console.log('[weekly]', JSON.stringify(r))).catch(() => {}), 10 * 60 * 1000).unref();
-app.post('/api/pass/day', (req, res) => handleX402Agent(req, res, {
+const passProduct = () => ({
     url: `${BASE_URL}/api/pass/day`, method: "POST", amount: PASS_PLAN.amount, noPass: true,
     name: "GW8 Day Pass (24h, all paid data endpoints)",
     description: `Day pass: one payment unlocks ${PASS_PLAN.hours}h of paid GW8 data endpoints/MCP tools via header X-GW8-Pass (or MCP arg pass). Fair use ${PASS_PLAN.dailyCap} calls/pass, ${PASS_PLAN.perMinute}/min. Excludes alert subscriptions. Token shown once (bearer-style). $${PASS_PLAN.priceUsd} USDC. Signal only.`,
@@ -700,7 +722,9 @@ app.post('/api/pass/day', (req, res) => handleX402Agent(req, res, {
     example: { pass: "gw8p_…", expiresAt: "2026-10-19T19:00:00.000Z", header: "X-GW8-Pass" },
     deliver: () => mintPass(),
     rollback: out => revokePass(out && out.pass)
-}));
+});
+app.post('/api/pass/day', (req, res) => handleX402Agent(req, res, passProduct(req)));
+quoteOnlyGet('/api/pass/day', passProduct);
 app.get('/api/alerts/:id', async (req, res) => {
     const s = await getStatus(String(req.params.id));
     return s ? res.json(s) : res.status(404).json({ error: 'unknown subscription' });
@@ -854,7 +878,7 @@ app.get('/api/rails', (req, res) => {
 // With a payment or pass header: a malformed body gets 400 before the payment is verified or a pass call is used,
 // so it is never charged. Valid bodies fall through to the paid route below.
 app.post('/api/spend/check', (req, res, next) => { if (!hasPaymentOrPass(req)) return next(); const v = validateSpend(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
-app.post('/api/spend/check', (req, res) => handleX402Agent(req, res, {
+const spendProduct = (req) => ({
     url: `${BASE_URL}/api/spend/check`, method: "POST", amount: SPEND_PLAN.amount, name: "GW8 Spend-Policy Check (AI agent payments)",
     description: `Before an AI agent pays an invoice or merchant: POST {payment, policy} -> allow / deny / needs_approval plus the rules that fired (per-tx limit, rolling cap, merchant categories, allow/deny lists, hours + timezone, assets/chains, approval threshold) and an Ed25519-signed receipt bound to your request hash. Deterministic, stateless, no custody, moves no money. Bad bodies rejected before payment. $${SPEND_PLAN.priceUsd} USDC.`,
     tags: ["agent-payments", "spend-policy", "guardrails", "x402", "usdc"],
@@ -866,7 +890,9 @@ app.post('/api/spend/check', (req, res) => handleX402Agent(req, res, {
     example: { engine: "gw8-spend-policy/1", decision: "allow", reasons: [], checks: [{ rule: "per_tx_limit", result: "pass", detail: "420 <= per-tx limit 1000" }], remaining: { perTx: "1000", rollingCapBefore: "3800", rollingCapAfter: "3380" }, decisionReceipt: { endpoint: "POST /api/spend/check", accessType: "SPEND_POLICY_DECISION", query: { decision: "allow", requestSha256: "7faa…" }, response_sha256: "…", payload: "eyJ2Ijox…", signature: "base64…", signed: true, alg: "Ed25519", verify_url: "https://micro-saas-agent.onrender.com/api/receipt/verify" } },
     precheck: async (r) => { const v = validateSpend(r.body); return v.error ? { error: v.error } : null; },
     deliver: async () => checkSpend(req.body)
-}));
+});
+app.post('/api/spend/check', (req, res) => handleX402Agent(req, res, spendProduct(req)));
+quoteOnlyGet('/api/spend/check', spendProduct);
 
 // Free: is the reputation data source reachable from this server? Fixed probe (no user input), cached 60s, no receipt.
 app.get('/api/seller/reputation/status', async (req, res) => { res.set('Cache-Control', 'public, max-age=60'); res.json(await getSourceStatus()); });
@@ -877,7 +903,7 @@ app.get('/api/seller/reputation/status', async (req, res) => { res.set('Cache-Co
 // never charged. If the data source is down (or an endpoint-only request has no readable payTo), deliver returns
 // {error}: the payment is verified but not settled / the pass call is refunded, so "unknown because no data" is free.
 app.post('/api/seller/reputation', (req, res, next) => { if (!hasPaymentOrPass(req)) return next(); const v = validateReputation(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
-app.post('/api/seller/reputation', (req, res) => handleX402Agent(req, res, {
+const reputationProduct = (req) => ({
     url: `${BASE_URL}/api/seller/reputation`, method: "POST", amount: REPUTATION_PLAN.amount, name: "GW8 x402 Seller Reputation (AI agent payments)",
     description: `Before an AI agent pays an x402 seller: POST {address} (Base wallet) and/or {endpoint} (x402 URL; payTo read from its 402). Returns score 0-100 + trusted / caution / avoid / unknown from public USDC history: distinct buyers, wash share, wallet age, top-payer share, 30d volume, with reasons and a signed receipt. Stateless; never pays anyone. No charge on bad body or if data is down. $${REPUTATION_PLAN.priceUsd} USDC.`,
     tags: ["agent-payments", "seller-reputation", "trust", "x402", "usdc", "base"],
@@ -889,12 +915,14 @@ app.post('/api/seller/reputation', (req, res) => handleX402Agent(req, res, {
     example: { engine: "gw8-seller-reputation/1", verdict: "caution", score: 58, components: { distinctBuyers: { value: 4, points: 12, max: 30 }, washShare: { value: 0.1, points: 23, max: 25 }, walletAge: { days: 86, points: 10, max: 15 }, concentration: { topPayerShare: 0.45, points: 14, max: 20 }, volume30d: { organicUsd: 0.6, points: 3, max: 10 } }, reasons: ["only 4 distinct organic paying buyer(s)"], reputationReceipt: { endpoint: "POST /api/seller/reputation", accessType: "SELLER_REPUTATION", query: { verdict: "caution", score: 58, requestSha256: "…", dataSha256: "…" }, signed: true, alg: "Ed25519", verify_url: "https://micro-saas-agent.onrender.com/api/receipt/verify" } },
     precheck: async (r) => { const v = validateReputation(r.body); return v.error ? { error: v.error } : null; },
     deliver: async () => checkSellerReputation(req.body)
-}));
+});
+app.post('/api/seller/reputation', (req, res) => handleX402Agent(req, res, reputationProduct(req)));
+quoteOnlyGet('/api/seller/reputation', reputationProduct);
 
 // Should my agent pay this? spend policy + seller reputation -> one verdict and one signed receipt.
 // Unpaid: always the 402 (proposal 25). Paid/pass: validate first (400 before verify / pass use). Seller data unavailable -> deliver {error} -> not settled / pass refunded.
 app.post('/api/pay/should-i-pay', (req, res, next) => { if (!hasPaymentOrPass(req)) return next(); const v = validatePayDecision(req.body); return v.error ? res.status(400).json({ error: v.error, note: 'no payment was taken' }) : next(); });
-app.post('/api/pay/should-i-pay', (req, res) => handleX402Agent(req, res, {
+const payDecisionProduct = (req) => ({
     url: `${BASE_URL}/api/pay/should-i-pay`, method: "POST", amount: PAYDECISION_PLAN.amount, name: "GW8 Should-I-Pay (spend policy + seller reputation)",
     description: `Right before an AI agent pays: POST {payment, policy, seller} -> ONE verdict pay / dont_pay / ask_human. Runs the spend-policy check (limits, rolling cap, categories, allow/deny, hours, assets/chains, approval threshold) and the x402 seller reputation check (buyers, wash share, age, concentration), with reasons and one signed receipt. Stateless; never pays anyone. No charge if seller data is down. $${PAYDECISION_PLAN.priceUsd} USDC.`,
     tags: ["agent-payments", "risk-check", "spend-policy", "seller-reputation", "x402"],
@@ -908,7 +936,9 @@ app.post('/api/pay/should-i-pay', (req, res) => handleX402Agent(req, res, {
     example: { engine: "gw8-should-i-pay/1", verdict: "ask_human", reasons: [{ source: "seller_reputation", action: "ask_human", detail: "seller verdict caution (score 58) -> ask_human" }], spend: { decision: "allow" }, seller: { verdict: "caution", score: 58 }, decisionReceipt: { endpoint: "POST /api/pay/should-i-pay", accessType: "PAY_DECISION", query: { verdict: "ask_human", spendDecision: "allow", sellerVerdict: "caution", sellerScore: 58, requestSha256: "…" }, signed: true, alg: "Ed25519", verify_url: "https://micro-saas-agent.onrender.com/api/receipt/verify" } },
     precheck: async (r) => { const v = validatePayDecision(r.body); return v.error ? { error: v.error } : null; },
     deliver: async () => checkShouldIPay(req.body)
-}));
+});
+app.post('/api/pay/should-i-pay', (req, res) => handleX402Agent(req, res, payDecisionProduct(req)));
+quoteOnlyGet('/api/pay/should-i-pay', payDecisionProduct);
 
 initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: recordMcpPaid })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))

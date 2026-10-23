@@ -12,6 +12,10 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### GET quotes for POST-only paid routes, for x402dash (proposal 26, 2026-10-23)
+- x402dash's listing checker only sends GET, so it only listed GET routes. An unpaid GET to `/api/spend/check`, `/api/seller/reputation`, `/api/pay/should-i-pay`, `/api/alerts/subscribe`, `/api/brief/weekly/subscribe` and `/api/pass/day` now returns the same 402 challenge as an unpaid POST (same accepts, price, description, bazaar schema with method POST), plus `Allow: POST`.
+- A GET never delivers, verifies, settles or uses a day pass: with PAYMENT-SIGNATURE / X-PAYMENT / X-GW8-Pass / X-Payment-Tx / ?tx= it returns 405 "use POST" with "no payment was taken". POST behavior and pricing unchanged (product configs moved into shared factories). Tests: `test/get_quote_p26.test.js`.
+
 ### Keyed seller-reputation data source (2026-10-21)
 - Blockscout answers Render with a Cloudflare 403, so the seller reputation and should-i-pay checks always returned 503 (free). `reputation.js` now has a provider layer: when the server env var `ALCHEMY_API_KEY` is set it reads Base USDC transfers from the Alchemy Transfers API (`alchemy_getAssetTransfers` on base-mainnet: erc20, USDC contract only, fromBlock = last ~91 days, newest 1000 in + out, plus the first-ever transfer for wallet age); without it, keyless Blockscout as before.
 - Same filters (canonical USDC only, $0.001 floor, 90-day window, 8s timeouts, 8 MB cap), same scoring, same "not charged when the data is unavailable". Should-i-pay uses the same layer.

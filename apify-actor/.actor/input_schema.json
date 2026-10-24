@@ -22,8 +22,8 @@
     "ticker": { "title": "Ticker filter (govcontracts)", "type": "string", "description": "Optional, e.g. PLTR", "editor": "textfield" },
     "sector": { "title": "Sector filter (govcontracts)", "type": "string", "description": "Optional", "editor": "select", "enum": ["ai", "defense-tech", "drones", "nuclear", "space", "quantum", "robotics", "defense-prime"] },
     "q": { "title": "Keyword (govcontracts)", "type": "string", "description": "Optional free-text filter, e.g. NASA", "editor": "textfield" },
-    "chain": { "title": "Chain (verdict)", "type": "string", "editor": "select", "enum": ["base", "ethereum", "bsc", "arbitrum", "solana"], "default": "base" },
-    "address": { "title": "Token address (verdict)", "type": "string", "editor": "textfield" },
+    "chain": { "title": "Chain (verdict)", "type": "string", "description": "Blockchain the token lives on (verdict only).", "editor": "select", "enum": ["base", "ethereum", "bsc", "arbitrum", "solana"], "default": "base" },
+    "address": { "title": "Token address (verdict)", "type": "string", "description": "Token contract address to check (verdict only).", "editor": "textfield" },
     "pair": { "title": "Pair (history)", "type": "string", "description": "Optional coin symbol, e.g. BTC", "editor": "textfield" }
   },
   "required": ["endpoint"]

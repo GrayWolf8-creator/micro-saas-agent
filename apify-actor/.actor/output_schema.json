@@ -1,0 +1,13 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "GW8 Signal API output",
+  "description": "One dataset item per requested feed or symbol: endpoint, symbol, ok, fetchedAt, data (the signal payload) and error (failed calls are not charged).",
+  "properties": {
+    "results": {
+      "type": "string",
+      "title": "Results",
+      "description": "Signal results in the default dataset.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items?view=overview"
+    }
+  }
+}

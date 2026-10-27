@@ -11,7 +11,7 @@ POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fai
 - GET /agents.md — agent guide. GET /llms.txt — this file. GET /openapi.json — OpenAPI. GET /.well-known/x402 — resource fan-out.
 - GET /pay.html — human wallet pay page (mobile-friendly).
 - GET /track and GET /api/track — honest track record. Backtest is **simulated**. Live log accrues after deploy.
-- GET /api/stats, /stats.html — request tallies + bots vs likely buyers (no PII). GET /api/proof/pubkey, GET /.well-known/gw8-receipt-key — signing / receipt key.
+- GET /api/stats, /stats.html — request tallies + bots vs likely buyers (no PII). GET /api/traffic, /traffic.html — route x HTTP status (UTC), surfaces, unmatched probes. GET /api/proof/pubkey, GET /.well-known/gw8-receipt-key — signing / receipt key.
 
 ## Trust
 - No charge on failure: verify -> build data -> settle; if the data or the settle fails, nothing is charged and nothing is returned.

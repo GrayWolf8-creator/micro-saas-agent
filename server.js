@@ -21,8 +21,11 @@ import { getRs } from './rs.js';
 import { getRails, validAmount } from './rails.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
-import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid } from './stats.js';
-import { funnel, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH, buildReceipt, verifyReceipt, VERIFY_PATH } from './trust.js';
+import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute } from './stats.js';
+import { funnel, dayPassNote, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH, buildReceipt, verifyReceipt, VERIFY_PATH } from './trust.js';
+import { getValueSymbol, getValueBatch, getValueHistory, getValueStatus, parseValueQuery, parseWeeks, findCoin, VALUE_PRICES } from './value.js';
+import { getGrowthOne, getGrowthList, getGrowthHistory, getGrowthStatus, parseGrowthQuery, findGrowth, GROWTH_PRICES } from './growth.js';
+import { isSampleQuery, topQuotedPaid, precheckSample, buildRouteSample, takeSample, requestIp } from './sample.js';
 import { payerFrom } from './buyers.js';
 import { checkSpend, validateSpend, SPEND_PLAN } from './spend.js';
 import { checkSellerReputation, validateReputation, REPUTATION_PLAN, getSourceStatus } from './reputation.js';
@@ -38,6 +41,33 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 // Per-endpoint request tallies (402 quotes vs paid 2xx etc). Free, no PII. Before x402 handlers.
 app.use(statsMiddleware);
+let sampleRouteCache = { t: 0, routes: null };
+async function currentSampleRoutes() {
+    if (sampleRouteCache.routes && Date.now() - sampleRouteCache.t < 60000) return sampleRouteCache.routes;
+    try {
+        const s = await getStats(1);
+        sampleRouteCache = { t: Date.now(), routes: topQuotedPaid(s.routes) };
+    } catch { sampleRouteCache = { t: Date.now(), routes: topQuotedPaid([]) }; }
+    return sampleRouteCache.routes;
+}
+// Free ?sample=1 on the most-quoted paid routes (verdict, coin, rails when no quote counters exist).
+app.use(async (req, res, next) => {
+    try {
+        if (req.method !== 'GET' || !isSampleQuery(req.query)) return next();
+        const route = normalizeRoute('GET', req.path || req.url);
+        if (!route) return next();
+        const top = await currentSampleRoutes();
+        if (!top.some(t => t.route === route)) return next();
+        const bad = precheckSample(route, req);
+        if (bad && bad.error) return res.status(bad.http || 400).json({ error: bad.error, sample: true, note: 'sample not counted' });
+        const slot = takeSample(requestIp(req));
+        if (!slot.ok) return res.status(429).set('Retry-After', '86400').json({ error: 'free sample cap reached for this address today', sample: true, cap: slot.cap, disclaimer: 'Free truncated sample of public data. Not investment advice; no trade recommendation.', sources: [] });
+        const body = await buildRouteSample(route, req);
+        if (body && body.error) return res.status(body.http || 503).json({ error: body.error, sample: true, ...(body.sourceStatus ? { sourceStatus: body.sourceStatus } : {}), ...(body.disclaimer ? { disclaimer: body.disclaimer } : {}), ...(body.sources ? { sources: body.sources } : {}) });
+        res.locals.gw8Sample = true;
+        return res.json(body);
+    } catch { return next(); }
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Configuration
@@ -108,7 +138,7 @@ function getX402ChallengeV2(o = {}) {
     if (isBody) {
         input.bodyType = 'json';
         input.body = bodyExample && typeof bodyExample === 'object' ? bodyExample : {};
-    } else if (Object.keys(queryExample).length) {
+    } else {
         input.queryParams = queryExample;
     }
     if (o.pathParams) input.pathParams = o.pathParams;
@@ -123,10 +153,20 @@ function getX402ChallengeV2(o = {}) {
         inputSchemaProps.body = { type: 'object', properties: inProps, additionalProperties: false };
         if (o.bodyRequired && o.bodyRequired.length) inputSchemaProps.body.required = o.bodyRequired;
         inputRequired.push('bodyType', 'body');
-    } else if (Object.keys(inProps).length) {
+    } else {
         inputSchemaProps.queryParams = { type: 'object', properties: inProps, additionalProperties: false };
+        inputRequired.push('queryParams');
     }
-    if (o.pathParams) inputSchemaProps.pathParams = { type: 'object', additionalProperties: { type: 'string' } };
+    if (o.pathParams && typeof o.pathParams === 'object') {
+        const props = {}, req = [];
+        for (const [k, v] of Object.entries(o.pathParams)) {
+            if (v && typeof v === 'object' && !Array.isArray(v) && (v.type || v.enum || v.properties)) props[k] = v;
+            else props[k] = { type: 'string', ...(v != null ? { example: String(v) } : {}) };
+            req.push(k);
+        }
+        inputSchemaProps.pathParams = { type: 'object', properties: props, required: req, additionalProperties: false };
+        inputRequired.push('pathParams');
+    }
 
     const bazaar = {
         info: {
@@ -207,6 +247,17 @@ app.get('/', (req, res) => {
                     { path: "/api/seller/reputation", method: "POST", priceUsd: REPUTATION_PLAN.priceUsd, note: "x402 seller reputation: 0-100 score + trusted / caution / avoid / unknown from public Base USDC history + signed receipt" }
                 ]
             },
+            tokenomics: {
+                free: ["/api/value/status", "/api/growth/status"],
+                paid: [
+                    { path: "/api/value/{symbol}", priceUsd: VALUE_PRICES.one },
+                    { path: "/api/value", priceUsd: VALUE_PRICES.batch },
+                    { path: "/api/value/{symbol}/history", priceUsd: VALUE_PRICES.history },
+                    { path: "/api/growth/{chain}", priceUsd: GROWTH_PRICES.one },
+                    { path: "/api/growth", priceUsd: GROWTH_PRICES.list },
+                    { path: "/api/growth/history", priceUsd: GROWTH_PRICES.history }
+                ]
+            },
             access: {
                 paid: [
                     { path: "/api/pass/day", method: "POST", priceUsd: "1.00" },
@@ -215,7 +266,7 @@ app.get('/', (req, res) => {
                 ]
             }
         },
-        free: { teaser: "/api/brief/teaser", sample: "/api/sample", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH, receiptVerify: VERIFY_PATH, sellerReputationStatus: "/api/seller/reputation/status" },
+        free: { teaser: "/api/brief/teaser", sample: "/api/sample", valueStatus: "/api/value/status", growthStatus: "/api/growth/status", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH, receiptVerify: VERIFY_PATH, sellerReputationStatus: "/api/seller/reputation/status" },
         bestValue: { path: "/api/pass/day", method: "POST", priceUsd: "1.00", note: "one payment, 24h of every paid data endpoint" },
         trust: TRUST_LINE + " Safe retry: same PAYMENT-SIGNATURE within 15 min is not charged twice.",
         docs: "/llms.txt",
@@ -244,10 +295,12 @@ app.get(['/.well-known/x402.json', '/well-known/x402.json'], (req, res) => {
 // x402scan / AgentCash discovery: OpenAPI-first, plus /.well-known/x402 fan-out
 
 function discoveryFanout() {
+    const passUrl = 'https://micro-saas-agent.onrender.com/api/pass/day';
+    const urls = PAID.map(p => `https://micro-saas-agent.onrender.com${p.ex || p.path.replace('{symbol}', 'BTC').replace('{chain}', 'solana')}`);
     return {
         version: 1,
-        resources: PAID.map(p => `https://micro-saas-agent.onrender.com${p.ex || p.path.replace('{symbol}', 'BTC')}`),
-        instructions: `OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Best value: POST /api/pass/day ($1.00, 24h). Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
+        resources: [passUrl, ...urls.filter(u => u !== passUrl)],
+        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
         openapi: 'https://micro-saas-agent.onrender.com/openapi.json',
         llms: 'https://micro-saas-agent.onrender.com/llms.txt'
     };
@@ -268,6 +321,12 @@ const RAW_PAID = [
     { path: '/api/rules', method: 'get', price: '0.02', summary: 'CFTC + SEC crypto rule-change feed (90 days): ANPRM/NPRM/final/notice/press, RIN, comment deadlines. $0.02.' },
     { path: '/api/rs', method: 'get', price: '0.02', summary: 'Relative strength: 1w/1m % return, percentile ranks and 0-100 strength score for 66 Kraken USD pairs, plus sector scores and breadth (L1, L2, DeFi, RWA, oracles/infra, payments, AI, memes). $0.02.' },
     { path: '/api/rails', method: 'get', price: '0.002', summary: 'Cheapest/fastest payment rail right now for a USD amount: Base USDC, XRPL, Tempo, Arc (live fees) vs card (static estimate), with agent-protocol support per rail, with fee USD/%, settlement time and a recommended pick. Optional ?amount=100. $0.002.', query: { amount: { type: 'number', description: 'USD amount, default 100' } } },
+    { path: '/api/value/{symbol}', method: 'get', price: VALUE_PRICES.one, summary: 'Value-capture score for one coin (net supply, holder yield, usage class, burn-versus-held, unlock overhang). $0.015.', params: { symbol: { type: 'string', description: 'Ticker, e.g. BNB' } }, ex: '/api/value/BNB', pathEx: { symbol: 'BNB' } },
+    { path: '/api/value', method: 'get', price: VALUE_PRICES.batch, summary: 'Value-capture screen: up to 25 symbols or the whole covered set. Sort score, yield or netSupply90d. $0.03.', query: { symbols: { type: 'string', description: 'Comma-separated tickers, max 25' }, sort: { type: 'string', enum: ['score', 'yield', 'netSupply90d'] }, minScore: { type: 'number', description: '0-100, default 0' } } },
+    { path: '/api/value/{symbol}/history', method: 'get', price: VALUE_PRICES.history, summary: 'Weekly value-capture snapshots for one coin, up to 52 weeks. Rule classes are carried forward; yield is recomputed. $0.07.', params: { symbol: { type: 'string', description: 'Ticker, e.g. BNB' } }, query: { weeks: { type: 'integer', description: '1-52, default 12' } }, ex: '/api/value/BNB/history', pathEx: { symbol: 'BNB' } },
+    { path: '/api/growth/{chain}', method: 'get', price: GROWTH_PRICES.one, summary: 'Growth-lane rules for one chain or app: stables, fees, TVL versus price, and the relative-return flag. $0.015.', params: { chain: { type: 'string', description: 'Chain slug or ticker, e.g. solana or SOL' } }, ex: '/api/growth/solana', pathEx: { chain: 'solana' } },
+    { path: '/api/growth', method: 'get', price: GROWTH_PRICES.list, summary: 'Growth-lane screen across covered chains and apps. Filters: kind, minRulesPassed, triggerOnly, minTvlUsd. Window is 90d. $0.03.', query: { kind: { type: 'string', enum: ['chain', 'app', 'all'] }, minRulesPassed: { type: 'integer', description: '0-4' }, triggerOnly: { type: 'boolean' }, minTvlUsd: { type: 'number', description: 'Default 50000000' }, window: { type: 'string', description: '90d' } } },
+    { path: '/api/growth/history', method: 'get', price: GROWTH_PRICES.history, summary: 'Weekly growth-lane snapshots plus the week each rule first passed. Up to 52 weeks. $0.07.', query: { weeks: { type: 'integer', description: '1-52, default 12' }, kind: { type: 'string', enum: ['chain', 'app', 'all'] }, minRulesPassed: { type: 'integer' }, triggerOnly: { type: 'boolean' }, minTvlUsd: { type: 'number' }, window: { type: 'string' } } },
     { path: '/api/pay/should-i-pay', method: 'post', price: PAYDECISION_PLAN.priceUsd, summary: `Should my agent pay this? One call runs the spend-policy check (your limits, caps, categories, lists, hours) AND the x402 seller reputation check (public Base USDC history) and returns one verdict pay / dont_pay / ask_human, the reasons, both sub-results and one signed receipt. Deterministic; stateless; never pays anyone. Free when the seller data source is down. $${PAYDECISION_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'as in /api/spend/check' }, policy: { type: 'object', description: 'as in /api/spend/check' }, seller: { type: 'object', description: '{address (Base 0x...), endpoint (x402 https URL), lookbackDays}' }, sellerRules: { type: 'object', description: 'optional {onCaution, onUnknown: pay|ask_human|dont_pay (default ask_human), minScore 0-100}' } }, required: ['payment', 'policy', 'seller'], bodyEx: 'should-i-pay' },
     { path: '/api/spend/check', method: 'post', price: SPEND_PLAN.priceUsd, summary: `Spend-policy check for AI agents: POST a proposed payment + the buyer's rules (per-tx limit, rolling cap with your spent-so-far, categories, allow/deny lists, hours+timezone, assets/chains, human-approval threshold). Returns allow / deny / needs_approval, which rules fired, and a signed decision receipt. Stateless, deterministic; not custody, does not move money. $${SPEND_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'amount (decimal string), currency, recipientId and/or recipientDomain, merchantCategory, chain, timestamp (ISO), agentId, memo' }, policy: { type: 'object', description: 'currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted, allowedHours {start, end, timezone, days}, allowedAssets, allowedChains, requireApprovalAbove' } }, required: ['payment', 'policy'], bodyEx: 'spend' },
     { path: '/api/seller/reputation', method: 'post', price: REPUTATION_PLAN.priceUsd, summary: `x402 seller reputation for AI agents: before paying a seller, POST its Base wallet and/or x402 endpoint URL. Reads public USDC (Base) transfer history (Alchemy Transfers API, or keyless Blockscout as fallback when no key is configured) and returns a 0-100 score, verdict trusted / caution / avoid / unknown, components (distinct paying buyers, wash/self-dealing share, wallet age, top-payer concentration, 30-day organic volume), reasons and a signed receipt. Deterministic formula; stateless; never pays anyone. $${REPUTATION_PLAN.priceUsd}.`, body: { address: { type: 'string', description: 'seller wallet on Base (0x...)' }, endpoint: { type: 'string', format: 'uri', description: 'x402 https URL; payTo is read from its unpaid 402 challenge' }, lookbackDays: { type: 'integer', minimum: 1, maximum: 90, default: 90 } }, bodyRequired: true, anyOf: [{ required: ['address'] }, { required: ['endpoint'] }], bodyEx: 'reputation' },
@@ -307,7 +366,7 @@ function openApiDoc() {
             'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
             responses: {
                 '200': { description: 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: { type: 'object' } } } },
-                '402': { description: `Payment required: ${p.price} USDC on Base (eip155:8453) via x402 v2. Free teaser: /api/brief/teaser. Best value: POST /api/pass/day. ${TRUST_LINE}` }
+                '402': { description: `Day pass first: POST /api/pass/day ($1.00). ${dayPassNote(p.price, { isPass: p.path === '/api/pass/day' })} Payment required: ${p.price} USDC on Base (eip155:8453) via x402 v2. Free teaser: /api/brief/teaser. ${TRUST_LINE}` }
             }
         } };
     }
@@ -317,6 +376,8 @@ function openApiDoc() {
     paths[RECEIPT_KEY_PATH] = { get: { operationId: 'receipt_key', summary: 'Free: Ed25519 public key + format for verifying X-GW8-Receipt / X-GW8-Receipt-Signature on paid responses', security: [], responses: { '200': { description: 'Key JSON' } } } };
     paths['/api/seller/reputation/status'] = { get: { operationId: 'seller_reputation_status', summary: 'Free: can the seller-reputation data source (alchemy or blockscout, Base) be reached right now? {source, keyed, reachable, http_status, latency_ms, checked_at, cached}. One fixed tiny probe, cached 60s; no input, no receipt.', security: [], responses: { '200': { description: 'Status JSON' } } } };
     paths['/api/govcontracts/status'] = { get: { operationId: 'govcontracts_status', summary: 'Free: gov-contract feed source health (sourceStatus, asOf, dodAnnouncementDays, dodAwardsParsed, count; no rows)', security: [], responses: { '200': { description: 'Status JSON' } } } };
+    paths['/api/value/status'] = { get: { operationId: 'value_status', summary: 'Free: value-capture coverage, last refresh and source health. No scores.', security: [], responses: { '200': { description: 'Status JSON' } } } };
+    paths['/api/growth/status'] = { get: { operationId: 'growth_status', summary: 'Free: growth-lane coverage, thresholds, last scan and source health. No named rows.', security: [], responses: { '200': { description: 'Status JSON' } } } };
     paths['/api/track'] = { get: { operationId: 'track', summary: 'Free: honest track record of band-dot signals (backtest simulated vs live-logged, hit rates 1d/7d/30d incl. misses). HTML at /track', security: [], responses: { '200': { description: 'Track JSON' } } } };
     paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample (regime statuses + core WaveTrend values)', security: [], responses: { '200': { description: 'Sample JSON' } } } };
     paths['/api/brief/teaser'] = { get: { operationId: 'brief_teaser', summary: 'Free: partial live brief — regime score, green/red counts, top 3 dots (symbol+band only), simulated 7d hit-rate headline; upsells full brief/dots/agent', security: [], responses: { '200': { description: 'Teaser JSON' } } } };
@@ -328,7 +389,7 @@ function openApiDoc() {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { name: 'GW8', email: 'mariostefano3@gmail.com', url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call tools for AI agents via x402 (USDC on Base): should-I-pay decisions (spend policy + seller reputation in one call), spend-policy risk checks, x402 seller reputation verdicts, token safety verdicts, payment-rail cost checks, and crypto market data (regime, WaveTrend band dots, relative strength, flows, simulated hit-rate backtests). Agent guide: /agents.md. No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
-            'x-guidance': 'Start free: GET /agents.md (when to use each call, examples), GET /api/brief/teaser, GET /api/sample, GET /api/seller/reputation/status, GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Agent payments (risk checks before paying): POST /api/pay/should-i-pay ($0.02, spend policy + seller reputation -> pay / dont_pay / ask_human, one signed receipt), POST /api/spend/check ($0.02, allow/deny/needs_approval against the buyer policy), POST /api/seller/reputation ($0.01, 0-100 score + trusted/caution/avoid/unknown for an x402 seller). Verdicts: GET /api/verdict/{chain}/{address} ($0.01, token safety). Payment rails: GET /api/rails ($0.002). Market data: GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/rs ($0.02), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/history ($0.05). Access: POST /api/pass/day ($1.00), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
+            'x-guidance': 'Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times (N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.05 more than 20). Start free: GET /agents.md, GET /api/brief/teaser, GET /api/sample, GET /api/value/status, GET /api/growth/status, GET /api/seller/reputation/status, GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Agent payments: POST /api/pay/should-i-pay ($0.02), POST /api/spend/check ($0.02), POST /api/seller/reputation ($0.01). Verdicts: GET /api/verdict/{chain}/{address} ($0.01). Payment rails: GET /api/rails ($0.002). Market data: GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/rs ($0.02), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/history ($0.05), GET /api/value/{symbol} ($0.015), GET /api/value ($0.03), GET /api/value/{symbol}/history ($0.07), GET /api/growth/{chain} ($0.015), GET /api/growth ($0.03), GET /api/growth/history ($0.07). Access: POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -371,7 +432,7 @@ async function buildMcp() {
         // Tool-call receipt (tx hash is in _meta["x402/payment-response"], set after this result is built, so tx is null here).
         const mcpReceipt = (a, out, amt, accessType) => { const { pass, ...q } = a || {}; return buildReceipt({ endpoint: `MCP ${name} (${method} ${build(a)})`, query: q, amount: amt, tx: null, accessType }, out); };
         const wrap = await paidWrapper(name, amount, `${title}: ${desc}`);
-        const pointer = async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).', ...funnel(ORIGIN + path, { passUsd: PASS_PLAN.priceUsd, passHours: PASS_PLAN.hours, passCap: PASS_PLAN.dailyCap, noPass: !!opts.noPass }).body });
+        const pointer = async (a) => txt({ paymentRequired: true, protocol: 'x402 v2', method, url: ORIGIN + build(a), priceUsd: price, network: 'eip155:8453', howTo: 'Request the URL; on 402, sign the PAYMENT-REQUIRED challenge and retry with PAYMENT-SIGNATURE (e.g. wrapFetchWithPayment from @x402/fetch).', ...funnel(ORIGIN + path, { passUsd: PASS_PLAN.priceUsd, passHours: PASS_PLAN.hours, passCap: PASS_PLAN.dailyCap, noPass: !!opts.noPass, callUsd: Number(price) }).body });
         if (!wrap) return m.registerTool(name, { title, description: `${desc} Paid: $${price} USDC on Base via x402. Returns the endpoint to call with an x402 client.`, inputSchema: schema }, async (a) => (!opts.noPass && a.pass) ? viaPass(a) : pointer(a));
         const run = wrap(async (a) => {
             try { const out = await deliver(a); return out && out.error ? mcpErr(String(out.error)) : txt({ ...out, _receipt: mcpReceipt(a, out, amount, 'X402_MCP_INBAND') }); }
@@ -418,6 +479,12 @@ async function buildMcp() {
         { ...spendSchema, seller: z.object({ address: z.string().optional(), endpoint: z.string().optional(), lookbackDays: z.number().int().min(1).max(90).optional() }), sellerRules: z.object({ onCaution: z.enum(['pay', 'ask_human', 'dont_pay']).optional(), onUnknown: z.enum(['pay', 'ask_human', 'dont_pay']).optional(), minScore: z.number().int().min(0).max(100).optional() }).optional() },
         undefined, a => checkShouldIPay(payBody(a)), a => validatePayDecision(payBody(a)).error || null);
     await paidTool('get_daily_brief', 'Daily brief', '/api/brief', 'GET', '0.02', 'Once-per-day brief: regime, dot counts, top 10 coins by dot strength, BTC/ETH/SOL flows.', {}, undefined, () => getBrief());
+    await paidTool('get_value_score', 'Value-capture score', '/api/value/{symbol}', 'GET', VALUE_PRICES.one, 'Value-capture score for one coin: net supply, holder yield, usage class, burn-versus-held class and unlock overhang.', { symbol: z.string().regex(/^[A-Za-z0-9]{1,12}$/) }, a => `/api/value/${String(a.symbol).toUpperCase()}`, a => getValueSymbol(a.symbol), a => findCoin(a.symbol) ? null : 'unknown symbol');
+    await paidTool('get_value_screen', 'Value-capture screen', '/api/value', 'GET', VALUE_PRICES.batch, 'Sortable value-capture screen for up to 25 symbols or the whole covered set.', { symbols: z.string().optional(), sort: z.enum(['score', 'yield', 'netSupply90d']).optional(), minScore: z.number().min(0).max(100).optional() }, a => { const p = new URLSearchParams(); if (a.symbols) p.set('symbols', a.symbols); if (a.sort) p.set('sort', a.sort); if (a.minScore != null) p.set('minScore', String(a.minScore)); const qs = p.toString(); return '/api/value' + (qs ? '?' + qs : ''); }, a => { const q = parseValueQuery(a); return q.error ? { error: q.error } : getValueBatch(q); }, a => parseValueQuery(a).error || null);
+    await paidTool('get_value_history', 'Value-capture history', '/api/value/{symbol}/history', 'GET', VALUE_PRICES.history, 'Weekly value-capture snapshots for one coin, up to 52 weeks.', { symbol: z.string().regex(/^[A-Za-z0-9]{1,12}$/), weeks: z.number().int().min(1).max(52).optional() }, a => `/api/value/${String(a.symbol).toUpperCase()}/history${a.weeks ? '?weeks=' + a.weeks : ''}`, a => { const w = parseWeeks(a.weeks); return w.error ? { error: w.error } : getValueHistory(a.symbol, w.weeks); }, a => !findCoin(a.symbol) ? 'unknown symbol' : (parseWeeks(a.weeks).error || null));
+    await paidTool('get_growth_setup', 'Growth-lane setup', '/api/growth/{chain}', 'GET', GROWTH_PRICES.one, 'Growth-lane rules for one chain or app: stables, fees, TVL versus price, and the relative-return flag.', { chain: z.string().min(2).max(32) }, a => `/api/growth/${encodeURIComponent(String(a.chain).toLowerCase())}`, a => getGrowthOne(a.chain), a => findGrowth(a.chain) ? null : 'unknown chain');
+    await paidTool('get_growth_screen', 'Growth-lane screen', '/api/growth', 'GET', GROWTH_PRICES.list, 'Filterable growth-lane screen across covered chains and apps. Window is 90 days.', { kind: z.enum(['chain', 'app', 'all']).optional(), minRulesPassed: z.number().int().min(0).max(4).optional(), triggerOnly: z.boolean().optional(), minTvlUsd: z.number().min(0).optional(), window: z.string().optional() }, a => { const p = new URLSearchParams(); for (const k of ['kind', 'minRulesPassed', 'triggerOnly', 'minTvlUsd', 'window']) if (a[k] != null && a[k] !== '') p.set(k, String(a[k])); const qs = p.toString(); return '/api/growth' + (qs ? '?' + qs : ''); }, a => { const q = parseGrowthQuery(a); return q.error ? { error: q.error } : getGrowthList(q); }, a => parseGrowthQuery(a).error || null);
+    await paidTool('get_growth_history', 'Growth-lane history', '/api/growth/history', 'GET', GROWTH_PRICES.history, 'Weekly growth-lane snapshots and the week each rule first passed.', { weeks: z.number().int().min(1).max(52).optional(), kind: z.enum(['chain', 'app', 'all']).optional(), minRulesPassed: z.number().int().min(0).max(4).optional(), triggerOnly: z.boolean().optional(), minTvlUsd: z.number().min(0).optional() }, a => { const p = new URLSearchParams(); for (const k of ['weeks', 'kind', 'minRulesPassed', 'triggerOnly', 'minTvlUsd']) if (a[k] != null && a[k] !== '') p.set(k, String(a[k])); const qs = p.toString(); return '/api/growth/history' + (qs ? '?' + qs : ''); }, a => { const w = parseWeeks(a.weeks); const q = parseGrowthQuery(a); if (w.error || q.error) return { error: w.error || q.error }; return getGrowthHistory(q, w.weeks); }, a => parseWeeks(a.weeks).error || parseGrowthQuery(a).error || null);
     m.registerTool('get_signing_pubkey', { title: 'Response-signing public key', description: 'Free: Ed25519 public key and scheme for verifying X-GW8-Signature on paid responses.', inputSchema: {} }, async () => txt(publicKeyInfo()));
     return m;
 }
@@ -437,7 +504,7 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
     description: 'Agent payment risk checks (should-I-pay, spend policy, x402 seller reputation), token verdicts, payment-rail costs and crypto market data (regime, WaveTrend dots, relative strength). Free sample; paid tools via x402 (USDC on Base). Signed receipts. Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'should_i_pay', 'check_spend_policy', 'check_seller_reputation', 'buy_day_pass', 'get_signing_pubkey'],
+    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_value_score', 'get_value_screen', 'get_value_history', 'get_growth_setup', 'get_growth_screen', 'get_growth_history', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'should_i_pay', 'check_spend_policy', 'check_seller_reputation', 'buy_day_pass', 'get_signing_pubkey'],
     dayPass: { endpoint: `${ORIGIN}/api/pass/day`, mcpTool: 'buy_day_pass', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass' },
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
@@ -488,7 +555,8 @@ async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
     let out;
     try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
     if (!out || out.error) {
-        return { status: 503, body: { error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'no payment was taken (payment verified but not settled)' } };
+        const status = out && Number(out.http) >= 400 && Number(out.http) < 500 ? Number(out.http) : 503;
+        return { status, body: { error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'no payment was taken (payment verified but not settled)', ...(out && out.sourceStatus ? { sourceStatus: out.sourceStatus } : {}) } };
     }
     const settleJwt = generateCdpJwt('POST', '/platform/v2/x402/settle');
     let settleRes, settleData;
@@ -530,7 +598,7 @@ async function handleX402Agent(req, res, product = null) {
         if (product && product.precheck) { const pc = await product.precheck(req); if (pc && pc.error) { await refundPass(p); return res.status(400).json({ error: pc.error }); } }
         let out;
         try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
-        if (!out || out.error) { await refundPass(p); return res.status(503).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'pass call not counted' }); }
+        if (!out || out.error) { await refundPass(p); const status = out && Number(out.http) >= 400 && Number(out.http) < 500 ? Number(out.http) : 503; return res.status(status).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'pass call not counted', ...(out && out.sourceStatus ? { sourceStatus: out.sourceStatus } : {}) }); }
         return res.set('X-GW8-Pass-Remaining', String(p.remaining)).json({ status: 'success', accessType: 'DAY_PASS', pass: { remaining: p.remaining, expiresAt: p.expiresAt }, timestamp: new Date().toISOString(), signal: out,
             receipt: buildReceipt({ endpoint: `${req.method} ${req.path}`, query: req.query, amount: null, tx: null, accessType: 'DAY_PASS' }, out) });
     }
@@ -576,7 +644,8 @@ async function handleX402Agent(req, res, product = null) {
     // PRIMARY CHALLENGE: 402 Payment Required (x402 Version 2). v2 fields unchanged; GW8 extras ride alongside.
     const challenge = getX402ChallengeV2(product || {});
     const challengeBase64 = Buffer.from(JSON.stringify(challenge)).toString('base64');
-    const f = funnel(challenge.resource.url, { passUsd: PASS_PLAN.priceUsd, passHours: PASS_PLAN.hours, passCap: PASS_PLAN.dailyCap, noPass: !!(product && product.noPass) });
+    const callUsd = product && product.amount ? Number(product.amount) / 1e6 : 0.02;
+    const f = funnel(challenge.resource.url, { passUsd: PASS_PLAN.priceUsd, passHours: PASS_PLAN.hours, passCap: PASS_PLAN.dailyCap, noPass: !!(product && product.noPass), callUsd });
 
     return res.status(402)
         .set('PAYMENT-REQUIRED', challengeBase64)
@@ -584,7 +653,7 @@ async function handleX402Agent(req, res, product = null) {
         .set('X-402-Amount-USDC', product ? String(Number(product.amount) / 1e6) : '0.02')
         .set('X-402-Chain', 'eip155:8453')
         .set(f.headers)
-        .json({ ...challenge, gw8: f.body });
+        .json({ dayPass: f.body.dayPass, ...challenge, gw8: f.body });
 }
 
 // Free public track record (backtest + live log)
@@ -624,7 +693,7 @@ app.get('/stats.html', async (req, res) => {
 
 // Card-paid marketplace channels (RapidAPI / Apify). Off unless GW8 sets the channel env var on Render.
 mountMarketplace(app, signResponses);
-app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/spend/check', '/api/seller/reputation', '/api/pay/should-i-pay'], signResponses);
+app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/value', '/api/growth', '/api/spend/check', '/api/seller/reputation', '/api/pay/should-i-pay'], signResponses);
 app.all('/api/agent', handleX402Agent);
 
 // Cheaper single-purpose products (signal only)
@@ -939,6 +1008,113 @@ const payDecisionProduct = (req) => ({
 });
 app.post('/api/pay/should-i-pay', (req, res) => handleX402Agent(req, res, payDecisionProduct(req)));
 quoteOnlyGet('/api/pay/should-i-pay', payDecisionProduct);
+
+app.get('/api/value/status', async (req, res) => {
+    try { res.json(await getValueStatus()); }
+    catch { res.json({ free: true, product: 'value-capture', coverage: [], sourceStatus: { defillama: 'unavailable', krakenTicker: 'unavailable' }, sources: [], disclaimer: 'Rule-based tokenomics data and score. Not investment advice; no trade recommendation.' }); }
+});
+app.get('/api/value/:symbol/history', (req, res) => {
+    const raw = String(req.params.symbol || '').toUpperCase();
+    const meta = findCoin(raw);
+    const weeks = parseWeeks(req.query.weeks);
+    if (hasPaymentOrPass(req)) {
+        if (!meta) return res.status(404).json({ error: 'unknown symbol', note: 'no payment was taken' });
+        if (weeks.error) return res.status(400).json({ error: weeks.error, note: 'no payment was taken' });
+    }
+    const sym = meta ? raw : 'BNB';
+    const w = weeks.weeks || 12;
+    return handleX402Agent(req, res, {
+        url: meta && !weeks.error ? `${BASE_URL}/api/value/${sym}/history` : `${BASE_URL}/api/value/{symbol}/history`,
+        amount: VALUE_PRICES.historyAtomic, name: 'GW8 Value-Capture History',
+        description: 'Weekly value-capture snapshots for one coin, up to 52 weeks. Rule classes are carried forward; yield is recomputed. $0.07 USDC. Data and scores only.',
+        tags: ['value-capture', 'tokenomics', 'crypto', 'x402'],
+        routeTemplate: '/api/value/:symbol/history', pathParams: { symbol: sym },
+        inputProps: { weeks: { type: 'integer', example: 12 } },
+        precheck: async () => !meta ? { error: 'unknown symbol' } : (weeks.error ? { error: weeks.error } : null),
+        deliver: () => getValueHistory(sym, w)
+    });
+});
+app.get('/api/value/:symbol', (req, res) => {
+    const raw = String(req.params.symbol || '').toUpperCase();
+    const meta = findCoin(raw);
+    if (!meta && hasPaymentOrPass(req)) return res.status(404).json({ error: 'unknown symbol', note: 'no payment was taken' });
+    const sym = meta ? raw : 'BNB';
+    return handleX402Agent(req, res, {
+        url: meta ? `${BASE_URL}/api/value/${sym}` : `${BASE_URL}/api/value/{symbol}`,
+        amount: VALUE_PRICES.oneAtomic, name: meta ? `GW8 Value-Capture: ${sym}` : 'GW8 Value-Capture: one coin',
+        description: `Value-capture score for ${meta ? sym : 'one coin'}: net supply, holder yield, usage class, burn-versus-held class and unlock overhang. $0.015 USDC. Data and scores only.`,
+        tags: ['value-capture', 'tokenomics', 'crypto', 'x402'],
+        routeTemplate: '/api/value/:symbol', pathParams: { symbol: sym },
+        precheck: async () => meta ? null : { error: 'unknown symbol' },
+        deliver: () => getValueSymbol(sym)
+    });
+});
+app.get('/api/value', (req, res) => {
+    const q = parseValueQuery(req.query);
+    if (hasPaymentOrPass(req)) {
+        if (q.error) return res.status(400).json({ error: q.error, note: 'no payment was taken' });
+        if (q.symbols && !q.symbols.some(s => findCoin(s))) return res.status(404).json({ error: 'unknown symbol', unknown: q.symbols, note: 'no payment was taken' });
+    }
+    const query = q.error ? { sort: 'score', minScore: 0, symbols: null } : q;
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/value`, amount: VALUE_PRICES.batchAtomic, name: 'GW8 Value-Capture Screen',
+        description: 'Value-capture screen for up to 25 symbols or the whole covered set. Sort by score, yield or netSupply90d. $0.03 USDC. Data and scores only.',
+        tags: ['value-capture', 'tokenomics', 'crypto', 'x402'],
+        inputProps: { symbols: { type: 'string', example: 'BNB,ETH' }, sort: { type: 'string', enum: ['score', 'yield', 'netSupply90d'], example: 'score' }, minScore: { type: 'number', example: 0 } },
+        precheck: async () => q.error ? { error: q.error } : null,
+        deliver: () => getValueBatch(query)
+    });
+});
+app.get('/api/growth/status', async (req, res) => {
+    try { res.json(await getGrowthStatus()); }
+    catch { res.json({ free: true, product: 'growth-lane', coverage: [], sourceStatus: { defillamaTvl: 'unavailable' }, sources: [], disclaimer: 'On-chain growth data and rule flags. Not investment advice; no trade recommendation.' }); }
+});
+app.get('/api/growth/history', (req, res) => {
+    const weeks = parseWeeks(req.query.weeks);
+    const q = parseGrowthQuery(req.query);
+    if (hasPaymentOrPass(req)) {
+        if (weeks.error) return res.status(400).json({ error: weeks.error, note: 'no payment was taken' });
+        if (q.error) return res.status(q.http || 400).json({ error: q.error, note: 'no payment was taken' });
+    }
+    const query = q.error ? { kind: 'all', minRulesPassed: 0, triggerOnly: false, minTvlUsd: 50000000, window: '90d' } : q;
+    const w = weeks.weeks || 12;
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/growth/history`, amount: GROWTH_PRICES.historyAtomic, name: 'GW8 Growth-Lane History',
+        description: 'Weekly growth-lane snapshots and the week each rule first passed. Up to 52 weeks. Window is 90 days. $0.07 USDC. Data and rule flags only.',
+        tags: ['growth-lane', 'on-chain', 'crypto', 'x402'],
+        inputProps: { weeks: { type: 'integer', example: 12 }, kind: { type: 'string', enum: ['chain', 'app', 'all'], example: 'all' }, minRulesPassed: { type: 'integer', example: 0 }, triggerOnly: { type: 'boolean', example: false }, minTvlUsd: { type: 'number', example: 50000000 } },
+        precheck: async () => (weeks.error || q.error) ? { error: weeks.error || q.error } : null,
+        deliver: () => getGrowthHistory(query, w)
+    });
+});
+app.get('/api/growth/:chain', (req, res) => {
+    const raw = String(req.params.chain || '');
+    const meta = findGrowth(raw);
+    if (!meta && hasPaymentOrPass(req)) return res.status(404).json({ error: 'unknown chain', note: 'no payment was taken' });
+    const id = meta ? meta.chain : 'solana';
+    return handleX402Agent(req, res, {
+        url: meta ? `${BASE_URL}/api/growth/${id}` : `${BASE_URL}/api/growth/{chain}`,
+        amount: GROWTH_PRICES.oneAtomic, name: meta ? `GW8 Growth-Lane: ${id}` : 'GW8 Growth-Lane: one chain',
+        description: `Growth-lane rules for ${meta ? id : 'one chain or app'}: stablecoin change, fees, TVL versus price, and the relative-return flag. $0.015 USDC. Data and rule flags only.`,
+        tags: ['growth-lane', 'on-chain', 'crypto', 'x402'],
+        routeTemplate: '/api/growth/:chain', pathParams: { chain: id },
+        precheck: async () => meta ? null : { error: 'unknown chain' },
+        deliver: () => getGrowthOne(id)
+    });
+});
+app.get('/api/growth', (req, res) => {
+    const q = parseGrowthQuery(req.query);
+    if (q.error && hasPaymentOrPass(req)) return res.status(q.http || 400).json({ error: q.error, note: 'no payment was taken' });
+    const query = q.error ? { kind: 'all', minRulesPassed: 0, triggerOnly: false, minTvlUsd: 50000000, window: '90d' } : q;
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/growth`, amount: GROWTH_PRICES.listAtomic, name: 'GW8 Growth-Lane Screen',
+        description: 'Growth-lane screen across covered chains and apps. Filters: kind, minRulesPassed, triggerOnly, minTvlUsd. Window is 90 days. $0.03 USDC. Data and rule flags only.',
+        tags: ['growth-lane', 'on-chain', 'crypto', 'x402'],
+        inputProps: { kind: { type: 'string', enum: ['chain', 'app', 'all'], example: 'all' }, minRulesPassed: { type: 'integer', example: 0 }, triggerOnly: { type: 'boolean', example: false }, minTvlUsd: { type: 'number', example: 50000000 }, window: { type: 'string', example: '90d' } },
+        precheck: async () => q.error ? { error: q.error } : null,
+        deliver: () => getGrowthList(query)
+    });
+});
 
 initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: recordMcpPaid })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))

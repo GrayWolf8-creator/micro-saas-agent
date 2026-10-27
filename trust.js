@@ -32,6 +32,12 @@ const ADDS = [
     [/^\/api\/rules/, 'CFTC + SEC crypto rule-change rows with RIN and comment deadlines (not in the teaser).'],
     [/^\/api\/rs/, 'Strength scores and ranks for all 66 Kraken pairs plus sector scores and breadth (not in the teaser).'],
     [/^\/api\/rails/, 'Live fee and settlement comparison of Base USDC, XRPL, Tempo, Arc and card, with agent protocols and a recommended rail (not in the teaser).'],
+    [/^\/api\/value\/[^/]+\/history/, 'Weekly value-capture score snapshots for one coin (rule classes carried forward; yield recomputed).'],
+    [/^\/api\/value\/[^/]+/, 'Full value-capture score for one coin: net supply, holder yield, usage class, burn-versus-held class, unlock overhang.'],
+    [/^\/api\/value$/, 'Sortable value-capture screen for up to 25 coins, or the whole covered set.'],
+    [/^\/api\/growth\/history/, 'Weekly growth-lane snapshots and the week each rule first passed.'],
+    [/^\/api\/growth\/[^/]+/, 'Growth-lane rules for one chain or app: stables, fees, TVL versus price, and the relative-return flag.'],
+    [/^\/api\/growth$/, 'Filterable growth-lane screen across covered chains and apps.'],
     [/^\/api\/spend\/check/, 'allow / deny / needs_approval for your proposed payment, which rule fired, and a signed decision receipt (no free teaser; pure rule check).'],
     [/^\/api\/pay\/should-i-pay/, 'one verdict pay / dont_pay / ask_human from your spend policy + the seller reputation, with reasons and one signed receipt (no free teaser).'],
     [/^\/api\/seller\/reputation/, '0-100 seller score, verdict, wash/self-dealing share, buyer count, concentration and wallet age from public Base USDC history, with a signed receipt (no free teaser).'],
@@ -45,13 +51,35 @@ export function paidAdds(url) {
     return 'Full paid data (the free teaser shows a partial live brief).';
 }
 
-/** Extras for a 402. Returns { body, headers }. */
-export function funnel(url, { passUsd = '1.00', passHours = 24, passCap = 2000, noPass = false } = {}) {
+/** How many per-call payments equal one day pass. The pass is cheaper after more than this many calls. */
+export function breakEvenCalls(callUsd) {
+    const p = Number(callUsd);
+    if (!Number.isFinite(p) || p <= 0) return null;
+    const atomic = Math.round(p * 1e6);
+    if (atomic <= 0) return null;
+    return Math.floor(1000000 / atomic);
+}
+/** One line for 402 bodies, discovery and docs. N comes from the live prices. The pass route names itself. */
+export function dayPassNote(callUsd, { isPass = false } = {}) {
+    if (isPass) return 'This is the day pass: one payment covers 24h of paid data calls.';
+    const n = breakEvenCalls(callUsd);
+    if (n == null) return 'Best value if you call more than once: use the day pass.';
+    return `Best value if you call more than ${n} times.`;
+}
+
+/** Extras for a 402. Returns { body, headers }. dayPass is the first field. */
+export function funnel(url, { passUsd = '1.00', passHours = 24, passCap = 2000, noPass = false, callUsd = null } = {}) {
     const isPass = /\/api\/pass\/day/.test(String(url));
+    const note = dayPassNote(callUsd, { isPass });
+    const dayPass = {
+        url: ORIGIN + PASS_PATH, method: 'POST', priceUsd: passUsd,
+        note: isPass ? note : `${note} POST ${PASS_PATH} ($${passUsd}, ${passHours}h, fair use ${passCap} calls); send X-GW8-Pass instead of paying per call.${noPass ? ' Not valid for this subscription route.' : ''}`
+    };
     const bestValue = isPass
         ? { url: ORIGIN + PASS_PATH, method: 'POST', priceUsd: passUsd, note: 'This is the best-value option: one payment covers 24h of paid calls.' }
         : { url: ORIGIN + PASS_PATH, method: 'POST', priceUsd: passUsd, note: `Best value: $${passUsd} day pass = ${passHours}h of every paid data endpoint (fair use ${passCap} calls), send X-GW8-Pass instead of paying per call.${noPass ? ' Not valid for this subscription route.' : ''}` };
     const body = {
+        dayPass,
         freeTeaser: ORIGIN + TEASER_PATH,
         paidAdds: paidAdds(url),
         bestValue,

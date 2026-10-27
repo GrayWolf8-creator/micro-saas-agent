@@ -1,0 +1,22 @@
+{
+  "reviewed": "2026-10-01",
+  "note": "Chains use DefiLlama chain series. Apps use protocol fee slugs. App TVL uses a chain series only when tvlChain is set; otherwise the 90-day TVL change is left unverified (the full protocol payload is too large to pull on a request).",
+  "rows": [
+    { "chain": "ethereum", "symbol": "ETH", "kind": "chain", "krakenPair": "ETHUSD", "geckoId": "ethereum", "feesChain": "ethereum", "pointsFarming": false },
+    { "chain": "solana", "symbol": "SOL", "kind": "chain", "krakenPair": "SOLUSD", "geckoId": "solana", "feesChain": "solana", "pointsFarming": false },
+    { "chain": "bsc", "symbol": "BNB", "kind": "chain", "krakenPair": "BNBUSD", "geckoId": "binancecoin", "feesChain": "bsc", "pointsFarming": false },
+    { "chain": "arbitrum", "symbol": "ARB", "kind": "chain", "krakenPair": "ARBUSD", "geckoId": "arbitrum", "feesChain": "arbitrum", "pointsFarming": false },
+    { "chain": "avalanche", "symbol": "AVAX", "kind": "chain", "krakenPair": "AVAXUSD", "geckoId": "avalanche-2", "feesChain": "avalanche", "pointsFarming": false },
+    { "chain": "sui", "symbol": "SUI", "kind": "chain", "krakenPair": "SUIUSD", "geckoId": "sui", "feesChain": "sui", "pointsFarming": false },
+    { "chain": "polygon", "symbol": "POL", "kind": "chain", "krakenPair": "POLUSD", "geckoId": "polygon-ecosystem-token", "feesChain": "polygon", "pointsFarming": false },
+    { "chain": "optimism", "symbol": "OP", "kind": "chain", "krakenPair": "OPUSD", "geckoId": "optimism", "feesChain": "optimism", "pointsFarming": false },
+    { "chain": "base", "symbol": null, "kind": "chain", "krakenPair": null, "geckoId": null, "feesChain": "base", "pointsFarming": false },
+    { "chain": "monad", "symbol": "MON", "kind": "chain", "krakenPair": "MONUSD", "geckoId": "monad", "feesChain": "monad", "pointsFarming": false },
+    { "chain": "tron", "symbol": "TRX", "kind": "chain", "krakenPair": "TRXUSD", "geckoId": "tron", "feesChain": "tron", "pointsFarming": false },
+    { "chain": "hyperliquid", "symbol": "HYPE", "kind": "app", "krakenPair": "HYPEUSD", "geckoId": "hyperliquid", "feesSlugs": ["hyperliquid-perps", "hyperliquid-spot-orderbook"], "tvlChain": "hyperliquid", "pointsFarming": false },
+    { "chain": "uniswap", "symbol": "UNI", "kind": "app", "krakenPair": "UNIUSD", "geckoId": "uniswap", "feesSlugs": ["uniswap-v3", "uniswap-v2", "uniswap-v4"], "protocolTvl": "uniswap-v3", "pointsFarming": false },
+    { "chain": "aave", "symbol": "AAVE", "kind": "app", "krakenPair": "AAVEUSD", "geckoId": "aave", "feesSlugs": ["aave-v3", "aave-v2"], "protocolTvl": "aave-v3", "pointsFarming": false },
+    { "chain": "jupiter", "symbol": "JUP", "kind": "app", "krakenPair": "JUPUSD", "geckoId": "jupiter-exchange-solana", "feesSlugs": ["jupiter-aggregator", "jupiter-perpetual-exchange"], "protocolTvl": "jupiter-aggregator", "pointsFarming": false },
+    { "chain": "pancakeswap", "symbol": "CAKE", "kind": "app", "krakenPair": null, "geckoId": "pancakeswap-token", "feesSlugs": ["pancakeswap-amm", "pancakeswap-amm-v3", "pancakeswap-infinity"], "protocolTvl": "pancakeswap-amm", "pointsFarming": false }
+  ]
+}

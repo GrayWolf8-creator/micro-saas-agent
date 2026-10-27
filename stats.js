@@ -1,6 +1,7 @@
 // stats.js — free per-endpoint request counters. No PII: no IPs or raw headers; a user-agent is reduced to a
 // fixed bot name or "buyer" (buyers.js), and payer wallets are stored only as truncated SHA-256 ids.
 // Persistence: Upstash Redis REST via alerts.js helper; in-memory fallback. All keys expire (~35d) or are capped.
+import crypto from 'crypto';
 import { redis, hasRedis } from './alerts.js';
 import { classifyUA, payerId, isOwnPayer, GRADER_ROUTES_PER_HOUR } from './buyers.js';
 
@@ -38,6 +39,11 @@ const EXACT = new Set([
     '/api/rules/status',
     '/api/rs',
     '/api/rails',
+    '/api/value',
+    '/api/value/status',
+    '/api/growth',
+    '/api/growth/status',
+    '/api/growth/history',
     '/api/spend/check',
     '/api/seller/reputation',
     '/api/pay/should-i-pay',
@@ -57,6 +63,9 @@ const PARAM = [
     [/^\/api\/coin\/[^/]+$/i, '/api/coin/:symbol'],
     [/^\/api\/verdict\/[^/]+\/[^/]+$/i, '/api/verdict/:chain/:address'],
     [/^\/api\/flows\/[^/]+$/i, '/api/flows/:symbol'],
+    [/^\/api\/value\/[^/]+\/history$/i, '/api/value/:symbol/history'],
+    [/^\/api\/value\/[^/]+$/i, '/api/value/:symbol'],
+    [/^\/api\/growth\/[^/]+$/i, '/api/growth/:chain'],
     [/^\/api\/alerts\/[^/]+$/i, '/api/alerts/:id'],
     [/^\/api\/brief\/weekly\/[^/]+$/i, '/api/brief/weekly/:id'],
     [/^\/mkt\/rapidapi\/.+$/i, '/mkt/rapidapi/*'],
@@ -79,6 +88,12 @@ const PAID_PATHS = new Set([
     '/api/rules',
     '/api/rs',
     '/api/rails',
+    '/api/value',
+    '/api/value/:symbol',
+    '/api/value/:symbol/history',
+    '/api/growth',
+    '/api/growth/:chain',
+    '/api/growth/history',
     '/api/spend/check',
     '/api/seller/reputation',
     '/api/pay/should-i-pay',
@@ -156,7 +171,7 @@ export function record(method, path, statusCode, opts = {}) {
         if (!route) return null;
         const day = mtDate();
         // A safe-retry replay of an already-settled payment is not a second sale: tallied as "other", not paid.
-        const cls = opts.replay ? 'replay' : statusClass(statusCode);
+        const cls = opts.replay ? 'replay' : opts.sample ? 'sample' : statusClass(statusCode);
         const field = `${route}|${cls}`;
         // Always bump memory so local reads work even when Redis is configured
         memIncr(day, field);
@@ -177,7 +192,22 @@ export function record(method, path, statusCode, opts = {}) {
 const PAYERS = 'gw8:stats:payers:', FIRST = 'gw8:stats:payer_first', GRADERS = 'gw8:stats:graders', PR = 'gw8:stats:pr:';
 const MAX_PAYERS_TRACKED = 50000;
 const memP = { days: new Map(), first: new Map(), graders: new Map(), hourly: new Map() };
-const isAud = f => f.startsWith('a|') || f.startsWith('ua|');
+const isAud = f => f.startsWith('a|') || f.startsWith('ua|') || f.startsWith('ih|');
+// Repeat no-payment addresses: hashed only (sha256('gw8-ip:'+ip).slice(0,16)). Never store the raw IP.
+export const REPEAT_NOPAY_QUOTES = 8;
+const MAX_IP_HASHES = 4000;
+const seenIp = new Map();
+export function hashIp(ip) {
+    return crypto.createHash('sha256').update('gw8-ip:' + String(ip || '')).digest('hex').slice(0, 16);
+}
+function allowIp(day, hash) {
+    let s = seenIp.get(day);
+    if (!s) { s = new Set(); seenIp.set(day, s); }
+    if (s.has(hash)) return true;
+    if (s.size >= MAX_IP_HASHES) return false;
+    s.add(hash);
+    return true;
+}
 
 async function bump(day, field) {
     memIncr(day, field);
@@ -210,20 +240,25 @@ async function trackPayer(day, pid, route) {
 }
 
 /** Record audience fields for one finished request. Never throws. */
-export async function recordAudience({ route, statusCode, ua, payer, paidRoute, replay }) {
+export async function recordAudience({ route, statusCode, ua, payer, paidRoute, replay, ipHash, sample }) {
     try {
         if (!route) return;
         const day = mtDate();
         const c = classifyUA(ua);
         let aud = c.cls;
         const code = Number(statusCode) || 0;
-        const isPaid = !replay && paidRoute && code >= 200 && code < 300;
+        const isPaid = !sample && !replay && paidRoute && code >= 200 && code < 300;
         const pid = isPaid && payer ? payerId(payer) : null;
         if (pid) { const o = await trackPayer(day, pid, route); if (o) aud = o; }
         await bump(day, `a|${aud}|req|${route}`);
         if (code === 402) await bump(day, `a|${aud}|402|${route}`);
         if (isPaid) await bump(day, `a|${aud}|paid|${route}`);
         if (c.cls === 'bot') await bump(day, `ua|${c.name}`);
+        if (ipHash && /^[a-f0-9]{16}$/.test(ipHash) && allowIp(day, ipHash)) {
+            if (code === 402) await bump(day, `ih|${ipHash}|q`);
+            if (isPaid) await bump(day, `ih|${ipHash}|p`);
+            if (code === 402 && aud === 'bot') await bump(day, `ih|${ipHash}|bq`);
+        }
     } catch (e) { console.error('[stats] audience record failed', e && e.message); }
 }
 
@@ -234,13 +269,20 @@ export function recordMcpPaid(toolName, payer) {
 }
 
 /** Express middleware: tally on response finish. Place before x402 handlers. */
+export function clientIpHash(req) {
+    const x = req.headers && req.headers['x-forwarded-for'];
+    const raw = (typeof x === 'string' && x.split(',')[0].trim()) || (req.socket && req.socket.remoteAddress) || '';
+    return hashIp(raw);
+}
 export function statsMiddleware(req, res, next) {
     const ua = req.headers['user-agent'];
+    const ipHash = clientIpHash(req);
     res.on('finish', () => {
         const replay = !!res.locals.gw8Replay;
-        const route = record(req.method, req.path || req.url, res.statusCode, { replay });
+        const sample = !!res.locals.gw8Sample;
+        const route = record(req.method, req.path || req.url, res.statusCode, { replay, sample });
         if (!route || route.endsWith(' /')) return; // home keep-warm stays out of the audience split too
-        recordAudience({ route, statusCode: res.statusCode, ua, payer: res.locals.gw8Payer, paidRoute: PAID_PATHS.has(pathOf(route)), replay });
+        recordAudience({ route, statusCode: res.statusCode, ua, payer: res.locals.gw8Payer, paidRoute: PAID_PATHS.has(pathOf(route)), replay, ipHash, sample });
     });
     next();
 }
@@ -373,11 +415,21 @@ function toMap(flat) {
 async function buildAudience(list, audFields) {
     const seg = () => ({ requests: 0, quotes: 0, paid: 0 });
     const by = { bot: seg(), likelyBuyer: seg(), self: seg() };
+    const ips = new Map();
     const key = a => a === 'buyer' ? 'likelyBuyer' : a;
     const perRoute = new Map(), bots = new Map();
     for (const [f, c] of audFields) {
         const p = f.split('|');
         if (p[0] === 'ua') { bots.set(p[1], (bots.get(p[1]) || 0) + c); continue; }
+        if (p[0] === 'ih') {
+            const hash = p[1], metric = p[2];
+            if (!ips.has(hash)) ips.set(hash, { quotes: 0, paid: 0, botQuotes: 0 });
+            const ip = ips.get(hash);
+            if (metric === 'q') ip.quotes += c;
+            else if (metric === 'p') ip.paid += c;
+            else if (metric === 'bq') ip.botQuotes += c;
+            continue;
+        }
         const [, aud, metric, route] = p; const b = by[key(aud)]; if (!b) continue;
         const m = metric === 'req' ? 'requests' : metric === '402' ? 'quotes' : metric === 'paid' ? 'paid' : null; if (!m) continue;
         b[m] += c;
@@ -402,6 +454,12 @@ async function buildAudience(list, audFields) {
             } catch (e) { console.error('[stats] payer meta read failed', e.message); }
         } else { first = memP.first; graders = memP.graders; }
     }
+    const conversion = quoteConversion({
+        botQuotes: by.bot.quotes,
+        buyerQuotes: by.likelyBuyer.quotes,
+        settledBuyerPaid: null,
+        ips: [...ips.values()]
+    });
     const pay = { unique: 0, repeat: 0, returning: 0, graderBots: 0, self: 0, buyerCalls: 0, graderCalls: 0, selfCalls: 0 };
     for (const pid of pids) {
         if (isOwnPayer(pid)) { pay.self++; pay.selfCalls += calls.get(pid); continue; }
@@ -419,6 +477,34 @@ async function buildAudience(list, audFields) {
         topBots: [...bots.entries()].map(([name, requests]) => ({ name, requests })).sort((a, b) => b.requests - a.requests).slice(0, 15),
         routes: [...perRoute.values()].sort((a, b) => (b.likelyBuyer.quotes + b.likelyBuyer.paid) - (a.likelyBuyer.quotes + a.likelyBuyer.paid) || (b.bot.requests - a.bot.requests)),
         method: `bot = known x402 monitor/indexer/grader user-agents (Tanod list + x402 scanners), generic crawlers/uptime/security scanners, raw HTTP libraries and empty UA; plus any wallet that paid ${GRADER_ROUTES_PER_HOUR}+ different routes within an hour (grader). self = wallets in GW8_OWN_WALLETS. likelyBuyer = everything else (heuristic; a bot with a browser-like UA counts here).`,
+        conversion: {
+            ...conversion,
+            likelyRealBuyers: { ...conversion.likelyRealBuyers, paid: pay.buyerCalls, quoteToPaid: conversion.likelyRealBuyers.quotes > 0 ? pay.buyerCalls / conversion.likelyRealBuyers.quotes : null },
+            graders: { wallets: pay.graderBots, settledCalls: pay.graderCalls, note: 'Unpaid quotes have no wallet, so grader quote counts are not estimated. Graders here are wallets that settled ' + GRADER_ROUTES_PER_HOUR + '+ different routes in an hour.' }
+        },
+    };
+}
+
+/**
+ * Split recorded quotes into likely bots vs likely real buyers.
+ * Repeat no-payment addresses (quotes >= 8 and paid = 0) move only their buyer-UA quotes into the bot side,
+ * so known-UA bot quotes are not counted twice. Paid calls for the ratio are filled in by the caller from settled payers.
+ */
+export function quoteConversion({ botQuotes = 0, buyerQuotes = 0, ips = [] } = {}) {
+    let reclass = 0, repeatIps = 0, repeatQuotes = 0;
+    for (const ip of ips) {
+        const q = ip.quotes || 0, paid = ip.paid || 0, bq = ip.botQuotes || 0;
+        if (q >= REPEAT_NOPAY_QUOTES && paid === 0) {
+            repeatIps++;
+            repeatQuotes += q;
+            reclass += Math.max(0, q - bq);
+        }
+    }
+    const realQuotes = Math.max(0, buyerQuotes - reclass);
+    return {
+        likelyBots: { quotes: botQuotes + reclass, knownUaQuotes: botQuotes, repeatNoPayIps: repeatIps, repeatNoPayQuotes: repeatQuotes, reclassifiedFromBuyerQuotes: reclass },
+        likelyRealBuyers: { quotes: realQuotes, paid: 0, quoteToPaid: null },
+        note: `likelyBots adds known monitor/crawler user-agents to repeat no-payment addresses (>= ${REPEAT_NOPAY_QUOTES} quotes and zero paid calls). likelyRealBuyers.quoteToPaid uses settled payer calls reclassified off grader wallets, divided by the adjusted quote count.`
     };
 }
 
@@ -460,6 +546,17 @@ export function renderStatsMd(s) {
             ``, `- Unique likely-buyer payers: ${a.payers.likelyBuyers} (repeat ${a.payers.repeat}, returning ${a.payers.returning}); grader wallets: ${a.payers.graderBots}; self: ${a.payers.self}`,
             `- Settled paid calls by payer (re-classified): buyer ${a.payers.settledPaidCalls.likelyBuyer}, grader ${a.payers.settledPaidCalls.grader}, self ${a.payers.settledPaidCalls.self}`,
             `- Top bots: ${a.topBots.map(b => `${b.name} ${b.requests}`).join(', ') || 'none'}`);
+        const c = a.conversion;
+        if (c) {
+            const ratio = c.likelyRealBuyers.quoteToPaid == null ? 'n/a' : c.likelyRealBuyers.quoteToPaid.toFixed(4);
+            lines.push(``, `## Quote to paid (real buyers)`,
+                `- Likely-bot quotes (known user-agents + repeat no-payment): ${c.likelyBots.quotes}`,
+                `- Repeat no-payment addresses: ${c.likelyBots.repeatNoPayIps} (${c.likelyBots.repeatNoPayQuotes} quotes)`,
+                `- Likely real-buyer quotes: ${c.likelyRealBuyers.quotes}`,
+                `- Likely real-buyer settled calls: ${c.likelyRealBuyers.paid}`,
+                `- Quote-to-paid: ${ratio}`,
+                `- Grader wallets: ${c.graders.wallets} (settled calls ${c.graders.settledCalls}). ${c.graders.note}`);
+        }
     }
     lines.push(``, `_Generated ${s.asOf}_`);
     return lines.join('\n');
@@ -523,8 +620,23 @@ function audienceHtml(a) {
   <div><div class="n" style="color:#94a3b8">${me.paid}</div><div class="l">Self paid (seeding)</div></div>
 </div>
 <div class="card" style="font-size:.8rem">Repeat payers: ${p.repeat} · grader wallets: ${p.graderBots} · self wallets: ${p.self}<br>Settled paid calls by payer: buyer ${p.settledPaidCalls.likelyBuyer} · grader ${p.settledPaidCalls.grader} · self ${p.settledPaidCalls.self}<br>Top bots: ${esc(a.topBots.map(x => `${x.name} ${x.requests}`).join(', ') || 'none')}</div>
+${conversionHtml(a)}
 <div class="card" style="overflow-x:auto"><table><thead><tr><th>Route</th><th>Buyer 402</th><th>Buyer paid</th><th>Bot 402</th><th>Bot paid</th></tr></thead><tbody>${rows}</tbody></table></div>
 <p class="note">${esc(a.method)}</p>`;
+}
+
+function conversionHtml(a) {
+    const c = a && a.conversion;
+    if (!c) return '';
+    const ratio = c.likelyRealBuyers.quoteToPaid == null ? 'n/a' : c.likelyRealBuyers.quoteToPaid.toFixed(4);
+    return `<h2>Quote to paid (likely real buyers)</h2>
+<div class="card grid">
+  <div><div class="n">${c.likelyBots.quotes}</div><div class="l">Likely-bot quotes</div></div>
+  <div><div class="n">${c.likelyRealBuyers.quotes}</div><div class="l">Real-buyer quotes</div></div>
+  <div><div class="n">${c.likelyRealBuyers.paid}</div><div class="l">Real-buyer paid</div></div>
+  <div><div class="n">${esc(ratio)}</div><div class="l">Quote-to-paid</div></div>
+</div>
+<p class="note">Repeat no-payment addresses: ${c.likelyBots.repeatNoPayIps}. Grader wallets: ${c.graders.wallets} (settled calls ${c.graders.settledCalls}). ${esc(c.graders.note)}</p>`;
 }
 
 function esc(s) {

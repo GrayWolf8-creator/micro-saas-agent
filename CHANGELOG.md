@@ -12,6 +12,13 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Value-capture score, growth-lane screen, and quote conversion (2026-10-27)
+- Paid value-capture routes: `GET /api/value/:symbol` ($0.015), `GET /api/value` ($0.03), `GET /api/value/:symbol/history` ($0.07), plus free `GET /api/value/status`. Paid growth-lane routes: `GET /api/growth/:chain` ($0.015), `GET /api/growth` ($0.03), `GET /api/growth/history` ($0.07), plus free `GET /api/growth/status`. Public DefiLlama and Kraken data only. Every payload has `disclaimer` and `sources`. Missing supply, unlock and RWA figures stay null.
+- Day pass is listed first on 402 bodies, `/.well-known/x402`, OpenAPI 402 descriptions and `/llms.txt`, with "best value if you call more than N times" computed from current prices.
+- Free `?sample=1` on the three fallback most-quoted routes (verdict, coin, rails) when no quote counters are stored. Truncated preview, per-address daily cap (`GW8_SAMPLE_DAILY_CAP`, default 20).
+- `/api/stats` adds `audience.conversion`: likely-bot quotes (known user-agents, repeat no-payment address hashes, grader wallets) versus likely real buyers, with quote-to-paid for the real-buyer group. Existing totals, routes and audience buckets are unchanged.
+- Every paid GET discovery challenge now declares a `queryParams` input schema (including the seven GETs that previously had none). Optional non-secret bases: `GW8_LLAMA_BASE`, `GW8_STABLES_BASE`, `GW8_COINS_BASE`, `GW8_KRAKEN_BASE`.
+
 ### GET quotes for POST-only paid routes, for x402dash (proposal 26, 2026-10-23)
 - x402dash's listing checker only sends GET, so it only listed GET routes. An unpaid GET to `/api/spend/check`, `/api/seller/reputation`, `/api/pay/should-i-pay`, `/api/alerts/subscribe`, `/api/brief/weekly/subscribe` and `/api/pass/day` now returns the same 402 challenge as an unpaid POST (same accepts, price, description, bazaar schema with method POST), plus `Allow: POST`.
 - A GET never delivers, verifies, settles or uses a day pass: with PAYMENT-SIGNATURE / X-PAYMENT / X-GW8-Pass / X-Payment-Tx / ?tx= it returns 405 "use POST" with "no payment was taken". POST behavior and pricing unchanged (product configs moved into shared factories). Tests: `test/get_quote_p26.test.js`.

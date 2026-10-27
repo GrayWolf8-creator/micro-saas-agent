@@ -21,7 +21,7 @@ import { getRs } from './rs.js';
 import { getRails, validAmount } from './rails.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
-import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute } from './stats.js';
+import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute, mountTrafficReport } from './stats.js';
 import { funnel, dayPassNote, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH, buildReceipt, verifyReceipt, VERIFY_PATH } from './trust.js';
 import { getValueSymbol, getValueBatch, getValueHistory, getValueStatus, parseValueQuery, parseWeeks, findCoin, VALUE_PRICES } from './value.js';
 import { getGrowthOne, getGrowthList, getGrowthHistory, getGrowthStatus, parseGrowthQuery, findGrowth, GROWTH_PRICES } from './growth.js';
@@ -266,7 +266,7 @@ app.get('/', (req, res) => {
                 ]
             }
         },
-        free: { teaser: "/api/brief/teaser", sample: "/api/sample", valueStatus: "/api/value/status", growthStatus: "/api/growth/status", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH, receiptVerify: VERIFY_PATH, sellerReputationStatus: "/api/seller/reputation/status" },
+        free: { teaser: "/api/brief/teaser", sample: "/api/sample", valueStatus: "/api/value/status", growthStatus: "/api/growth/status", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", traffic: "/api/traffic", trafficHtml: "/traffic.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH, receiptVerify: VERIFY_PATH, sellerReputationStatus: "/api/seller/reputation/status" },
         bestValue: { path: "/api/pass/day", method: "POST", priceUsd: "1.00", note: "one payment, 24h of every paid data endpoint" },
         trust: TRUST_LINE + " Safe retry: same PAYMENT-SIGNATURE within 15 min is not charged twice.",
         docs: "/llms.txt",
@@ -385,6 +385,9 @@ function openApiDoc() {
         { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 30, default: 1 } },
         { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'md'], default: 'json' } }
     ], responses: { '200': { description: 'Stats JSON or markdown' } } } };
+    paths['/api/traffic'] = { get: { operationId: 'traffic', summary: 'Free operator report: requests by route template x HTTP status x UTC day, surfaces (x402 /api, RapidAPI /mkt/rapidapi, free/public), and a capped list of sanitized unmatched probe paths. HTML at /traffic.html. Not counted in its own totals. If TRAFFIC_REPORT_TOKEN is set on the server, send Authorization: Bearer. No IPs, headers, or payment payloads.', security: [], parameters: [
+        { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 30, default: 7 } }
+    ], responses: { '200': { description: 'Traffic JSON' }, '401': { description: 'TRAFFIC_REPORT_TOKEN is set and Authorization Bearer did not match' } } } };
     return {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { name: 'GW8', email: 'mariostefano3@gmail.com', url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
@@ -690,6 +693,8 @@ app.get('/stats.html', async (req, res) => {
         res.type('html').send(renderStatsHtml(s));
     } catch (e) { res.status(503).type('text').send('Stats temporarily unavailable, retry shortly.'); }
 });
+// Route x status report. Not an x402 route. Skipped by statsMiddleware so it does not count itself.
+mountTrafficReport(app);
 
 // Card-paid marketplace channels (RapidAPI / Apify). Off unless GW8 sets the channel env var on Render.
 mountMarketplace(app, signResponses);

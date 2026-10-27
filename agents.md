@@ -84,4 +84,4 @@ Example output (`/api/coin/BTC`, inside `signal`): `{"asOf":"…","name":"BTC","
 - POST /api/brief/weekly/subscribe ($0.25): 4 Monday briefs by webhook.
 
 ## Free
-`/api/sample`, `/api/brief/teaser`, `/api/seller/reputation/status`, `/track`, `/api/stats`, `/api/proof/pubkey`, `/api/receipt/verify`, `/llms.txt`, `/openapi.json`, `/.well-known/x402`.
+`/api/sample`, `/api/brief/teaser`, `/api/seller/reputation/status`, `/track`, `/api/stats`, `/api/traffic`, `/api/proof/pubkey`, `/api/receipt/verify`, `/llms.txt`, `/openapi.json`, `/.well-known/x402`.

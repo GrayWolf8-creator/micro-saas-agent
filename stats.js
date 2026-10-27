@@ -1,6 +1,8 @@
 // stats.js — free per-endpoint request counters. No PII: no IPs or raw headers; a user-agent is reduced to a
 // fixed bot name or "buyer" (buyers.js), and payer wallets are stored only as truncated SHA-256 ids.
 // Persistence: Upstash Redis REST via alerts.js helper; in-memory fallback. All keys expire (~35d) or are capped.
+// Traffic report (UTC route x status, surfaces, unmatched probes) lives at the bottom of this file and is
+// recorded from record(). It does not change the Mountain Time audience/conversion counters above.
 import crypto from 'crypto';
 import { redis, hasRedis } from './alerts.js';
 import { classifyUA, payerId, isOwnPayer, GRADER_ROUTES_PER_HOUR } from './buyers.js';
@@ -102,8 +104,8 @@ const PAID_PATHS = new Set([
     '/api/brief/weekly/subscribe',
 ]);
 
-/** Skip recording entirely (self + HTML view). */
-const SKIP = new Set(['/api/stats', '/stats.html', '/stats']);
+/** Skip recording entirely (self + HTML views). The traffic report must not count itself. */
+const SKIP = new Set(['/api/stats', '/stats.html', '/stats', '/api/traffic', '/traffic.html', '/traffic']);
 
 /** Home keep-warm: counted under meta, not route totals. */
 const HOME = '/';
@@ -169,6 +171,9 @@ export function record(method, path, statusCode, opts = {}) {
     try {
         const route = normalizeRoute(method, path);
         if (!route) return null;
+        // UTC route x status report. Separate store; a failure here must not drop the legacy tally.
+        try { recordTraffic(method, path, statusCode); }
+        catch (e) { console.error('[stats] traffic record failed', e && e.message); }
         const day = mtDate();
         // A safe-retry replay of an already-settled payment is not a second sale: tallied as "other", not paid.
         const cls = opts.replay ? 'replay' : opts.sample ? 'sample' : statusClass(statusCode);
@@ -394,7 +399,7 @@ export async function getStats(days = 1) {
         audience,
         meta: {
             homeKeepWarm: home,
-            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats and /stats.html are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0).',
+            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats, /stats.html, /api/traffic and /traffic.html are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0). Route x HTTP status (UTC) and unmatched probes: /api/traffic and /traffic.html.',
         },
     };
 }
@@ -601,7 +606,7 @@ ${audienceHtml(s.audience)}
   <th>Route</th><th>Req</th><th>402</th><th>Paid</th><th>Served</th><th>404</th><th>405</th><th>5xx</th>
 </tr></thead><tbody>${rows}</tbody></table>
 </div>
-<p class="note">${esc(s.meta.note)} · JSON: <a href="/api/stats">/api/stats</a> · md: <a href="/api/stats?format=md">?format=md</a></p>
+<p class="note">${esc(s.meta.note)} · JSON: <a href="/api/stats">/api/stats</a> · md: <a href="/api/stats?format=md">?format=md</a> · Route x status (UTC): <a href="/traffic.html">/traffic.html</a></p>
 </body></html>`;
 }
 
@@ -641,4 +646,493 @@ function conversionHtml(a) {
 
 function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ---------- Traffic report: route template x HTTP status x UTC day ----------
+// Separate from the Mountain Time audience counters above. Answers "which paths did the 62k requests hit?"
+// without storing IPs, headers, bodies, or payment payloads. Daily rollups use the same Upstash Redis when
+// configured (key gw8:traffic:v1:<YYYY-MM-DD>, 35-day TTL). sinceBoot is this process only.
+export const TRAFFIC_TOKEN_ENV = 'TRAFFIC_REPORT_TOKEN';
+export const TRAFFIC_LIMITS = { maxRoutes: 400, maxProbes: 50, maxDays: 35, probeLength: 80, maxRedisFields: 4000, top: 20 };
+const TRAFFIC_PREFIX = 'gw8:traffic:v1:';
+const TRAFFIC_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+const SURFACES = ['x402', 'rapidapi', 'public', 'unmatched'];
+const trafficExpire = new Set();
+const redisTarget = new Map(); // utc day -> Map of hash field -> field actually incremented (overflow remap)
+const trafficDays = new Map();
+
+function emptyTraffic() {
+    return { routes: new Map(), surfaces: new Map(), probes: new Map(), probeOverflow: 0, routeOverflow: 0 };
+}
+const bootStore = emptyTraffic();
+let bootStartedAt = new Date().toISOString();
+
+export function utcDate(d = new Date()) {
+    return d.toISOString().slice(0, 10);
+}
+
+function trafficMethod(method) {
+    const m = String(method || 'GET').toUpperCase();
+    return TRAFFIC_METHODS.has(m) ? m : 'OTHER';
+}
+
+function cleanPath(rawPath) {
+    let p = String(rawPath || '/').split('?')[0].split('#')[0];
+    if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+    p = p.replace(/\/{2,}/g, '/');
+    if (!p.startsWith('/')) p = '/' + p;
+    return p;
+}
+
+/** Route template for the traffic report. null = do not record (the report's own URLs). */
+export function normalizeTrafficRoute(method, rawPath) {
+    const legacy = normalizeRoute(method, rawPath);
+    if (!legacy) return null;
+    const m = trafficMethod(method);
+    const cleaned = cleanPath(rawPath);
+    const bare = cleaned.match(/^\/mkt\/(rapidapi|apify)$/i);
+    if (bare) return `${m} /mkt/${bare[1].toLowerCase()}`;
+    const legacyPath = pathOf(legacy);
+    const star = legacyPath.match(/^\/mkt\/(rapidapi|apify)\/\*$/);
+    if (!star) return `${m} ${legacyPath}`;
+    const channel = star[1];
+    const rest = cleaned.replace(new RegExp(`^/mkt/${channel}`, 'i'), '') || '/';
+    const asApi = '/api' + (rest.startsWith('/') ? rest : '/' + rest);
+    const api = normalizeRoute(method, asApi);
+    const apiPath = api ? pathOf(api) : 'other';
+    if (!api || apiPath === 'other') return `${m} /mkt/${channel}/*`;
+    const suffix = apiPath.replace(/^\/api/, '') || '/';
+    return `${m} /mkt/${channel}${suffix}`;
+}
+
+/** x402 paid /api routes, the RapidAPI gateway, free/public pages, or unmatched (no template). */
+export function surfaceOf(routePath) {
+    const p = String(routePath || '');
+    if (p === 'other') return 'unmatched';
+    if (p === '/mkt/rapidapi' || p === '/mkt/rapidapi/*' || p.startsWith('/mkt/rapidapi/')) return 'rapidapi';
+    if (PAID_PATHS.has(p)) return 'x402';
+    return 'public';
+}
+
+function statusKey(code) {
+    const c = Number(code);
+    if (!Number.isInteger(c) || c < 100 || c > 599) return 'other';
+    return String(c);
+}
+
+/**
+ * Raw unmatched path for the probe list. Query/hash stripped, truncated, secrets/ids/emails/IPs redacted.
+ * Not used as a lookup key for anything except this capped display list.
+ */
+export function sanitizeProbe(rawPath) {
+    let p = String(rawPath || '/').split('?')[0].split('#')[0];
+    try { p = decodeURIComponent(p); } catch { /* keep the raw slice */ }
+    p = p.replace(/[\u0000-\u001f\u007f]/g, '');
+    p = p.replace(/\\/g, '/');
+    if (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+    p = p.replace(/\/{2,}/g, '/');
+    if (!p.startsWith('/')) p = '/' + p;
+    p = p.replace(/(?:sk|pk|rk|ak)-[A-Za-z0-9_-]{8,}/g, ':redacted');
+    p = p.replace(/(api[_-]?key|secret|token|bearer|password|passwd|authorization)[=:][^/?#\s]*/gi, '$1=:redacted');
+    p = p.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, ':email');
+    p = p.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, ':ip');
+    p = p.replace(/\b(?:[a-f0-9]{0,4}:){2,7}[a-f0-9]{0,4}\b/gi, ':ip');
+    p = p.replace(/0x[a-fA-F0-9]{8,}/g, ':hex');
+    // Per path segment only. A slash must stay so /wp-admin/... remains visible.
+    p = p.replace(/[A-Za-z0-9+=_-]{20,}/g, ':redacted');
+    p = p.replace(/\|/g, '/');
+    if (p.length > TRAFFIC_LIMITS.probeLength) p = p.slice(0, TRAFFIC_LIMITS.probeLength);
+    return p || '/';
+}
+
+function addCount(map, key, status, n) {
+    let m = map.get(key);
+    if (!m) { m = new Map(); map.set(key, m); }
+    m.set(status, (m.get(status) || 0) + n);
+}
+
+function bumpRoute(store, route, status) {
+    if (store.routes.has(route)) { addCount(store.routes, route, status, 1); return true; }
+    if (store.routes.size >= TRAFFIC_LIMITS.maxRoutes) { store.routeOverflow += 1; return false; }
+    addCount(store.routes, route, status, 1);
+    return true;
+}
+
+function bumpSurface(store, surface, status) {
+    addCount(store.surfaces, surface, status, 1);
+}
+
+function bumpProbe(store, probe) {
+    if (store.probes.has(probe)) { store.probes.set(probe, store.probes.get(probe) + 1); return true; }
+    if (store.probes.size >= TRAFFIC_LIMITS.maxProbes) { store.probeOverflow += 1; return false; }
+    store.probes.set(probe, 1);
+    return true;
+}
+
+function dayStore(day) {
+    let s = trafficDays.get(day);
+    if (!s) {
+        s = emptyTraffic();
+        trafficDays.set(day, s);
+        while (trafficDays.size > TRAFFIC_LIMITS.maxDays) {
+            const oldest = [...trafficDays.keys()].sort()[0];
+            trafficDays.delete(oldest);
+            redisTarget.delete(oldest);
+        }
+    }
+    return s;
+}
+
+/** Count one finished request. Never throws. Returns the traffic route key, or null when skipped. */
+export function recordTraffic(method, rawPath, statusCode) {
+    const route = normalizeTrafficRoute(method, rawPath);
+    if (!route) return null;
+    const status = statusKey(statusCode);
+    const surface = surfaceOf(pathOf(route));
+    const probe = surface === 'unmatched' ? sanitizeProbe(rawPath) : null;
+    const day = utcDate();
+    bumpRoute(bootStore, route, status);
+    bumpSurface(bootStore, surface, status);
+    if (probe) bumpProbe(bootStore, probe);
+    const dayHit = dayStore(day);
+    const routeStored = bumpRoute(dayHit, route, status);
+    bumpSurface(dayHit, surface, status);
+    const probeStored = probe ? bumpProbe(dayHit, probe) : false;
+    if (hasRedis()) {
+        persistTraffic(day, route, status, surface, probe, routeStored, probeStored)
+            .catch(e => console.error('[stats] traffic redis failed', e && e.message));
+    }
+    return route;
+}
+
+async function hincr(key, day, field) {
+    let mapped = redisTarget.get(day);
+    if (!mapped) { mapped = new Map(); redisTarget.set(day, mapped); }
+    let target = mapped.get(field);
+    if (!target) {
+        target = field;
+        let exists = 0;
+        try { exists = await redis(['HEXISTS', key, field]); } catch { exists = 0; }
+        if (!exists) {
+            let len = 0;
+            try { len = Number(await redis(['HLEN', key])) || 0; } catch { len = 0; }
+            if (len >= TRAFFIC_LIMITS.maxRedisFields && !field.startsWith('s|') && !field.startsWith('o|')) {
+                target = field.startsWith('p|') ? 'o|probes' : 'o|routes';
+            }
+        }
+        mapped.set(field, target);
+    }
+    await redis(['HINCRBY', key, target, 1]);
+}
+
+async function persistTraffic(day, route, status, surface, probe, routeStored, probeStored) {
+    const key = TRAFFIC_PREFIX + day;
+    await hincr(key, day, routeStored ? `r|${route}|${status}` : 'o|routes');
+    await hincr(key, day, `s|${surface}|${status}`);
+    if (probe) await hincr(key, day, probeStored ? `p|${encodeURIComponent(probe)}` : 'o|probes');
+    if (!trafficExpire.has(day)) {
+        trafficExpire.add(day);
+        try { await redis(['EXPIRE', key, TTL_SEC]); } catch { /* ignore */ }
+    }
+}
+
+function countMap(m) {
+    const byStatus = {};
+    let requests = 0;
+    for (const [st, n] of m) {
+        const c = Number(n) || 0;
+        if (c <= 0) continue;
+        byStatus[st] = c;
+        requests += c;
+    }
+    return { requests, byStatus };
+}
+
+function capMap(map, max, overflowName, store) {
+    if (map.size <= max) return;
+    const ranked = [...map.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+    const keep = ranked.slice(0, max);
+    const drop = ranked.slice(max);
+    map.clear();
+    for (const [k, n] of keep) map.set(k, n);
+    const extra = drop.reduce((s, [, n]) => s + (Number(n) || 0), 0);
+    store[overflowName] += extra;
+}
+
+function summarize(store) {
+    const view = { probes: new Map(store.probes), probeOverflow: store.probeOverflow, routeOverflow: store.routeOverflow };
+    capMap(view.probes, TRAFFIC_LIMITS.maxProbes, 'probeOverflow', view);
+    const surfaces = {};
+    let requests = 0;
+    const byStatus = {};
+    for (const name of SURFACES) {
+        const c = countMap(store.surfaces.get(name) || new Map());
+        surfaces[name] = c;
+        requests += c.requests;
+        for (const [st, n] of Object.entries(c.byStatus)) byStatus[st] = (byStatus[st] || 0) + n;
+    }
+    const routes = [...store.routes.entries()].map(([route, m]) => ({ route, ...countMap(m) }))
+        .sort((a, b) => b.requests - a.requests || a.route.localeCompare(b.route));
+    const top = (code) => routes
+        .map(r => ({ route: r.route, count: r.byStatus[code] || 0 }))
+        .filter(r => r.count > 0)
+        .sort((a, b) => b.count - a.count || a.route.localeCompare(b.route))
+        .slice(0, TRAFFIC_LIMITS.top);
+    const unmatchedProbes = [...view.probes.entries()]
+        .map(([path, count]) => ({ path, count }))
+        .sort((a, b) => b.count - a.count || a.path.localeCompare(b.path))
+        .slice(0, TRAFFIC_LIMITS.top);
+    return {
+        requests,
+        byStatus,
+        surfaces,
+        routes,
+        topRoutes: { '200': top('200'), '402': top('402'), '404': top('404') },
+        unmatchedProbes,
+        probesTracked: view.probes.size,
+        probeOverflow: view.probeOverflow,
+        routeOverflow: view.routeOverflow,
+    };
+}
+
+function utcDays(n) {
+    const out = [];
+    const start = Date.parse(utcDate() + 'T00:00:00Z');
+    for (let i = 0; i < n; i++) out.push(utcDate(new Date(start - i * 86400000)));
+    return out;
+}
+
+function clampDays(days, fallback) {
+    const n = parseInt(days, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(1, Math.min(30, n));
+}
+
+function acceptableStatus(st) {
+    return st === 'other' || /^[1-5][0-9]{2}$/.test(st);
+}
+
+function parseTrafficHash(flat) {
+    const store = emptyTraffic();
+    for (const [field, n] of toMap(flat)) {
+        if (!(n > 0) || typeof field !== 'string') continue;
+        const i = field.indexOf('|');
+        if (i < 1) continue;
+        const kind = field.slice(0, i);
+        const rest = field.slice(i + 1);
+        if (kind === 'o') {
+            if (rest === 'probes') store.probeOverflow += n;
+            else if (rest === 'routes' || rest === 'dropped') store.routeOverflow += n;
+            continue;
+        }
+        if (kind === 's') {
+            const j = rest.lastIndexOf('|');
+            if (j < 1) continue;
+            const surface = rest.slice(0, j);
+            const status = rest.slice(j + 1);
+            if (!SURFACES.includes(surface) || !acceptableStatus(status)) continue;
+            addCount(store.surfaces, surface, status, n);
+            continue;
+        }
+        if (kind === 'r') {
+            const j = rest.lastIndexOf('|');
+            if (j < 1) continue;
+            const route = rest.slice(0, j);
+            const status = rest.slice(j + 1);
+            if (!acceptableStatus(status) || route.length > 160 || !/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|OTHER) \//.test(route)) continue;
+            if (store.routes.size >= TRAFFIC_LIMITS.maxRoutes && !store.routes.has(route)) { store.routeOverflow += n; continue; }
+            addCount(store.routes, route, status, n);
+            continue;
+        }
+        if (kind === 'p') {
+            let path = rest;
+            try { path = decodeURIComponent(rest); } catch { /* keep */ }
+            const clean = sanitizeProbe(path);
+            if (store.probes.size >= TRAFFIC_LIMITS.maxProbes && !store.probes.has(clean)) { store.probeOverflow += n; continue; }
+            store.probes.set(clean, (store.probes.get(clean) || 0) + n);
+        }
+    }
+    return store;
+}
+
+async function loadTrafficDay(day) {
+    if (hasRedis()) {
+        try {
+            const flat = await redis(['HGETALL', TRAFFIC_PREFIX + day]);
+            return parseTrafficHash(flat);
+        } catch (e) {
+            console.error('[stats] traffic redis read failed, using memory', e && e.message);
+        }
+    }
+    return trafficDays.get(day) || emptyTraffic();
+}
+
+export function trafficGateEnabled() {
+    return String(process.env[TRAFFIC_TOKEN_ENV] || '').trim().length > 0;
+}
+
+/** Public when TRAFFIC_REPORT_TOKEN is unset. Otherwise Authorization: Bearer must match. Query tokens are ignored. */
+export function trafficAuthorized(req) {
+    const expected = String(process.env[TRAFFIC_TOKEN_ENV] || '').trim();
+    if (!expected) return true;
+    const header = String((req && req.headers && (req.headers.authorization || req.headers.Authorization)) || '');
+    const m = /^Bearer\s+(\S+)\s*$/i.exec(header);
+    const given = m ? m[1].slice(0, 512) : '';
+    if (expected.length > 512) return false;
+    const a = crypto.createHash('sha256').update(expected).digest();
+    const b = crypto.createHash('sha256').update(given).digest();
+    return crypto.timingSafeEqual(a, b);
+}
+
+export async function getTrafficReport(days = 7) {
+    const n = clampDays(days, 7);
+    const dates = utcDays(n);
+    const daily = [];
+    for (const date of dates) daily.push({ date, ...summarize(await loadTrafficDay(date)) });
+    const redisOn = hasRedis();
+    return {
+        asOf: new Date().toISOString(),
+        timezone: 'UTC',
+        startedAt: bootStartedAt,
+        store: redisOn ? 'upstash-redis' : 'memory',
+        access: {
+            mode: trafficGateEnabled() ? 'token' : 'public',
+            env: TRAFFIC_TOKEN_ENV,
+            note: trafficGateEnabled()
+                ? 'Authorization: Bearer must match TRAFFIC_REPORT_TOKEN. The token is not included in this report. Query strings are not accepted.'
+                : 'Public, same sensitivity as /api/stats. Set TRAFFIC_REPORT_TOKEN in the Render environment to require Authorization: Bearer. Do not commit the value and do not pass it as a query parameter.',
+        },
+        days: n,
+        dates,
+        sinceBoot: summarize(bootStore),
+        daily,
+        limits: { maxRoutes: TRAFFIC_LIMITS.maxRoutes, maxProbes: TRAFFIC_LIMITS.maxProbes, probeLength: TRAFFIC_LIMITS.probeLength },
+        reset: {
+            sinceBoot: 'In-memory for this process only. Clears when the Render service restarts, redeploys, or sleeps (free instances spin down).',
+            daily: redisOn
+                ? 'Per-UTC-day rollups are in Upstash Redis (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN), key prefix gw8:traffic:v1:, kept about 35 days. They survive a restart. sinceBoot does not, so a day total can be higher than sinceBoot after a restart.'
+                : 'Upstash Redis is not configured, so daily rollups are in-memory and clear on restart, same as sinceBoot.',
+        },
+        note: 'Counts are normalized route templates (ids collapsed, query strings dropped) by HTTP status and UTC day. Surfaces: x402 = paid /api routes, rapidapi = /mkt/rapidapi, public = free pages, free /api routes, MCP, and /mkt/apify, unmatched = no template (scanner probes). GET / is included and picks up platform keep-warm pings (the audience report still parks those under meta.homeKeepWarm). Unmatched paths are truncated and sanitized; once 50 distinct paths are stored, further new paths increment probeOverflow without the raw path. /api/traffic, /traffic.html, /api/stats and /stats.html are not counted. No IPs, headers, bodies, or payment payloads are stored.',
+    };
+}
+
+function fmt(n) { return Number(n || 0).toLocaleString('en-US'); }
+
+function statusCells(by) {
+    const b = by || {};
+    return `<td>${fmt(b['200'])}</td><td>${fmt(b['402'])}</td><td>${fmt(b['404'])}</td>`;
+}
+
+function topTable(rows, empty) {
+    if (!rows || !rows.length) return `<p class="note">${empty}</p>`;
+    return `<table><thead><tr><th>Route</th><th>Count</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.route)}</td><td>${fmt(r.count)}</td></tr>`).join('')}</tbody></table>`;
+}
+
+export function renderTrafficHtml(report) {
+    const s = report.sinceBoot;
+    const surfRows = SURFACES.map(name => {
+        const c = s.surfaces[name] || { requests: 0, byStatus: {} };
+        const label = name === 'x402' ? 'x402 /api' : name === 'rapidapi' ? 'RapidAPI /mkt/rapidapi' : name === 'public' ? 'free / public' : 'unmatched';
+        return `<tr><td>${label}</td><td>${fmt(c.requests)}</td>${statusCells(c.byStatus)}</tr>`;
+    }).join('');
+    const routeRows = s.routes.slice(0, 40).map(r => `<tr><td>${esc(r.route)}</td><td>${fmt(r.requests)}</td>${statusCells(r.byStatus)}</tr>`).join('')
+        || `<tr><td colspan="5"><em>none yet</em></td></tr>`;
+    const probes = s.unmatchedProbes.map(p => `<tr><td><code>${esc(p.path)}</code></td><td>${fmt(p.count)}</td></tr>`).join('')
+        || `<tr><td colspan="2"><em>none yet</em></td></tr>`;
+    const dayRows = report.daily.map(d => `<tr><td>${esc(d.date)}</td><td>${fmt(d.requests)}</td>${statusCells(d.byStatus)}<td>${fmt(d.surfaces.x402.requests)}</td><td>${fmt(d.surfaces.rapidapi.requests)}</td><td>${fmt(d.surfaces.public.requests)}</td><td>${fmt(d.surfaces.unmatched.requests)}</td><td>${fmt(d.unmatchedProbes.length)}</td></tr>`).join('');
+    const dayDetail = report.daily.map(d => `<h2>${esc(d.date)} UTC</h2>
+<div class="card"><p>${fmt(d.requests)} requests · showing ${d.unmatchedProbes.length} of ${fmt(d.probesTracked)} tracked probe paths${d.probeOverflow ? ` · ${fmt(d.probeOverflow)} unmatched requests not stored as paths` : ''}</p>
+<div class="cols">
+  <div><h3>Top 200</h3>${topTable(d.topRoutes['200'], 'No 200s.')}</div>
+  <div><h3>Top 402</h3>${topTable(d.topRoutes['402'], 'No 402s.')}</div>
+  <div><h3>Top 404</h3>${topTable(d.topRoutes['404'], 'No 404s.')}</div>
+</div>
+${d.unmatchedProbes.length ? `<h3>Unmatched probes</h3><table><thead><tr><th>Path</th><th>Count</th></tr></thead><tbody>${d.unmatchedProbes.map(p => `<tr><td><code>${esc(p.path)}</code></td><td>${fmt(p.count)}</td></tr>`).join('')}</tbody></table>` : ''}
+</div>`).join('');
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="robots" content="noindex"/>
+<title>GW8 traffic</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;background:#0b1220;color:#e2e8f0;margin:0;padding:16px;line-height:1.45}
+  h1{font-size:1.25rem;margin:0 0 8px} h2{font-size:1rem;margin:22px 0 8px;color:#94a3b8} h3{font-size:.85rem;margin:12px 0 6px;color:#cbd5e1}
+  .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:12px;margin:8px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+  .cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  .n{font-size:1.4rem;font-weight:700;color:#22c55e} .l{font-size:.75rem;color:#94a3b8}
+  table{width:100%;border-collapse:collapse;font-size:.85rem} th,td{text-align:left;padding:6px 4px;border-bottom:1px solid #1f2937;vertical-align:top}
+  th{color:#94a3b8;font-weight:600} td:not(:first-child),th:not(:first-child){text-align:right}
+  a{color:#38bdf8} code{font-size:.8rem;word-break:break-all} .note{font-size:.8rem;color:#94a3b8}
+</style></head><body>
+<h1>GW8 request traffic</h1>
+<p class="note">UTC · ${esc(report.store)} · process started ${esc(report.startedAt)} · ${esc(report.asOf)}</p>
+<p><a href="?days=1">1 day</a> · <a href="?days=7">7 days</a> · <a href="?days=30">30 days</a> · <a href="/api/traffic?days=${report.days}">JSON</a> · <a href="/stats.html">audience stats</a></p>
+<div class="card"><p class="note"><strong>Reset.</strong> ${esc(report.reset.sinceBoot)} ${esc(report.reset.daily)}</p>
+<p class="note">${esc(report.access.note)}</p></div>
+<h2>Since boot</h2>
+<div class="card grid">
+  <div><div class="n">${fmt(s.requests)}</div><div class="l">Requests</div></div>
+  <div><div class="n">${fmt(s.byStatus['200'])}</div><div class="l">200</div></div>
+  <div><div class="n">${fmt(s.byStatus['402'])}</div><div class="l">402</div></div>
+  <div><div class="n">${fmt(s.byStatus['404'])}</div><div class="l">404</div></div>
+  <div><div class="n">${fmt(s.surfaces.unmatched.requests)}</div><div class="l">Unmatched</div></div>
+</div>
+<h2>Surfaces since boot</h2>
+<div class="card" style="overflow-x:auto"><table><thead><tr><th>Surface</th><th>Requests</th><th>200</th><th>402</th><th>404</th></tr></thead><tbody>${surfRows}</tbody></table></div>
+<h2>Top routes since boot</h2>
+<div class="card cols">
+  <div><h3>200</h3>${topTable(s.topRoutes['200'], 'No 200s yet.')}</div>
+  <div><h3>402</h3>${topTable(s.topRoutes['402'], 'No 402s yet.')}</div>
+  <div><h3>404</h3>${topTable(s.topRoutes['404'], 'No 404s yet.')}</div>
+</div>
+<h2>Unmatched probes since boot</h2>
+<div class="card" style="overflow-x:auto"><table><thead><tr><th>Path</th><th>Count</th></tr></thead><tbody>${probes}</tbody></table>
+<p class="note">${s.probeOverflow ? fmt(s.probeOverflow) + ' more unmatched requests were counted without storing the path (cap ' + TRAFFIC_LIMITS.maxProbes + '). ' : ''}Paths are truncated to ${TRAFFIC_LIMITS.probeLength} characters. Query strings, tokens, emails and IP-shaped segments are removed.</p></div>
+<h2>All routes since boot</h2>
+<div class="card" style="overflow-x:auto"><table><thead><tr><th>Route</th><th>Requests</th><th>200</th><th>402</th><th>404</th></tr></thead><tbody>${routeRows}</tbody></table>
+<p class="note">${s.routes.length > 40 ? 'Showing 40 of ' + s.routes.length + '. Full list is in the JSON.' : ''} ${s.routeOverflow ? fmt(s.routeOverflow) + ' requests landed on routes past the ' + TRAFFIC_LIMITS.maxRoutes + ' key cap and are not listed.' : ''}</p></div>
+<h2>Per day</h2>
+<div class="card" style="overflow-x:auto"><table><thead><tr><th>UTC day</th><th>Requests</th><th>200</th><th>402</th><th>404</th><th>x402</th><th>RapidAPI</th><th>public</th><th>unmatched</th><th>probe paths</th></tr></thead><tbody>${dayRows}</tbody></table></div>
+${dayDetail}
+<p class="note">${esc(report.note)}</p>
+</body></html>`;
+}
+
+/** JSON + HTML. Not an x402 route. The middleware skips these paths. */
+export function mountTrafficReport(app) {
+    const send = async (req, res, html) => {
+        res.set('Cache-Control', 'private, no-store');
+        res.set('X-Robots-Tag', 'noindex');
+        if (!trafficAuthorized(req)) {
+            res.set('WWW-Authenticate', 'Bearer');
+            return html
+                ? res.status(401).type('text').send('unauthorized')
+                : res.status(401).json({ error: 'unauthorized' });
+        }
+        try {
+            const report = await getTrafficReport(req.query && req.query.days);
+            if (html) return res.type('html').send(renderTrafficHtml(report));
+            return res.json(report);
+        } catch (e) {
+            console.error('[stats] traffic report failed', e && e.message);
+            return html
+                ? res.status(503).type('text').send('Traffic report temporarily unavailable, retry shortly.')
+                : res.status(503).json({ error: 'traffic report unavailable, retry shortly' });
+        }
+    };
+    app.get('/api/traffic', (req, res, next) => { send(req, res, false).catch(next); });
+    app.get('/traffic.html', (req, res, next) => { send(req, res, true).catch(next); });
+}
+
+export function _resetTrafficForTests() {
+    bootStartedAt = new Date().toISOString();
+    bootStore.routes.clear();
+    bootStore.surfaces.clear();
+    bootStore.probes.clear();
+    bootStore.probeOverflow = 0;
+    bootStore.routeOverflow = 0;
+    trafficDays.clear();
+    trafficExpire.clear();
+    redisTarget.clear();
 }

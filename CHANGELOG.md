@@ -12,6 +12,12 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Request traffic report (2026-10-27)
+- `GET /api/traffic` and `GET /traffic.html`: route template x HTTP status x UTC day, surfaces (x402 `/api`, RapidAPI `/mkt/rapidapi`, free/public), and a capped sanitized list of unmatched probe paths (`/.env`, `/wp-admin`, and the rest). Extends `stats.js`; the Mountain Time audience/conversion counters are unchanged.
+- Not on the x402 paywall. These URLs are not counted in the report. No IPs, headers, bodies, or payment payloads are stored.
+- Since-boot totals are in-memory and clear on restart. Daily rollups use Upstash Redis when `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set (about 35 days); otherwise daily totals also clear on restart.
+- Optional gate: set `TRAFFIC_REPORT_TOKEN` in the Render environment (do not commit a value). When set, send `Authorization: Bearer <token>`. When unset, the report is public, same as `/api/stats`.
+
 ### Value-capture score, growth-lane screen, and quote conversion (2026-10-27)
 - Paid value-capture routes: `GET /api/value/:symbol` ($0.015), `GET /api/value` ($0.03), `GET /api/value/:symbol/history` ($0.07), plus free `GET /api/value/status`. Paid growth-lane routes: `GET /api/growth/:chain` ($0.015), `GET /api/growth` ($0.03), `GET /api/growth/history` ($0.07), plus free `GET /api/growth/status`. Public DefiLlama and Kraken data only. Every payload has `disclaimer` and `sources`. Missing supply, unlock and RWA figures stay null.
 - Day pass is listed first on 402 bodies, `/.well-known/x402`, OpenAPI 402 descriptions and `/llms.txt`, with "best value if you call more than N times" computed from current prices.

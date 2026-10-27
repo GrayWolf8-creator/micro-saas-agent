@@ -8,8 +8,8 @@
       "type": "string",
       "description": "Which feed to fetch. One result (and one charge) per successful call.",
       "editor": "select",
-      "enum": ["govcontracts", "flows", "brief", "regime", "dots", "coin", "verdict", "rwa", "kraken-listings", "rules", "history"],
-      "enumTitles": ["Federal contract awards (14 days)", "Kraken large-print flows + WaveTrend (per symbol)", "Daily crypto brief", "Crypto market regime score", "WaveTrend band dots (66 pairs)", "WaveTrend 4h snapshot (per symbol)", "Token safety verdict", "Tokenized RWA flows", "Kraken new USD listings", "CFTC + SEC crypto rule changes", "90-day dot hit-rate backtest"],
+      "enum": ["govcontracts", "flows", "brief", "regime", "dots", "coin", "verdict", "rwa", "kraken-listings", "rules", "history", "value", "value-batch", "value-history", "growth-chain", "growth", "growth-history"],
+      "enumTitles": ["Federal contract awards (14 days)", "Kraken large-print flows + WaveTrend (per symbol)", "Daily crypto brief", "Crypto market regime score", "WaveTrend band dots (66 pairs)", "WaveTrend 4h snapshot (per symbol)", "Token safety verdict", "Tokenized RWA flows", "Kraken new USD listings", "CFTC + SEC crypto rule changes", "90-day dot hit-rate backtest", "Value-capture score (per symbol, default BNB)", "Value-capture screen", "Value-capture weekly history", "Growth-lane one chain or app", "Growth-lane screen", "Growth-lane weekly history"],
       "default": "govcontracts"
     },
     "symbols": {
@@ -24,7 +24,16 @@
     "q": { "title": "Keyword (govcontracts)", "type": "string", "description": "Optional free-text filter, e.g. NASA", "editor": "textfield" },
     "chain": { "title": "Chain (verdict)", "type": "string", "description": "Blockchain the token lives on (verdict only).", "editor": "select", "enum": ["base", "ethereum", "bsc", "arbitrum", "solana"], "default": "base" },
     "address": { "title": "Token address (verdict)", "type": "string", "description": "Token contract address to check (verdict only).", "editor": "textfield" },
-    "pair": { "title": "Pair (history)", "type": "string", "description": "Optional coin symbol, e.g. BTC", "editor": "textfield" }
+    "pair": { "title": "Pair (history)", "type": "string", "description": "Optional coin symbol, e.g. BTC", "editor": "textfield" },
+    "weeks": { "title": "Weeks (value-history / growth-history)", "type": "integer", "description": "1-52, default 12", "editor": "number", "minimum": 1, "maximum": 52 },
+    "sort": { "title": "Sort (value-batch)", "type": "string", "description": "score, yield or netSupply90d", "editor": "select", "enum": ["score", "yield", "netSupply90d"] },
+    "minScore": { "title": "Minimum score (value-batch)", "type": "number", "description": "0-100", "editor": "number", "minimum": 0, "maximum": 100 },
+    "growthChain": { "title": "Chain or app (growth-chain)", "type": "string", "description": "DefiLlama slug or ticker, e.g. solana or SOL. Not the verdict chain list.", "editor": "textfield", "default": "solana" },
+    "kind": { "title": "Kind (growth)", "type": "string", "description": "chain, app or all", "editor": "select", "enum": ["chain", "app", "all"] },
+    "minRulesPassed": { "title": "Minimum rules passed (growth)", "type": "integer", "description": "0-4", "editor": "number", "minimum": 0, "maximum": 4 },
+    "triggerOnly": { "title": "Relative-return flag only (growth)", "type": "boolean", "description": "Keep rows where the relative-return rule passed", "editor": "checkbox" },
+    "minTvlUsd": { "title": "Minimum TVL USD (growth)", "type": "number", "description": "Default 50000000. Rows with unknown TVL are kept.", "editor": "number" },
+    "window": { "title": "Window (growth)", "type": "string", "description": "90d only in this version", "editor": "textfield", "default": "90d" }
   },
   "required": ["endpoint"]
 }

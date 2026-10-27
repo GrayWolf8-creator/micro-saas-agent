@@ -8,7 +8,9 @@ const BASE = process.env.GW8_API_BASE || 'https://micro-saas-agent.onrender.com/
 const EVENTS = {
   coin: 'lite-result', regime: 'standard-result', dots: 'standard-result', verdict: 'standard-result', govcontracts: 'standard-result',
   brief: 'premium-result', flows: 'premium-result', rwa: 'premium-result', 'kraken-listings': 'premium-result', rules: 'premium-result',
-  history: 'history-result'
+  history: 'history-result',
+  value: 'value-standard', 'value-batch': 'value-premium', 'value-history': 'value-history',
+  'growth-chain': 'growth-standard', growth: 'growth-premium', 'growth-history': 'growth-history'
 };
 const MAX_SYMBOLS = 10;
 
@@ -25,6 +27,18 @@ function paths(input) {
     case 'history': return [{ path: `/history${qs({ pair: input.pair })}` }];
     case 'kraken-listings': return [{ path: '/kraken/listings' }];
     case 'brief': case 'regime': case 'dots': case 'rwa': case 'rules': return [{ path: `/${e}` }];
+    case 'value': {
+      const vs = (input.symbols && input.symbols.length ? input.symbols : ['BNB']).slice(0, 25).map(s => String(s).trim().toUpperCase()).filter(Boolean);
+      return vs.map(s => ({ symbol: s, path: `/value/${encodeURIComponent(s)}` }));
+    }
+    case 'value-batch': return [{ path: `/value${qs({ symbols: (input.symbols || []).join(','), sort: input.sort, minScore: input.minScore })}` }];
+    case 'value-history': {
+      const s = String((input.symbols && input.symbols[0]) || 'BNB').trim().toUpperCase();
+      return [{ symbol: s, path: `/value/${encodeURIComponent(s)}/history${qs({ weeks: input.weeks })}` }];
+    }
+    case 'growth-chain': return [{ path: `/growth/${encodeURIComponent(input.growthChain || 'solana')}` }];
+    case 'growth': return [{ path: `/growth${qs({ kind: input.kind, minRulesPassed: input.minRulesPassed, triggerOnly: input.triggerOnly, minTvlUsd: input.minTvlUsd, window: input.window })}` }];
+    case 'growth-history': return [{ path: `/growth/history${qs({ weeks: input.weeks, kind: input.kind, minRulesPassed: input.minRulesPassed, triggerOnly: input.triggerOnly, minTvlUsd: input.minTvlUsd, window: input.window })}` }];
     default: throw new Error(`unknown endpoint: ${e}`);
   }
 }

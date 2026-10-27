@@ -12,6 +12,8 @@ import { getRwa } from './rwa.js';
 import { getKrakenListings } from './kraken.js';
 import { getRules } from './rules.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS } from './gov.js';
+import { getValueSymbol, getValueBatch, getValueHistory, getValueStatus, parseValueQuery, parseWeeks, findCoin } from './value.js';
+import { getGrowthOne, getGrowthList, getGrowthHistory, getGrowthStatus, parseGrowthQuery, findGrowth } from './growth.js';
 
 export const CHANNELS = {
   rapidapi: { env: 'RAPIDAPI_PROXY_SECRET', header: 'x-rapidapi-proxy-secret', label: 'MARKETPLACE_RAPIDAPI' },
@@ -53,7 +55,13 @@ export function marketplaceGate(req, res, next) {
 async function serve(res, deliver) {
   let out;
   try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
-  if (!out || out.error) return res.status(503).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly' });
+  if (!out || out.error) {
+    const status = out && Number(out.http) >= 400 && Number(out.http) < 600 ? Number(out.http) : 503;
+    const body = { error: (out && out.error) || 'upstream data unavailable, retry shortly' };
+    if (out && out.sourceStatus) body.sourceStatus = out.sourceStatus;
+    if (out && out.unknown) body.unknown = out.unknown;
+    return res.status(status).json(body);
+  }
   return res.json({ status: 'success', accessType: res.locals.gw8Channel, timestamp: new Date().toISOString(), signal: out, disclaimer: DISCLAIMER });
 }
 const symOk = s => COINS.includes(s);
@@ -96,5 +104,40 @@ export function mountMarketplace(app, signResponses) {
   app.get(`${base}/rwa`, gated, (req, res) => serve(res, getRwa));
   app.get(`${base}/kraken/listings`, gated, (req, res) => serve(res, getKrakenListings));
   app.get(`${base}/rules`, gated, (req, res) => serve(res, getRules));
+  app.get(`${base}/value/status`, gated, (req, res) => serve(res, getValueStatus));
+  app.get(`${base}/value/:symbol/history`, gated, (req, res) => {
+    const sym = String(req.params.symbol || '').toUpperCase();
+    const weeks = parseWeeks(req.query.weeks);
+    if (!findCoin(sym)) return res.status(404).json({ error: 'unknown symbol' });
+    if (weeks.error) return res.status(400).json({ error: weeks.error });
+    return serve(res, () => getValueHistory(sym, weeks.weeks));
+  });
+  app.get(`${base}/value/:symbol`, gated, (req, res) => {
+    const sym = String(req.params.symbol || '').toUpperCase();
+    if (!findCoin(sym)) return res.status(404).json({ error: 'unknown symbol' });
+    return serve(res, () => getValueSymbol(sym));
+  });
+  app.get(`${base}/value`, gated, (req, res) => {
+    const q = parseValueQuery(req.query);
+    if (q.error) return res.status(400).json({ error: q.error });
+    return serve(res, () => getValueBatch(q));
+  });
+  app.get(`${base}/growth/status`, gated, (req, res) => serve(res, getGrowthStatus));
+  app.get(`${base}/growth/history`, gated, (req, res) => {
+    const weeks = parseWeeks(req.query.weeks);
+    const q = parseGrowthQuery(req.query);
+    if (weeks.error) return res.status(400).json({ error: weeks.error });
+    if (q.error) return res.status(q.http || 400).json({ error: q.error });
+    return serve(res, () => getGrowthHistory(q, weeks.weeks));
+  });
+  app.get(`${base}/growth/:chain`, gated, (req, res) => {
+    if (!findGrowth(req.params.chain)) return res.status(404).json({ error: 'unknown chain' });
+    return serve(res, () => getGrowthOne(req.params.chain));
+  });
+  app.get(`${base}/growth`, gated, (req, res) => {
+    const q = parseGrowthQuery(req.query);
+    if (q.error) return res.status(q.http || 400).json({ error: q.error });
+    return serve(res, () => getGrowthList(q));
+  });
   app.all(`${base}/*rest`, marketplaceGate, (req, res) => res.status(404).json({ error: 'unknown endpoint' }));
 }

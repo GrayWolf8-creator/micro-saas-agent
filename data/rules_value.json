@@ -1,0 +1,158 @@
+{
+  "reviewed": "2026-10-01",
+  "note": "Hand-curated rule classes from public docs. Confidence is low because a person classified them. Supply percentages are null until a sourced series exists; they are not estimated.",
+  "coins": [
+    {
+      "symbol": "BNB", "name": "BNB", "geckoId": "binancecoin", "krakenPair": "BNBUSD",
+      "fees": [{ "slug": "bsc", "kind": "chain" }],
+      "usageBypass": { "class": "required", "note": "Gas on BNB Chain is paid in BNB.", "source": "https://docs.bnbchain.org/bnb-smart-chain/intro/" },
+      "burnVsHeld": { "class": "burned", "programEndDate": null, "note": "A portion of fees is destroyed in real time and on a published schedule.", "source": "https://www.bnbchain.org/en/bnb" }
+    },
+    {
+      "symbol": "ETH", "name": "Ether", "geckoId": "ethereum", "krakenPair": "ETHUSD",
+      "fees": [{ "slug": "ethereum", "kind": "chain" }],
+      "usageBypass": { "class": "required", "note": "Gas is paid in ETH and the base fee is destroyed.", "source": "https://ethereum.org/developers/docs/gas/" },
+      "burnVsHeld": { "class": "burned", "programEndDate": null, "note": "The base fee is destroyed rather than retained.", "source": "https://ethereum.org/developers/docs/gas/" }
+    },
+    {
+      "symbol": "SOL", "name": "Solana", "geckoId": "solana", "krakenPair": "SOLUSD",
+      "fees": [{ "slug": "solana", "kind": "chain" }],
+      "usageBypass": { "class": "required", "note": "Network fees are paid in SOL.", "source": "https://solana.com/docs/core/fees" },
+      "burnVsHeld": { "class": "burned", "programEndDate": null, "note": "Half of each transaction fee is destroyed.", "source": "https://solana.com/docs/core/fees" }
+    },
+    {
+      "symbol": "XRP", "name": "XRP", "geckoId": "ripple", "krakenPair": "XRPUSD",
+      "fees": [],
+      "usageBypass": { "class": "required", "note": "A transaction fee is paid in XRP and destroyed.", "source": "https://xrpl.org/docs/concepts/transactions/transaction-cost" },
+      "burnVsHeld": { "class": "burned", "programEndDate": null, "note": "The transaction fee is destroyed.", "source": "https://xrpl.org/docs/concepts/transactions/transaction-cost" }
+    },
+    {
+      "symbol": "CAKE", "name": "PancakeSwap", "geckoId": "pancakeswap-token", "krakenPair": null,
+      "fees": [
+        { "slug": "pancakeswap-amm", "kind": "protocol" },
+        { "slug": "pancakeswap-amm-v3", "kind": "protocol" },
+        { "slug": "pancakeswap-infinity", "kind": "protocol" }
+      ],
+      "usageBypass": { "class": "partial", "note": "App fees are not exclusively paid in CAKE.", "source": "https://docs.pancakeswap.finance/" },
+      "burnVsHeld": { "class": "burned", "programEndDate": null, "note": "The app publishes a recurring supply destruction.", "source": "https://docs.pancakeswap.finance/" }
+    },
+    {
+      "symbol": "HYPE", "name": "Hyperliquid", "geckoId": "hyperliquid", "krakenPair": "HYPEUSD",
+      "fees": [
+        { "slug": "hyperliquid-perps", "kind": "protocol" },
+        { "slug": "hyperliquid-spot-orderbook", "kind": "protocol" },
+        { "slug": "hyperliquid-l1", "kind": "chain" }
+      ],
+      "usageBypass": { "class": "partial", "note": "Trading fees are largely paid in stablecoins, with a link back to HYPE.", "source": "https://hyperliquid.gitbook.io/hyperliquid-docs" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "UNI", "name": "Uniswap", "geckoId": "uniswap", "krakenPair": "UNIUSD",
+      "fees": [
+        { "slug": "uniswap-v3", "kind": "protocol" },
+        { "slug": "uniswap-v2", "kind": "protocol" },
+        { "slug": "uniswap-v4", "kind": "protocol" },
+        { "slug": "uniswap-v1", "kind": "protocol" }
+      ],
+      "usageBypass": { "class": "bypassable", "note": "Pool fees are not required to be paid in UNI.", "source": "https://docs.uniswap.org/concepts/protocol/fees" },
+      "burnVsHeld": { "class": "none", "programEndDate": null, "note": "No standing destruction program is encoded.", "source": "https://docs.uniswap.org/concepts/protocol/fees" }
+    },
+    {
+      "symbol": "JUP", "name": "Jupiter", "geckoId": "jupiter-exchange-solana", "krakenPair": "JUPUSD",
+      "fees": [
+        { "slug": "jupiter-aggregator", "kind": "protocol" },
+        { "slug": "jupiter-perpetual-exchange", "kind": "protocol" }
+      ],
+      "usageBypass": { "class": "partial", "note": "Aggregator fees are not exclusively paid in JUP.", "source": "https://dev.jup.ag/" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "AAVE", "name": "Aave", "geckoId": "aave", "krakenPair": "AAVEUSD",
+      "fees": [
+        { "slug": "aave-v3", "kind": "protocol" },
+        { "slug": "aave-v2", "kind": "protocol" },
+        { "slug": "aave-v4", "kind": "protocol" }
+      ],
+      "usageBypass": { "class": "partial", "note": "Fee share is associated with staking the token.", "source": "https://docs.aave.com/" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "SYRUP", "name": "Syrup", "geckoId": "syrup", "krakenPair": null,
+      "fees": [{ "slug": "maple", "kind": "protocol" }],
+      "usageBypass": null,
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "SUI", "name": "Sui", "geckoId": "sui", "krakenPair": "SUIUSD",
+      "fees": [{ "slug": "sui", "kind": "chain" }],
+      "usageBypass": { "class": "required", "note": "Gas is paid in SUI.", "source": "https://docs.sui.io/concepts/tokenomics/gas-in-sui" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "CC", "name": "Canton Coin", "geckoId": null, "krakenPair": null,
+      "fees": [],
+      "usageBypass": null,
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "LINK", "name": "Chainlink", "geckoId": "chainlink", "krakenPair": "LINKUSD",
+      "fees": [{ "slug": "chainlink-staking", "kind": "protocol" }],
+      "usageBypass": { "class": "partial", "note": "Oracle rewards are denominated in LINK; other networks do not require LINK for gas.", "source": "https://docs.chain.link/" },
+      "burnVsHeld": { "class": "none", "programEndDate": null, "note": "No standing destruction program is encoded.", "source": "https://docs.chain.link/" }
+    },
+    {
+      "symbol": "PYTH", "name": "Pyth", "geckoId": "pyth-network", "krakenPair": null,
+      "fees": [{ "slug": "pyth-core", "kind": "protocol" }],
+      "usageBypass": { "class": "bypassable", "note": "Reading a price does not require paying in PYTH.", "source": "https://docs.pyth.network/" },
+      "burnVsHeld": { "class": "none", "programEndDate": null, "note": "No standing destruction program is encoded.", "source": "https://docs.pyth.network/" }
+    },
+    {
+      "symbol": "ZBCN", "name": "Zebec", "geckoId": "zebec-network", "krakenPair": null,
+      "fees": [],
+      "usageBypass": null,
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "RENDER", "name": "Render", "geckoId": "render-token", "krakenPair": "RENDERUSD",
+      "fees": [{ "slug": "render-network-bme", "kind": "protocol" }],
+      "usageBypass": { "class": "partial", "note": "Network jobs are priced in the token on the published burn-mint path.", "source": "https://know.rendernetwork.com/" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "FLR", "name": "Flare", "geckoId": "flare-networks", "krakenPair": null,
+      "fees": [],
+      "usageBypass": null,
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "XLM", "name": "Stellar", "geckoId": "stellar", "krakenPair": "XLMUSD",
+      "fees": [],
+      "usageBypass": { "class": "required", "note": "Network fees are paid in XLM.", "source": "https://developers.stellar.org/docs/learn/fundamentals/fees-resource-limits-metering" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "XDC", "name": "XDC", "geckoId": "xdce-crowd-sale", "krakenPair": null,
+      "fees": [],
+      "usageBypass": { "class": "required", "note": "Gas is paid in XDC.", "source": "https://docs.xdc.network/" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "ALGO", "name": "Algorand", "geckoId": "algorand", "krakenPair": "ALGOUSD",
+      "fees": [{ "slug": "algorand", "kind": "chain" }],
+      "usageBypass": { "class": "required", "note": "Transaction fees are paid in ALGO.", "source": "https://developer.algorand.org/docs/get-details/transactions/fees/" },
+      "burnVsHeld": null
+    },
+    {
+      "symbol": "ONDO", "name": "Ondo", "geckoId": "ondo-finance", "krakenPair": "ONDOUSD",
+      "fees": [{ "slug": "ondo-yield-assets", "kind": "protocol" }],
+      "usageBypass": { "class": "bypassable", "note": "Fund activity does not require the token.", "source": "https://docs.ondo.finance/" },
+      "burnVsHeld": { "class": "none", "programEndDate": null, "note": "No standing destruction program is encoded.", "source": "https://docs.ondo.finance/" }
+    },
+    {
+      "symbol": "BTC", "name": "Bitcoin", "geckoId": "bitcoin", "krakenPair": "XBTUSD",
+      "fees": [],
+      "usageBypass": { "class": "required", "note": "Transaction fees are paid in BTC.", "source": "https://developer.bitcoin.org/devguide/transactions.html" },
+      "burnVsHeld": { "class": "none", "programEndDate": null, "note": "Fees are paid to miners; supply is not destroyed.", "source": "https://developer.bitcoin.org/devguide/transactions.html" }
+    }
+  ]
+}

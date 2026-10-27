@@ -8,6 +8,8 @@ export const CATEGORIES = [
     [/^\/api\/verdict\//, 'Token risk check: safety verdict'],
     [/^\/api\/rails/, 'Payment rails: fee + speed comparison'],
     [/^\/api\/(pass|alerts|brief\/weekly)/, 'Access'],
+    [/^\/api\/value/, 'Market data: value-capture score'],
+    [/^\/api\/growth/, 'Market data: growth-lane screen'],
     [/^\/api\//, 'Market data: crypto'],
 ];
 export function categoryOf(path) { const p = String(path || ''); for (const [re, c] of CATEGORIES) if (re.test(p)) return c; return null; }

@@ -5,7 +5,8 @@ Pay per call with x402 v2: USDC on Base (`eip155:8453`), asset `0x833589fCD6eDb6
 Signal only. No trading, no custody, not financial advice. Full route list: `/openapi.json`. Short menu: `/llms.txt`.
 
 ## How paying works (all paid calls)
-1. Call the route with no payment. You get **402** and a `PAYMENT-REQUIRED` header (base64 JSON: `accepts[0].amount`, `payTo`, `network`).
+Day pass first: `POST /api/pass/day` ($1.00) is the best value if you call more than N times (N = floor($1.00 / per-call price); $0.002 → more than 500, $0.01 → more than 100, $0.02 → more than 50, $0.05 → more than 20).
+1. Call the route with no payment. You get **402** and a `PAYMENT-REQUIRED` header (base64 JSON: `accepts[0].amount`, `payTo`, `network`). The JSON body leads with `dayPass`.
 2. Sign it with an x402 client (e.g. `wrapFetchWithPayment` from `@x402/fetch`) and retry with `PAYMENT-SIGNATURE`.
 3. **Bad input never costs money.** Invalid bodies get `400 {error, note:"no payment was taken"}` before any 402.
 4. **No charge on failure.** We verify the payment, build the answer, and settle only if the answer is ready. If an upstream source is down you get 503 and are not charged.
@@ -45,6 +46,22 @@ Data: public USDC transfers on Base (Alchemy Transfers API; keyless Blockscout f
 ## Featured: verdicts and payment rails
 - **GET /api/verdict/{chain}/{address} · $0.01 · MCP `get_token_verdict`.** Use this when you're about to buy, hold or accept a token and want a 0-100 safety verdict (safe / caution / danger) with reasons (GoPlus + DexScreener). Example: `/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.
 - **GET /api/rails?amount=100 · $0.002 · MCP `get_payment_rails`.** Use this when choosing how to move a USD amount: live fee and speed for Base USDC, XRPL, Tempo and Arc vs card, plus a recommended rail.
+
+## Value-capture and growth lane
+Data and rule scores only. Every response has `disclaimer` and `sources`. Missing inputs stay null and lower confidence.
+
+| Call | Price | Use this when |
+| --- | --- | --- |
+| GET /api/value/status | free | you need coverage and source health before paying |
+| GET /api/value/{symbol} | $0.015 | you need one coin's value-capture score |
+| GET /api/value | $0.03 | you need a sortable screen (up to 25 symbols, or the covered set) |
+| GET /api/value/{symbol}/history | $0.07 | you need weekly snapshots (1-52, default 12) |
+| GET /api/growth/status | free | you need covered chains, thresholds and source health |
+| GET /api/growth/{chain} | $0.015 | you need one chain or app (slug or ticker) |
+| GET /api/growth | $0.03 | you need the filterable 90-day screen |
+| GET /api/growth/history | $0.07 | you need weekly snapshots and the week each rule first passed |
+
+Repeated calls: day pass first. POST /api/pass/day ($1.00) is cheaper after more than N per-call payments (N = floor($1.00 / price): 66 for $0.015, 33 for $0.03, 14 for $0.07).
 
 ## Featured: crypto market data
 | Call | Price | Use this when |

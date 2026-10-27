@@ -1,0 +1,28 @@
+{
+  "reviewed": "2026-10-01",
+  "note": "v1 unlock calendar. DefiLlama unlocks API is a paid product, so rows are hand-curated. Null percentages are unverified on purpose; they are not estimates.",
+  "rows": [
+    { "symbol": "BNB", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://www.bnbchain.org/en/bnb", "confidence": "low" },
+    { "symbol": "ETH", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://ethereum.org/developers/docs/gas/", "confidence": "low" },
+    { "symbol": "SOL", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://solana.com/docs/core/fees", "confidence": "low" },
+    { "symbol": "XRP", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://xrpl.org/docs/concepts/transactions/transaction-cost", "confidence": "low" },
+    { "symbol": "CAKE", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.pancakeswap.finance/", "confidence": "low" },
+    { "symbol": "HYPE", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://hyperliquid.gitbook.io/hyperliquid-docs", "confidence": "low" },
+    { "symbol": "UNI", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.uniswap.org/", "confidence": "low" },
+    { "symbol": "JUP", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://dev.jup.ag/", "confidence": "low" },
+    { "symbol": "AAVE", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.aave.com/", "confidence": "low" },
+    { "symbol": "SYRUP", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.maple.finance/", "confidence": "low" },
+    { "symbol": "SUI", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.sui.io/", "confidence": "low" },
+    { "symbol": "CC", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": null, "confidence": "low" },
+    { "symbol": "LINK", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.chain.link/", "confidence": "low" },
+    { "symbol": "PYTH", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.pyth.network/", "confidence": "low" },
+    { "symbol": "ZBCN", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.zebec.io/", "confidence": "low" },
+    { "symbol": "RENDER", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://know.rendernetwork.com/", "confidence": "low" },
+    { "symbol": "FLR", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.flare.network/", "confidence": "low" },
+    { "symbol": "XLM", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://developers.stellar.org/", "confidence": "low" },
+    { "symbol": "XDC", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.xdc.network/", "confidence": "low" },
+    { "symbol": "ALGO", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://developer.algorand.org/", "confidence": "low" },
+    { "symbol": "ONDO", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://docs.ondo.finance/", "confidence": "low" },
+    { "symbol": "BTC", "next12mPctOfCirc": null, "lockedOrUnlockedNotCirculatingPct": null, "source": "https://developer.bitcoin.org/devguide/transactions.html", "confidence": "low" }
+  ]
+}

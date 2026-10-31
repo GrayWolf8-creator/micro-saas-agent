@@ -12,6 +12,10 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Stats Redis command use (2026-10-31)
+- Per-request stats and traffic counters are summed in memory and flushed to Upstash about every 5 minutes, and on SIGTERM/SIGINT, as one APPEND per dirty key (`gw8:stats:buf:<MT day>`, `gw8:traffic:v1:buf:<UTC day>`). `/api/stats` and `/api/traffic` merge those buffers with anything not yet flushed, so the report shapes and day boundaries stay the same. A hard crash can drop up to about 5 minutes of counts; a deploy flush does not.
+- A failed Redis read of the alerts (and weekly-brief) subscriber list no longer looks like an empty list. Subscribe or cancel will not SET over the stored list unless the read succeeded.
+
 ### Request traffic report (2026-10-27)
 - `GET /api/traffic` and `GET /traffic.html`: route template x HTTP status x UTC day, surfaces (x402 `/api`, RapidAPI `/mkt/rapidapi`, free/public), and a capped sanitized list of unmatched probe paths (`/.env`, `/wp-admin`, and the rest). Extends `stats.js`; the Mountain Time audience/conversion counters are unchanged.
 - Not on the x402 paywall. These URLs are not counted in the report. No IPs, headers, bodies, or payment payloads are stored.

@@ -16,18 +16,49 @@ export const hasRedis = () => !!(REDIS_URL && REDIS_TOKEN);
 export async function redis(cmd) {
     const r = await fetch(REDIS_URL, { method: 'POST', headers: { Authorization: `Bearer ${REDIS_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(cmd), signal: AbortSignal.timeout(8000) });
     if (!r.ok) throw new Error('redis ' + r.status);
-    return (await r.json()).result;
+    const body = await r.json();
+    // Upstash can answer HTTP 200 with { error } and no result. That is a failed read, not an empty value.
+    if (body && typeof body.error === 'string' && body.error) throw new Error('redis ' + body.error);
+    return body ? body.result : null;
+}
+// 'memory' = no Redis. 'ok' = last read succeeded (including a genuinely empty list). Failed reads are not cached.
+let loadState = 'init';
+const UNAVAILABLE = 'alerts temporarily unavailable, retry shortly';
+function parseSubs(raw) {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed;
 }
 async function load() {
-    if (subs) return subs;
-    subs = {};
-    if (REDIS_URL && REDIS_TOKEN) {
-        try { const raw = await redis(['GET', KEY]); if (raw) subs = JSON.parse(raw); } catch (e) { console.error('[alerts] load failed', e.message); }
+    if (loadState === 'ok' || loadState === 'memory') return subs;
+    if (!(REDIS_URL && REDIS_TOKEN)) {
+        subs = subs || {};
+        loadState = 'memory';
+        return subs;
     }
-    return subs;
+    let raw;
+    try { raw = await redis(['GET', KEY]); }
+    catch (e) { console.error('[alerts] load failed', e.message); return null; }
+    if (raw == null || raw === '') {
+        subs = {};
+        loadState = 'ok';
+        return subs;
+    }
+    try {
+        const parsed = parseSubs(raw);
+        if (!parsed) throw new Error('subscriber list is not an object');
+        subs = parsed;
+        loadState = 'ok';
+        return subs;
+    } catch (e) { console.error('[alerts] load failed', e.message); return null; }
 }
 async function save() {
     if (!(REDIS_URL && REDIS_TOKEN)) return;
+    // A failed or missing read must not SET a partial list over the stored one.
+    if (loadState !== 'ok' || subs == null) {
+        console.error('[alerts] save refused: subscriber list was not loaded');
+        return;
+    }
     try { await redis(['SET', KEY, JSON.stringify(subs)]); } catch (e) { console.error('[alerts] save failed', e.message); }
 }
 export const persistenceMode = () => (REDIS_URL && REDIS_TOKEN ? 'upstash-redis' : 'memory (lost on restart)');
@@ -77,11 +108,13 @@ export async function validateSubscribe(body, coins) {
     const chk = await checkWebhookUrl(b.webhookUrl);
     if (!chk.ok) return { error: chk.reason };
     const all = await load();
+    if (!all) return { error: UNAVAILABLE };
     if (Object.keys(all).length >= MAX_SUBS) return { error: 'subscription capacity reached, try later' };
     return { ok: true, webhookUrl: chk.url.toString(), filter, pairs };
 }
 export async function createSubscription(v, payer) {
     const all = await load();
+    if (!all) return { error: UNAVAILABLE };
     const id = 'sub_' + crypto.randomBytes(12).toString('hex');
     const secret = 'whsec_' + crypto.randomBytes(24).toString('hex');
     const now = Date.now();
@@ -96,11 +129,12 @@ export async function createSubscription(v, payer) {
 // Used when x402 settlement fails after the subscription was created (buyer was not charged).
 export async function cancelSubscription(id) {
     if (!id) return false;
-    const all = await load(); if (!all[id]) return false;
+    const all = await load(); if (!all || !all[id]) return false;
     delete all[id]; await save(); return true;
 }
 export async function getStatus(id) {
-    const s = (await load())[id];
+    const all = await load(); if (!all) return null;
+    const s = all[id];
     if (!s) return null;
     return { subscriptionId: s.id, filter: s.filter, pairs: s.pairs || 'all 66', expiresAt: s.expiresAt, alertsLeft: s.alertsLeft, active: isActive(s) };
 }
@@ -129,7 +163,8 @@ export async function onRefresh(wt) {
     fresh.forEach(d => seen.add(dotKey(d)));
     if (!seeded) { seeded = true; return { seeded: true, count: fresh.length }; } // don't alert history on boot
     if (!fresh.length) return { sent: 0 };
-    const all = await load(); let sent = 0, changed = false;
+    const all = await load(); if (!all) return { sent: 0, unavailable: true };
+    let sent = 0, changed = false;
     for (const s of Object.values(all)) {
         if (!isActive(s)) continue;
         const dots = fresh.filter(d => (s.filter === 'all' || d.band === s.filter) && (!s.pairs || s.pairs.includes(d.name)));
@@ -143,4 +178,4 @@ export async function onRefresh(wt) {
     if (changed) await save();
     return { sent, newDots: fresh.length };
 }
-export function _resetForTest() { seen.clear(); seeded = false; }
+export function _resetForTest() { seen.clear(); seeded = false; subs = null; loadState = 'init'; }

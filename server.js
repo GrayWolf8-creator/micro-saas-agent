@@ -21,7 +21,7 @@ import { getRs } from './rs.js';
 import { getRails, validAmount } from './rails.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
-import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute, mountTrafficReport } from './stats.js';
+import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute, mountTrafficReport, installStatsFlush } from './stats.js';
 import { funnel, dayPassNote, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH, buildReceipt, verifyReceipt, VERIFY_PATH } from './trust.js';
 import { getValueSymbol, getValueBatch, getValueHistory, getValueStatus, parseValueQuery, parseWeeks, findCoin, VALUE_PRICES } from './value.js';
 import { getGrowthOne, getGrowthList, getGrowthHistory, getGrowthStatus, parseGrowthQuery, findGrowth, GROWTH_PRICES } from './growth.js';
@@ -41,6 +41,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 // Per-endpoint request tallies (402 quotes vs paid 2xx etc). Free, no PII. Before x402 handlers.
 app.use(statsMiddleware);
+installStatsFlush();
 let sampleRouteCache = { t: 0, routes: null };
 async function currentSampleRoutes() {
     if (sampleRouteCache.routes && Date.now() - sampleRouteCache.t < 60000) return sampleRouteCache.routes;

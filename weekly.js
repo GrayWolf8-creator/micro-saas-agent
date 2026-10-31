@@ -17,15 +17,35 @@ export const WEEKLY_PLANS = {
 };
 const KEY = 'gw8:weekly_subs', LOCK = 'gw8:weekly_lock:';
 const MAX_SUBS = 1000, MAX_FAILS_PER_WEEK = 6;
+const UNAVAILABLE = 'weekly briefs temporarily unavailable, retry shortly';
 let subs = null;
+let loadState = 'init'; // 'memory' | 'ok'. A failed read is not cached and must not be saved.
 
-async function load() {
-    if (subs) return subs;
-    subs = {};
-    if (hasRedis()) { try { const raw = await redis(['GET', KEY]); if (raw) subs = JSON.parse(raw); } catch (e) { console.error('[weekly] load failed', e.message); } }
-    return subs;
+function parseSubs(raw) {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed;
 }
-async function save() { if (hasRedis()) { try { await redis(['SET', KEY, JSON.stringify(subs)]); } catch (e) { console.error('[weekly] save failed', e.message); } } }
+async function load() {
+    if (loadState === 'ok' || loadState === 'memory') return subs;
+    if (!hasRedis()) { subs = subs || {}; loadState = 'memory'; return subs; }
+    let raw;
+    try { raw = await redis(['GET', KEY]); }
+    catch (e) { console.error('[weekly] load failed', e.message); return null; }
+    if (raw == null || raw === '') { subs = {}; loadState = 'ok'; return subs; }
+    try {
+        const parsed = parseSubs(raw);
+        if (!parsed) throw new Error('subscriber list is not an object');
+        subs = parsed;
+        loadState = 'ok';
+        return subs;
+    } catch (e) { console.error('[weekly] load failed', e.message); return null; }
+}
+async function save() {
+    if (!hasRedis()) return;
+    if (loadState !== 'ok' || subs == null) { console.error('[weekly] save refused: subscriber list was not loaded'); return; }
+    try { await redis(['SET', KEY, JSON.stringify(subs)]); } catch (e) { console.error('[weekly] save failed', e.message); }
+}
 
 // Mountain Time parts (DST-aware via Intl)
 function mt(now = new Date()) {
@@ -42,11 +62,14 @@ export const isSendWindow = (now = new Date()) => { const m = mt(now); return m.
 export async function validateWeekly(body) {
     const chk = await checkWebhookUrl((body || {}).webhookUrl);
     if (!chk.ok) return { error: chk.reason };
-    if (Object.keys(await load()).length >= MAX_SUBS) return { error: 'subscription capacity reached, try later' };
+    const all = await load();
+    if (!all) return { error: UNAVAILABLE };
+    if (Object.keys(all).length >= MAX_SUBS) return { error: 'subscription capacity reached, try later' };
     return { ok: true, webhookUrl: chk.url.toString() };
 }
 export async function createWeekly(v, plan = WEEKLY_PLANS['4w']) {
     const all = await load();
+    if (!all) return { error: UNAVAILABLE };
     const id = 'wk_' + crypto.randomBytes(12).toString('hex'), secret = 'whsec_' + crypto.randomBytes(24).toString('hex');
     const now = Date.now();
     // Hard expiry = weeks + 1 week grace, so outages do not silently eat paid issues past the window.
@@ -59,9 +82,10 @@ export async function createWeekly(v, plan = WEEKLY_PLANS['4w']) {
         verify: 'Each POST carries X-GW8-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, `${t}.${rawBody}`)>. Store the secret; it is shown only once.',
         disclaimer: 'signal only, not financial advice' };
 }
-export async function cancelWeekly(id) { const all = await load(); if (!id || !all[id]) return false; delete all[id]; await save(); return true; }
+export async function cancelWeekly(id) { const all = await load(); if (!all || !id || !all[id]) return false; delete all[id]; await save(); return true; }
 export async function getWeeklyStatus(id) {
-    const s = (await load())[id]; if (!s) return null;
+    const all = await load(); if (!all) return null;
+    const s = all[id]; if (!s) return null;
     return { subscriptionId: s.id, plan: s.plan || '4w', issuesLeft: s.issuesLeft, expiresAt: s.expiresAt, lastIssue: s.lastIssue, missedIssues: s.missed, active: active(s) };
 }
 const active = s => s.issuesLeft > 0 && Date.parse(s.expiresAt) > Date.now();
@@ -108,6 +132,7 @@ export async function weeklyTick(now = new Date()) {
     const key = issueKey(now);
     if (hasRedis()) { try { if (!(await redis(['SET', LOCK + key + ':' + Math.floor(now / 6e5), '1', 'NX', 'EX', '540']))) return { locked: true }; } catch { return null; } }
     const all = await load();
+    if (!all) return null;
     const due = Object.values(all).filter(s => active(s) && s.lastIssue !== key && !s.missed.includes(key));
     if (!due.length) return { sent: 0 };
     const issue = await buildIssue(now);
@@ -120,4 +145,4 @@ export async function weeklyTick(now = new Date()) {
     await save();
     return { issue: key, sent, due: due.length };
 }
-export function _resetWeeklyForTest() { subs = null; }
+export function _resetWeeklyForTest() { subs = null; loadState = 'init'; }

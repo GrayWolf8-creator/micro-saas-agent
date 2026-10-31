@@ -1,6 +1,10 @@
 // stats.js — free per-endpoint request counters. No PII: no IPs or raw headers; a user-agent is reduced to a
 // fixed bot name or "buyer" (buyers.js), and payer wallets are stored only as truncated SHA-256 ids.
 // Persistence: Upstash Redis REST via alerts.js helper; in-memory fallback. All keys expire (~35d) or are capped.
+// Counter writes are aggregated in memory and flushed about every 5 minutes (and on SIGTERM/SIGINT) as one
+// APPEND per dirty key. Upstash bills every command inside a pipeline, MULTI, or Lua redis.call, so the
+// savings come from summing field deltas, not from batching the old per-request HINCRBYs. Report reads add
+// the not-yet-flushed deltas to the stored values. A hard crash can drop one interval of counts.
 // Traffic report (UTC route x status, surfaces, unmatched probes) lives at the bottom of this file and is
 // recorded from record(). It does not change the Mountain Time audience/conversion counters above.
 import crypto from 'crypto';
@@ -110,9 +114,138 @@ const SKIP = new Set(['/api/stats', '/stats.html', '/stats', '/api/traffic', '/t
 /** Home keep-warm: counted under meta, not route totals. */
 const HOME = '/';
 
-// In-memory fallback: day -> field -> count
+// In-memory fallback: day -> field -> count. Also the full local copy when a Redis read fails.
 const mem = new Map();
-const expireSet = new Set(); // day keys we've already sent EXPIRE for this process
+// Not-yet-flushed deltas, keyed by the logical hash key (gw8:stats:<day>, gw8:traffic:v1:<day>).
+// `inflight` is the batch currently being written, so a report read during the HTTP call still sees it.
+let pending = new Map();
+let inflight = new Map();
+const ttlArmed = new Set(); // keys whose EXPIRE already succeeded in this process
+export const STATS_FLUSH_MS = 5 * 60 * 1000;
+
+function bufferKeyFor(hashKey) {
+    if (hashKey.startsWith(KEY_PREFIX)) return 'gw8:stats:buf:' + hashKey.slice(KEY_PREFIX.length);
+    if (hashKey.startsWith(TRAFFIC_PREFIX)) return 'gw8:traffic:v1:buf:' + hashKey.slice(TRAFFIC_PREFIX.length);
+    return hashKey + ':buf';
+}
+
+function queueIncr(key, field, by = 1) {
+    const n = Number(by) || 0;
+    if (!n) return;
+    let m = pending.get(key);
+    if (!m) { m = new Map(); pending.set(key, m); }
+    m.set(field, (m.get(field) || 0) + n);
+}
+
+function addCounts(dst, src) {
+    const m = src instanceof Map ? src : toMap(src);
+    for (const [k, v] of m) dst.set(k, (dst.get(k) || 0) + (Number(v) || 0));
+}
+
+function applyDeltaLines(dst, raw) {
+    if (raw == null || raw === '') return;
+    for (const line of String(raw).split('\n')) {
+        if (!line) continue;
+        try {
+            const obj = JSON.parse(line);
+            if (obj && typeof obj === 'object' && !Array.isArray(obj)) addCounts(dst, obj);
+        } catch { /* skip a corrupt line; the rest of the log still counts */ }
+    }
+}
+
+function applyPending(dst, key) {
+    for (const src of [pending, inflight]) {
+        const m = src.get(key);
+        if (m) addCounts(dst, m);
+    }
+}
+
+function mergeFailed(key, fields) {
+    let m = pending.get(key);
+    if (!m) { m = new Map(); pending.set(key, m); }
+    for (const [f, n] of fields) m.set(f, (m.get(f) || 0) + n);
+}
+
+async function armTtl(key, sec) {
+    if (ttlArmed.has(key)) return;
+    try {
+        await redis(['EXPIRE', key, sec]);
+        ttlArmed.add(key);
+    } catch (e) { console.error('[stats] expire failed', e && e.message); }
+}
+
+let flushTail = Promise.resolve();
+/** Write aggregated deltas. Safe to call concurrently; a second call waits for the first. */
+export function flushStatsNow() {
+    const run = flushTail.then(flushBody, flushBody);
+    flushTail = run.then(() => {}, () => {});
+    return run;
+}
+
+async function flushBody() {
+    if (!hasRedis()) return { commands: 0 };
+    if (!pending.size && !inflight.size) return { commands: 0 };
+    if (!inflight.size) {
+        inflight = pending;
+        pending = new Map();
+    }
+    let commands = 0;
+    for (const [key, fields] of [...inflight.entries()]) {
+        const obj = {};
+        for (const [field, n] of fields) {
+            const d = Number(n) || 0;
+            if (d !== 0) obj[field] = d;
+        }
+        if (!Object.keys(obj).length) { inflight.delete(key); continue; }
+        const bufKey = bufferKeyFor(key);
+        try {
+            await redis(['APPEND', bufKey, JSON.stringify(obj) + '\n']);
+            commands++;
+            // Drop the batch only after Redis has it, and before the next await, so a report
+            // cannot add these deltas twice (buffer + inflight) or miss them.
+            inflight.delete(key);
+            if (!ttlArmed.has(bufKey)) {
+                await armTtl(bufKey, TTL_SEC);
+                if (ttlArmed.has(bufKey)) commands++;
+            }
+        } catch (e) {
+            console.error('[stats] flush failed', e && e.message);
+            inflight.delete(key);
+            mergeFailed(key, fields);
+        }
+    }
+    inflight = new Map();
+    return { commands };
+}
+
+let flushInstalled = false;
+/** Interval flush plus SIGTERM/SIGINT (Render sends SIGTERM on deploy). Does not start itself on import. */
+export function installStatsFlush() {
+    if (flushInstalled) return;
+    flushInstalled = true;
+    const timer = setInterval(() => {
+        flushStatsNow().catch(e => console.error('[stats] flush failed', e && e.message));
+    }, STATS_FLUSH_MS);
+    if (timer.unref) timer.unref();
+    let shuttingDown = false;
+    const onSignal = () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        flushStatsNow()
+            .catch(e => console.error('[stats] shutdown flush failed', e && e.message))
+            .finally(() => process.exit(0));
+    };
+    process.on('SIGTERM', onSignal);
+    process.on('SIGINT', onSignal);
+    if (hasRedis()) console.log('[stats] counter writes buffered; flush every', STATS_FLUSH_MS / 1000, 's and on shutdown');
+}
+
+export function _resetStatsFlushForTests() {
+    pending = new Map();
+    inflight = new Map();
+    ttlArmed.clear();
+    flushTail = Promise.resolve();
+}
 
 export function mtDate(d = new Date()) {
     return new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
@@ -156,14 +289,8 @@ function memIncr(day, field) {
     m.set(field, (m.get(field) || 0) + 1);
 }
 
-async function redisIncr(day, field) {
-    const key = KEY_PREFIX + day;
-    const n = await redis(['HINCRBY', key, field, 1]);
-    if (!expireSet.has(day)) {
-        expireSet.add(day);
-        try { await redis(['EXPIRE', key, TTL_SEC]); } catch { /* ignore */ }
-    }
-    return n;
+function redisIncr(day, field) {
+    queueIncr(KEY_PREFIX + day, field, 1);
 }
 
 /** Fire-and-forget record. Never throws to caller. Returns the normalized route key (or null). */
@@ -180,7 +307,7 @@ export function record(method, path, statusCode, opts = {}) {
         const field = `${route}|${cls}`;
         // Always bump memory so local reads work even when Redis is configured
         memIncr(day, field);
-        if (hasRedis()) redisIncr(day, field).catch(e => console.error('[stats] redis incr failed', e.message));
+        if (hasRedis()) redisIncr(day, field);
         return route;
     } catch (e) {
         console.error('[stats] record failed', e && e.message);
@@ -216,7 +343,7 @@ function allowIp(day, hash) {
 
 async function bump(day, field) {
     memIncr(day, field);
-    if (hasRedis()) await redisIncr(day, field);
+    if (hasRedis()) redisIncr(day, field);
 }
 
 /** Track a settled payer; returns 'self' | 'bot' (grader) | null (no override). */
@@ -234,12 +361,12 @@ async function trackPayer(day, pid, route) {
     }
     const pk = PAYERS + day;
     await redis(['HINCRBY', pk, pid, 1]);
-    await redis(['EXPIRE', pk, TTL_SEC]);
+    await armTtl(pk, TTL_SEC);
     if ((await redis(['HLEN', FIRST])) < MAX_PAYERS_TRACKED) await redis(['HSETNX', FIRST, pid, day]);
     if (own) return 'self';
     const hk = PR + pid + ':' + hour;
     await redis(['SADD', hk, route]);
-    await redis(['EXPIRE', hk, 3600]);
+    await armTtl(hk, 3600);
     if ((await redis(['SCARD', hk])) >= GRADER_ROUTES_PER_HOUR) await redis(['HSETNX', GRADERS, pid, day]);
     return (await redis(['HEXISTS', GRADERS, pid])) ? 'bot' : null;
 }
@@ -307,17 +434,15 @@ function daysList(n) {
 async function loadDay(day) {
     // Prefer Redis when configured (authoritative across instances). Memory is fallback
     // and the sole store when Redis is unset — never merge both (would double-count).
+    // Stored hash (pre-buffer days) + appended deltas + in-memory deltas not yet flushed.
     if (hasRedis()) {
         try {
-            const flat = await redis(['HGETALL', KEY_PREFIX + day]);
+            const key = KEY_PREFIX + day;
             const merged = new Map();
-            if (flat && typeof flat === 'object' && !Array.isArray(flat)) {
-                for (const [k, v] of Object.entries(flat)) merged.set(k, parseInt(v, 10) || 0);
-            } else if (Array.isArray(flat)) {
-                for (let i = 0; i + 1 < flat.length; i += 2) {
-                    merged.set(flat[i], parseInt(flat[i + 1], 10) || 0);
-                }
-            }
+            addCounts(merged, await redis(['HGETALL', key]));
+            try { applyDeltaLines(merged, await redis(['GET', bufferKeyFor(key)])); }
+            catch (e) { console.error('[stats] buffer read failed', e && e.message); }
+            applyPending(merged, key);
             return merged;
         } catch (e) {
             console.error('[stats] redis read failed, using memory', e.message);
@@ -399,7 +524,7 @@ export async function getStats(days = 1) {
         audience,
         meta: {
             homeKeepWarm: home,
-            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats, /stats.html, /api/traffic and /traffic.html are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0). Route x HTTP status (UTC) and unmatched probes: /api/traffic and /traffic.html.',
+            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats, /stats.html, /api/traffic and /traffic.html are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0). Route x HTTP status (UTC) and unmatched probes: /api/traffic and /traffic.html. When Redis is configured, counter writes are summed in memory and flushed about every 5 minutes (and on shutdown); this report includes counts not yet flushed. A hard crash can drop up to about 5 minutes of counts.',
         },
     };
 }
@@ -651,14 +776,13 @@ function esc(s) {
 // ---------- Traffic report: route template x HTTP status x UTC day ----------
 // Separate from the Mountain Time audience counters above. Answers "which paths did the 62k requests hit?"
 // without storing IPs, headers, bodies, or payment payloads. Daily rollups use the same Upstash Redis when
-// configured (key gw8:traffic:v1:<YYYY-MM-DD>, 35-day TTL). sinceBoot is this process only.
+// configured (older hash gw8:traffic:v1:<YYYY-MM-DD>, flushed deltas gw8:traffic:v1:buf:<YYYY-MM-DD>, 35-day TTL).
+// sinceBoot is this process only.
 export const TRAFFIC_TOKEN_ENV = 'TRAFFIC_REPORT_TOKEN';
 export const TRAFFIC_LIMITS = { maxRoutes: 400, maxProbes: 50, maxDays: 35, probeLength: 80, maxRedisFields: 4000, top: 20 };
 const TRAFFIC_PREFIX = 'gw8:traffic:v1:';
 const TRAFFIC_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 const SURFACES = ['x402', 'rapidapi', 'public', 'unmatched'];
-const trafficExpire = new Set();
-const redisTarget = new Map(); // utc day -> Map of hash field -> field actually incremented (overflow remap)
 const trafficDays = new Map();
 
 function emptyTraffic() {
@@ -777,7 +901,6 @@ function dayStore(day) {
         while (trafficDays.size > TRAFFIC_LIMITS.maxDays) {
             const oldest = [...trafficDays.keys()].sort()[0];
             trafficDays.delete(oldest);
-            redisTarget.delete(oldest);
         }
     }
     return s;
@@ -799,41 +922,19 @@ export function recordTraffic(method, rawPath, statusCode) {
     bumpSurface(dayHit, surface, status);
     const probeStored = probe ? bumpProbe(dayHit, probe) : false;
     if (hasRedis()) {
-        persistTraffic(day, route, status, surface, probe, routeStored, probeStored)
-            .catch(e => console.error('[stats] traffic redis failed', e && e.message));
+        try { persistTraffic(day, route, status, surface, probe, routeStored, probeStored); }
+        catch (e) { console.error('[stats] traffic redis failed', e && e.message); }
     }
     return route;
 }
 
-async function hincr(key, day, field) {
-    let mapped = redisTarget.get(day);
-    if (!mapped) { mapped = new Map(); redisTarget.set(day, mapped); }
-    let target = mapped.get(field);
-    if (!target) {
-        target = field;
-        let exists = 0;
-        try { exists = await redis(['HEXISTS', key, field]); } catch { exists = 0; }
-        if (!exists) {
-            let len = 0;
-            try { len = Number(await redis(['HLEN', key])) || 0; } catch { len = 0; }
-            if (len >= TRAFFIC_LIMITS.maxRedisFields && !field.startsWith('s|') && !field.startsWith('o|')) {
-                target = field.startsWith('p|') ? 'o|probes' : 'o|routes';
-            }
-        }
-        mapped.set(field, target);
-    }
-    await redis(['HINCRBY', key, target, 1]);
-}
-
-async function persistTraffic(day, route, status, surface, probe, routeStored, probeStored) {
+// In-memory route/probe caps already collapse overflow into o|routes and o|probes before this runs.
+// Those field names are unchanged. The old per-field HEXISTS/HLEN check is not repeated per request.
+function persistTraffic(day, route, status, surface, probe, routeStored, probeStored) {
     const key = TRAFFIC_PREFIX + day;
-    await hincr(key, day, routeStored ? `r|${route}|${status}` : 'o|routes');
-    await hincr(key, day, `s|${surface}|${status}`);
-    if (probe) await hincr(key, day, probeStored ? `p|${encodeURIComponent(probe)}` : 'o|probes');
-    if (!trafficExpire.has(day)) {
-        trafficExpire.add(day);
-        try { await redis(['EXPIRE', key, TTL_SEC]); } catch { /* ignore */ }
-    }
+    queueIncr(key, routeStored ? `r|${route}|${status}` : 'o|routes', 1);
+    queueIncr(key, `s|${surface}|${status}`, 1);
+    if (probe) queueIncr(key, probeStored ? `p|${encodeURIComponent(probe)}` : 'o|probes', 1);
 }
 
 function countMap(m) {
@@ -914,7 +1015,8 @@ function acceptableStatus(st) {
 
 function parseTrafficHash(flat) {
     const store = emptyTraffic();
-    for (const [field, n] of toMap(flat)) {
+    const fields = flat instanceof Map ? flat : toMap(flat);
+    for (const [field, n] of fields) {
         if (!(n > 0) || typeof field !== 'string') continue;
         const i = field.indexOf('|');
         if (i < 1) continue;
@@ -958,8 +1060,13 @@ function parseTrafficHash(flat) {
 async function loadTrafficDay(day) {
     if (hasRedis()) {
         try {
-            const flat = await redis(['HGETALL', TRAFFIC_PREFIX + day]);
-            return parseTrafficHash(flat);
+            const key = TRAFFIC_PREFIX + day;
+            const fields = new Map();
+            addCounts(fields, await redis(['HGETALL', key]));
+            try { applyDeltaLines(fields, await redis(['GET', bufferKeyFor(key)])); }
+            catch (e) { console.error('[stats] traffic buffer read failed', e && e.message); }
+            applyPending(fields, key);
+            return parseTrafficHash(fields);
         } catch (e) {
             console.error('[stats] traffic redis read failed, using memory', e && e.message);
         }
@@ -1010,7 +1117,7 @@ export async function getTrafficReport(days = 7) {
         reset: {
             sinceBoot: 'In-memory for this process only. Clears when the Render service restarts, redeploys, or sleeps (free instances spin down).',
             daily: redisOn
-                ? 'Per-UTC-day rollups are in Upstash Redis (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN), key prefix gw8:traffic:v1:, kept about 35 days. They survive a restart. sinceBoot does not, so a day total can be higher than sinceBoot after a restart.'
+                ? 'Per-UTC-day rollups are in Upstash Redis (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN), key prefix gw8:traffic:v1: plus gw8:traffic:v1:buf: for counts flushed from memory, kept about 35 days. Writes flush about every 5 minutes and on shutdown. This report includes counts not yet flushed. A hard crash can drop up to about 5 minutes. They survive a restart. sinceBoot does not, so a day total can be higher than sinceBoot after a restart.'
                 : 'Upstash Redis is not configured, so daily rollups are in-memory and clear on restart, same as sinceBoot.',
         },
         note: 'Counts are normalized route templates (ids collapsed, query strings dropped) by HTTP status and UTC day. Surfaces: x402 = paid /api routes, rapidapi = /mkt/rapidapi, public = free pages, free /api routes, MCP, and /mkt/apify, unmatched = no template (scanner probes). GET / is included and picks up platform keep-warm pings (the audience report still parks those under meta.homeKeepWarm). Unmatched paths are truncated and sanitized; once 50 distinct paths are stored, further new paths increment probeOverflow without the raw path. /api/traffic, /traffic.html, /api/stats and /stats.html are not counted. No IPs, headers, bodies, or payment payloads are stored.',
@@ -1133,6 +1240,5 @@ export function _resetTrafficForTests() {
     bootStore.probeOverflow = 0;
     bootStore.routeOverflow = 0;
     trafficDays.clear();
-    trafficExpire.clear();
-    redisTarget.clear();
+    _resetStatsFlushForTests();
 }

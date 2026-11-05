@@ -11,7 +11,7 @@ import { ALERT_PLAN, validateSubscribe, createSubscription, getStatus, onRefresh
 import { onWaveTrendRefresh, getWaveTrend } from './Signal.js';
 import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
 import { initMcpPayments, paidWrapper, mcpPayMode } from './mcp_pay.js';
-import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_RULES, getFlows, getBrief, getBriefTeaser, signResponses, publicKeyInfo } from './upgrades.js';
+import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_BLURB, VERDICT_TAGS, VERDICT_EXAMPLE, VERDICT_OUTPUT_SCHEMA, VERDICT_PATH_SCHEMA, VERDICT_SERVICE_NAME, getFlows, getBrief, getBriefTeaser, signResponses, publicKeyInfo } from './upgrades.js';
 import { getRwa } from './rwa.js';
 import { mintPass, usePass, refundPass, revokePass, PASS_PLAN, tail } from './pass.js';
 import { getTrack, renderTrack, logDots } from './track.js';
@@ -164,8 +164,10 @@ function getX402ChallengeV2(o = {}) {
     }
     if (o.pathParams && typeof o.pathParams === 'object') {
         const props = {}, req = [];
+        const custom = o.pathParamSchema || {};
         for (const [k, v] of Object.entries(o.pathParams)) {
-            if (v && typeof v === 'object' && !Array.isArray(v) && (v.type || v.enum || v.properties)) props[k] = v;
+            if (custom[k]) props[k] = custom[k];
+            else if (v && typeof v === 'object' && !Array.isArray(v) && (v.type || v.enum || v.properties)) props[k] = v;
             else props[k] = { type: 'string', ...(v != null ? { example: String(v) } : {}) };
             req.push(k);
         }
@@ -183,7 +185,7 @@ function getX402ChallengeV2(o = {}) {
             type: 'object',
             properties: {
                 input: { type: 'object', properties: inputSchemaProps, required: inputRequired, additionalProperties: false },
-                output: { type: 'object', properties: { type: { type: 'string' }, example: {} }, required: ['type'] }
+                output: { type: 'object', properties: { type: { type: 'string' }, example: (o.outputSchema && typeof o.outputSchema === 'object') ? o.outputSchema : {} }, required: ['type'] }
             },
             required: ['input']
         }
@@ -197,7 +199,7 @@ function getX402ChallengeV2(o = {}) {
             url,
             description,
             mimeType: 'application/json',
-            serviceName: 'GW8 Signal API',
+            serviceName: (o.serviceName || 'GW8 Signal API').slice(0, 32),
             tags
         },
         accepts: [{
@@ -221,7 +223,7 @@ app.get('/', (req, res) => {
         protocol: "x402 v2",
         network: "eip155:8453",
         asset: "USDC",
-        about: "Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), payment risk checks, token verdicts, payment-rail costs, and crypto market data (regime, WaveTrend dots, relative strength). Signed receipts. Signal only, not financial advice.",
+        about: "Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), payment risk checks, token safety verdicts (rug check, honeypot, contract risk), payment-rail costs, and crypto market data (regime, WaveTrend dots, relative strength). Signed receipts. Signal only, not financial advice.",
         humans: { pay: "/pay.html", track: "/track" },
         startHere: { agentGuide: "/agents.md", freeTeaser: "/api/brief/teaser", freeSample: "/api/sample", agentDocs: "/llms.txt", openapi: "/openapi.json", discovery: "/.well-known/x402", payPage: "/pay.html" },
         tiers: {
@@ -305,7 +307,8 @@ function discoveryFanout() {
     return {
         version: 1,
         resources: [passUrl, ...urls.filter(u => u !== passUrl)],
-        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
+        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource. Token safety, rug check, honeypot, and contract risk: GET /api/verdict/{chain}/{address} ($0.01) returns CLEAR, CAUTION, AVOID, or UNKNOWN.`,
+        tokenSafety: { method: 'GET', path: '/api/verdict/{chain}/{address}', priceUsd: '0.01', verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['token safety', 'rug check', 'honeypot', 'contract risk'], chains: Object.keys(VERDICT_CHAINS) },
         openapi: 'https://micro-saas-agent.onrender.com/openapi.json',
         llms: 'https://micro-saas-agent.onrender.com/llms.txt'
     };
@@ -317,7 +320,7 @@ const RAW_PAID = [
     { path: '/api/regime', method: 'get', price: '0.01', summary: 'Stage 1 crypto market regime check detail (ETF flows, BTC support, alt breadth, Fear & Greed). $0.01.' },
     { path: '/api/dots', method: 'get', price: '0.01', summary: 'Current WaveTrend oversold/overbought band dots across 66 Kraken 4h USD pairs. $0.01.' },
     { path: '/api/coin/{symbol}', method: 'get', price: '0.002', summary: 'WaveTrend 4h snapshot for one coin (cheapest call). $0.002.', pathParam: true, ex: '/api/coin/BTC', pathEx: { symbol: 'BTC' } },
-    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.01', summary: 'Token safety verdict 0-100 (safe/caution/danger) from GoPlus + DexScreener. Automated screen, not a guarantee. $0.01.', params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS) }, address: { type: 'string', description: 'Token contract (0x...) or Solana mint' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', pathEx: { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' } },
+    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.01', summary: VERDICT_BLURB, params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain slug for a token safety, rug check, honeypot, or contract risk screen' }, address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58)' } }, query: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener. 0 or omitted uses the 10-minute cache.' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', pathEx: { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }, responseDescription: 'Paid JSON. The screen is in signal: verdict CLEAR, CAUTION, AVOID, or UNKNOWN, with score, reasons, unknowns, sources, and freshness. Settled only after that screen is ready. A failed lookup is not settled.', responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: VERDICT_OUTPUT_SCHEMA }, required: ['signal'] } },
     { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Kraken large-print buy/sell flow summary joined with WaveTrend 4h state (single venue, not on-chain). $0.02.', pathParam: true, ex: '/api/flows/BTC', pathEx: { symbol: 'BTC' } },
     { path: '/api/brief', method: 'get', price: '0.02', summary: 'Once-per-day (Mountain Time) crypto brief: regime, WaveTrend dot counts, top coins, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser. $0.02.' },
     { path: '/api/rwa', method: 'get', price: '0.02', summary: 'Tokenized RWA flows: protocol TVL, 7d change/estimated flows, movers, yields, top RWA tokens (DefiLlama + CoinGecko). $0.02.' },
@@ -370,7 +373,7 @@ function openApiDoc() {
                 ...(p.bodyEx && BODY_EXAMPLES[p.bodyEx] ? { example: BODY_EXAMPLES[p.bodyEx] } : {}) } } } } : {}),
             'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
             responses: {
-                '200': { description: 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: { type: 'object' } } } },
+                '200': { description: p.responseDescription || 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: p.responseSchema || { type: 'object' } } } },
                 '402': { description: `Day pass first: POST /api/pass/day ($1.00). ${dayPassNote(p.price, { isPass: p.path === '/api/pass/day' })} Payment required: ${p.price} USDC on Base (eip155:8453) via x402 v2. Free teaser: /api/brief/teaser. ${TRUST_LINE}` }
             }
         } };
@@ -399,8 +402,8 @@ function openApiDoc() {
     return {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { name: 'GW8', email: 'mariostefano3@gmail.com', url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
-            description: 'Pay-per-call tools for AI agents via x402 (USDC on Base): should-I-pay decisions (spend policy + seller reputation in one call), spend-policy risk checks, x402 seller reputation verdicts, token safety verdicts, payment-rail cost checks, and crypto market data (regime, WaveTrend band dots, relative strength, flows, simulated hit-rate backtests). Agent guide: /agents.md. No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
-            'x-guidance': 'Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times (N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.05 more than 20). Start free: GET /agents.md, GET /api/brief/teaser, GET /api/sample, GET /api/value/status, GET /api/growth/status, GET /api/seller/reputation/status, GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Agent payments: POST /api/pay/should-i-pay ($0.02), POST /api/spend/check ($0.02), POST /api/seller/reputation ($0.01). Verdicts: GET /api/verdict/{chain}/{address} ($0.01). Payment rails: GET /api/rails ($0.002). Market data: GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/rs ($0.02), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/history ($0.05), GET /api/value/{symbol} ($0.015), GET /api/value ($0.03), GET /api/value/{symbol}/history ($0.07), GET /api/growth/{chain} ($0.015), GET /api/growth ($0.03), GET /api/growth/history ($0.07). Access: POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
+            description: 'Pay-per-call tools for AI agents via x402 (USDC on Base): should-I-pay decisions (spend policy + seller reputation in one call), spend-policy risk checks, x402 seller reputation verdicts, token safety verdicts (rug check, honeypot, contract risk: CLEAR / CAUTION / AVOID / UNKNOWN), payment-rail cost checks, and crypto market data (regime, WaveTrend band dots, relative strength, flows, simulated hit-rate backtests). Agent guide: /agents.md. No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
+            'x-guidance': 'Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times (N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.05 more than 20). Start free: GET /agents.md, GET /api/brief/teaser, GET /api/sample, GET /api/value/status, GET /api/growth/status, GET /api/seller/reputation/status, GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Agent payments: POST /api/pay/should-i-pay ($0.02), POST /api/spend/check ($0.02), POST /api/seller/reputation ($0.01). Token safety, rug check, honeypot, contract risk: GET /api/verdict/{chain}/{address} ($0.01, CLEAR / CAUTION / AVOID / UNKNOWN). Payment rails: GET /api/rails ($0.002). Market data: GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/rs ($0.02), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/history ($0.05), GET /api/value/{symbol} ($0.015), GET /api/value ($0.03), GET /api/value/{symbol}/history ($0.07), GET /api/growth/{chain} ($0.015), GET /api/growth ($0.03), GET /api/growth/history ($0.07). Access: POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -463,8 +466,8 @@ async function buildMcp() {
         async a => { subV = await validateSubscribe(a, COINS); return subV.error || null; }, { noPass: true });
     await paidTool('buy_day_pass', 'Day pass (24h)', '/api/pass/day', 'POST', PASS_PLAN.priceUsd, `Buy a ${PASS_PLAN.hours}h pass for every paid GW8 data tool/endpoint: pass the returned token as the "pass" argument (MCP) or X-GW8-Pass header (HTTP). Fair use ${PASS_PLAN.dailyCap} calls, ${PASS_PLAN.perMinute}/min. Excludes alert subscriptions. Token shown once.`, {}, undefined, () => mintPass(), undefined, { noPass: true });
     await paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history', a => getHistory(a.pair || null));
-    await paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.01', 'Is this token safe? Score 0-100, safe/caution/danger, reasons, sources (GoPlus + DexScreener, fixed rules).', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string() }, a => `/api/verdict/${a.chain}/${a.address}`,
-        a => getVerdict(a.chain, a.address), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
+    await paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.01', 'Token safety, rug check, honeypot, and contract risk. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness (GoPlus + DexScreener). Optional fresh=true re-reads upstream. A failed lookup is not charged.', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict/${a.chain}/${a.address}`,
+        a => getVerdict(String(a.chain).toLowerCase(), String(a.address), { fresh: a.fresh === true }), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
     await paidTool('get_flows', 'Large-print flows + dot state', '/api/flows/{symbol}', 'GET', '0.02', 'Kraken large-print buy/sell summary (single venue, not on-chain) joined with WaveTrend 4h state.', { symbol: z.enum(COINS) }, a => `/api/flows/${a.symbol}`, a => getFlows(a.symbol));
     await paidTool('get_rwa_feed', 'RWA feed', '/api/rwa', 'GET', '0.02', 'Real-world assets on-chain (tokenized treasuries, credit, stocks): top RWA protocols by TVL, 7d change + estimated flows, movers, new launches, yields, top RWA tokens by market cap, with sources and timestamp.', {}, undefined, () => getRwa());
     await paidTool('get_gov_contracts', 'Federal contract feed', '/api/govcontracts', 'GET', '0.01', 'Recent (14-day) US federal contract actions to AI, drone, nuclear, robotics, space, quantum and defense-tech companies (USAspending.gov), with tickers, amount, agency, date, description, award link. Optional ticker / sector / q filters. NOTE: the Department of War daily announcements source is currently blocked from our host (sourceStatus.dodAnnouncements=unavailable; check free GET /api/govcontracts/status), so DoD awards currently appear only via USAspending with a ~90-day lag.', { ticker: z.string().regex(/^[A-Za-z.]{1,6}$/).optional(), sector: z.enum(GOV_SECTORS).optional(), q: z.string().max(60).optional() },
@@ -513,7 +516,7 @@ app.post('/mcp', async (req, res) => {
 app.get('/mcp', (req, res) => res.status(405).set('Allow', 'POST').json({ error: 'Use POST (MCP streamable HTTP, stateless)' }));
 app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.json'], (req, res) => res.json({
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
-    description: 'Agent payment risk checks (should-I-pay, spend policy, x402 seller reputation), token verdicts, payment-rail costs and crypto market data (regime, WaveTrend dots, relative strength). Free sample; paid tools via x402 (USDC on Base). Signed receipts. Signal only, no trading.',
+    description: 'Agent payment risk checks (should-I-pay, spend policy, x402 seller reputation), token safety verdicts (rug check, honeypot, contract risk), payment-rail costs and crypto market data (regime, WaveTrend dots, relative strength). Free sample; paid tools via x402 (USDC on Base). Signed receipts. Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
     tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_value_score', 'get_value_screen', 'get_value_history', 'get_growth_setup', 'get_growth_screen', 'get_growth_history', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'should_i_pay', 'check_spend_policy', 'check_seller_reputation', 'buy_day_pass', 'get_signing_pubkey'],
     dayPass: { endpoint: `${ORIGIN}/api/pass/day`, mcpTool: 'buy_day_pass', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass' },
@@ -826,7 +829,6 @@ console.log('[alerts] persistence:', persistenceMode());
 const hasPaymentOrPass = req => !!(req.headers['payment-signature'] || req.headers['x-payment'] || req.headers['x-gw8-pass']);
 // For an unpaid request with unusable path params, quote the canonical template URL with example params (no data is served).
 const SYM_EXAMPLE = COINS.includes('BTC') ? 'BTC' : COINS[0];
-const VERDICT_EXAMPLE = { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' };
 
 app.get('/api/coin/:symbol', (req, res) => {
     const raw = String(req.params.symbol || '').toUpperCase();
@@ -852,15 +854,20 @@ app.get('/api/verdict/:chain/:address', (req, res) => {
     const bad = validVerdictInput(rawChain, rawAddress);
     if (bad && hasPaymentOrPass(req)) return res.status(400).json({ error: bad, chains: Object.keys(VERDICT_CHAINS), note: 'no payment was taken' });
     const chain = bad ? VERDICT_EXAMPLE.chain : rawChain, address = bad ? VERDICT_EXAMPLE.address : rawAddress;
+    const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
     return handleX402Agent(req, res, {
         url: bad ? `${BASE_URL}/api/verdict/{chain}/{address}` : `${BASE_URL}/api/verdict/${chain}/${address}`, amount: "10000", name: "GW8 Token Safety Verdict (GoPlus + DexScreener)",
-        description: "Token safety verdict: score 0-100 and safe/caution/danger with reasons + source URLs (GoPlus token security + DexScreener liquidity, fixed published rules). Chains: base, ethereum, bsc, arbitrum, solana. Automated screen, not a guarantee. 10-min cache. $0.01 USDC.",
-        tags: ["token-safety", "crypto", "goplus", "dexscreener", "x402"],
+        description: VERDICT_BLURB,
+        tags: VERDICT_TAGS,
+        serviceName: VERDICT_SERVICE_NAME,
         routeTemplate: "/api/verdict/:chain/:address",
         pathParams: { chain, address },
-        example: { chain: "base", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", score: 85, verdict: "safe", reasons: ["liquidity ok"], sources: ["https://api.gopluslabs.io/", "https://api.dexscreener.com/"] },
+        pathParamSchema: VERDICT_PATH_SCHEMA,
+        inputProps: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener; 0 uses the 10-minute cache', example: '0' } },
+        outputSchema: VERDICT_OUTPUT_SCHEMA,
+        example: VERDICT_EXAMPLE,
         precheck: async () => bad ? { error: bad } : null,
-        deliver: () => getVerdict(chain, address).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
+        deliver: () => getVerdict(chain, address, { fresh }).catch(() => ({ error: 'upstream data unavailable, retry shortly', http: 503, sourceStatus: { goplus: 'unavailable', dexscreener: 'unavailable' } }))
     });
 });
 app.get('/api/flows/:symbol', (req, res) => {

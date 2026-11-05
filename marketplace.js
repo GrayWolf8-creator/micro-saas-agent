@@ -99,7 +99,8 @@ export function mountMarketplace(app, signResponses) {
     const chain = String(req.params.chain).toLowerCase(), address = String(req.params.address);
     const bad = validVerdictInput(chain, address);
     if (bad) return res.status(400).json({ error: bad, chains: Object.keys(VERDICT_CHAINS) });
-    return serve(res, () => getVerdict(chain, address));
+    const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
+    return serve(res, () => getVerdict(chain, address, { fresh }));
   });
   app.get(`${base}/rwa`, gated, (req, res) => serve(res, getRwa));
   app.get(`${base}/kraken/listings`, gated, (req, res) => serve(res, getKrakenListings));

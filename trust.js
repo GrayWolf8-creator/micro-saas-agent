@@ -41,7 +41,7 @@ const ADDS = [
     [/^\/api\/spend\/check/, 'allow / deny / needs_approval for your proposed payment, which rule fired, and a signed decision receipt (no free teaser; pure rule check).'],
     [/^\/api\/pay\/should-i-pay/, 'one verdict pay / dont_pay / ask_human from your spend policy + the seller reputation, with reasons and one signed receipt (no free teaser).'],
     [/^\/api\/seller\/reputation/, '0-100 seller score, verdict, wash/self-dealing share, buyer count, concentration and wallet age from public Base USDC history, with a signed receipt (no free teaser).'],
-    [/^\/api\/verdict\//, 'Token safety score 0-100 with reasons and sources (not in the teaser).'],
+    [/^\/api\/verdict\//, 'Token safety screen: CLEAR, CAUTION, AVOID, or UNKNOWN, with the rule that fired, unknowns, sources, and freshness (free sample is score and verdict only).'],
     [/^\/api\/pass\/day/, 'One payment, 24h of every paid data endpoint and MCP tool (fair use 2000 calls).'],
     [/^\/api\/alerts\/subscribe/, 'New green dots pushed to your webhook for 30 days (the teaser is pull-only).'],
 ];

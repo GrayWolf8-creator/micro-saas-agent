@@ -9,82 +9,255 @@ const r2 = v => Math.round(v * 100) / 100;
 const getJson = async (url, ms = 12000) => { const r = await fetch(url, { signal: AbortSignal.timeout(ms) }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
 
 // ---------- 1. Token safety verdict ----------
-export const VERDICT_CHAINS = { base: '8453', ethereum: '1', bsc: '56', arbitrum: '42161', solana: 'solana' };
+// Chains both GoPlus token-security and DexScreener answer without an API key. Tron is omitted (different address form).
+export const VERDICT_CHAINS = {
+  ethereum: '1', bsc: '56', polygon: '137', avalanche: '43114', cronos: '25', gnosis: '100',
+  optimism: '10', base: '8453', arbitrum: '42161', opbnb: '204', zksync: '324', linea: '59144',
+  scroll: '534352', mantle: '5000', blast: '81457', unichain: '130', berachain: '80094', sonic: '146',
+  worldchain: '480', abstract: '2741', soneium: '1868', story: '1514', solana: 'solana'
+};
+export const VERDICT_LABELS = ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'];
+export const VERDICT_TTL_SEC = 600;
+export const VERDICT_NOTE = 'Factual screen of public GoPlus and DexScreener records. CLEAR means the score is at least 75, no limiting unknown is open, and no control rule that blocks CLEAR fired. It is not a guarantee that a transfer will succeed.';
+// Kept under the CDP 500-char resource.description cap after the catalog category prefix.
+export const VERDICT_BLURB = 'Factual token safety screen for a rug check, honeypot, and contract risk before a swap, transfer, or approval. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness. GoPlus plus DexScreener. Base, Ethereum, BSC, Polygon, Arbitrum, Optimism, Avalanche, Solana, and other supported chains. ?fresh=1 skips cache. $0.01 USDC. CLEAR means no blocking rule fired.';
+export const VERDICT_TAGS = ['token-safety', 'rug-check', 'honeypot', 'contract-risk', 'goplus'];
+export const VERDICT_SERVICE_NAME = 'GW8 Token Safety';
+const VTTL = VERDICT_TTL_SEC * 1000;
+const AVOID_CODES = new Set(['honeypot', 'cannot_sell_all', 'non_transferable', 'balance_mutable', 'airdrop_scam', 'fake_token']);
+const BLOCKS_CLEAR = new Set(['freeze_authority', 'mint_authority', 'mintable', 'pausable', 'hidden_owner', 'ownership_reclaim', 'owner_change_balance', 'unverified', 'lp_unlocked']);
+const BURNS = new Set(['0x0000000000000000000000000000000000000000', '0x000000000000000000000000000000000000dead']);
+const flag = v => v === '1' || v === 1 || v === true;
 export const VERDICT_RULES = [
-  'Start at 100. Clamp to 0-100.',
-  'EVM: honeypot -100; cannot sell all -40; buy or sell tax >10% -30 (>=5% -10); hidden owner -25; owner can take back ownership -25; owner can change balances -30; selfdestruct -25; mintable -15; trading pausable -15; blacklist function -10; transfer cooldown -10; tax modifiable -15; proxy contract -10; source not verified -25.',
-  'EVM: top-10 holders (excluding locked/contract-tagged LP) >80% -20 (>50% -10); creator holds >20% -10; no DEX listing seen by GoPlus -15.',
-  'Solana: mint authority active -20; freeze authority active -25; balance mutable by authority -40; non-transferable -40; transfer fee set -15; metadata mutable -5; closable -10.',
-  'Market (DexScreener, all chains): top pair liquidity <$10k -20 (<$50k -10); no pairs found -20; pair younger than 24h -10.',
-  'Verdict: score >=75 safe, 40-74 caution, <40 danger. Missing GoPlus data caps verdict at caution.'
+  'Start at 100 and clamp to 0-100. UNKNOWN is not scored (score is null).',
+  'EVM: honeypot -100; cannot sell all -40; buy or sell tax >10% -30 (>=5% -10); hidden owner -25; owner can take back ownership -25; owner can change balances -30; selfdestruct -25; mintable -15; trading pausable -15; blacklist -10; whitelist -10; transfer cooldown -10; tax modifiable -15; per-address tax -15; proxy -10; source not verified -25; external call -10; cannot buy -20; creator linked to a honeypot -25; fake token -40; airdrop-scam flag -40.',
+  'EVM: top-10 holders excluding locked and contract-tagged rows >80% -20 (>50% -10); creator holds >20% -10; GoPlus says not in any DEX -15. LP lock is scored only when GoPlus returns lp_holders: locked or burned under 50% -20. A missing LP list is reported and does not change the score.',
+  'Solana: mint authority -20; freeze authority -25; balances mutable by authority -40; non-transferable -40; transfer fee -15; metadata mutable -5; closable -10.',
+  'Market (DexScreener): no pairs -20; top pair liquidity under $10k -20 (under $50k -10); pair younger than 24h -10.',
+  'AVOID if honeypot, cannot sell all, non-transferable, mutable balances, airdrop-scam, fake token, or score < 40. UNKNOWN if both sources answered and there is no security record and no pair. CLEAR if score >= 75, every unknown has limitsVerdict false, and none of these fired: freeze authority, mint authority, mintable, pausable, hidden owner, ownership reclaim, owner can change balances, unverified source, LP unlocked. Otherwise CAUTION.',
+  'limitsVerdict true means a source failed, the security record is missing, or no DEX pair was found. Those block CLEAR. A completed UNKNOWN is a finished lookup. A failed lookup (both sources down, or the only source that answered had nothing on file) returns an error and is not a verdict.'
 ];
-const vcache = new Map(); const VTTL = 10 * 60 * 1000;
+export const VERDICT_EXAMPLE = {
+  chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', verdict: 'CLEAR', score: 90,
+  reasons: [{ code: 'proxy', points: -10, detail: 'upgradeable proxy' }],
+  unknowns: [],
+  sources: [
+    { name: 'goplus', status: 'ok', url: 'https://api.gopluslabs.io/' },
+    { name: 'dexscreener', status: 'ok', url: 'https://api.dexscreener.com/' }
+  ],
+  freshness: { checkedAt: '2026-11-05T00:00:00.000Z', cached: false, cacheTtlSec: VERDICT_TTL_SEC, ageSec: 0 }
+};
+export const VERDICT_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  properties: {
+    chain: { type: 'string' },
+    address: { type: 'string' },
+    verdict: { type: 'string', enum: VERDICT_LABELS },
+    score: { type: 'number' },
+    reasons: { type: 'array', items: { type: 'object', required: ['code', 'points', 'detail'], properties: { code: { type: 'string' }, points: { type: 'number' }, detail: { type: 'string' } } } },
+    unknowns: { type: 'array', items: { type: 'object', required: ['code', 'detail', 'limitsVerdict'], properties: { code: { type: 'string' }, detail: { type: 'string' }, limitsVerdict: { type: 'boolean' } } } },
+    sources: { type: 'array' },
+    freshness: { type: 'object', properties: { checkedAt: { type: 'string' }, cached: { type: 'boolean' }, cacheTtlSec: { type: 'number' }, ageSec: { type: 'number' } }, required: ['checkedAt', 'cached', 'cacheTtlSec', 'ageSec'] }
+  },
+  required: ['verdict', 'score', 'reasons', 'unknowns', 'sources', 'freshness']
+};
+export const VERDICT_PATH_SCHEMA = {
+  chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain slug for a token safety, rug check, honeypot, or contract risk screen' },
+  address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58)' }
+};
+const vcache = new Map();
+export function _resetVerdictCache() { vcache.clear(); }
 export function validVerdictInput(chain, address) {
   if (!VERDICT_CHAINS[chain]) return 'unsupported chain';
   if (chain === 'solana' ? !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address) : !/^0x[0-9a-fA-F]{40}$/.test(address)) return 'invalid address';
   return null;
 }
-export async function getVerdict(chain, address) {
-  const key = `${chain}:${chain === 'solana' ? address : address.toLowerCase()}`;
-  const hit = vcache.get(key); if (hit && Date.now() - hit.t < VTTL) return { ...hit.data, cached: true };
+export function verdictSourceUrls(chain, address) {
   const id = VERDICT_CHAINS[chain];
-  const gpUrl = chain === 'solana' ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${address}` : `https://api.gopluslabs.io/api/v1/token_security/${id}?contract_addresses=${address}`;
-  const dsUrl = `https://api.dexscreener.com/tokens/v1/${chain}/${address}`;
-  const [gp, ds] = await Promise.allSettled([getJson(gpUrl), getJson(dsUrl)]);
-  if (gp.status === 'rejected' && ds.status === 'rejected') return { error: 'upstream data unavailable, retry shortly' }; // both sources down: no verdict, no charge
-  let score = 100; const reasons = []; const hit_ = (pts, why) => { score -= pts; reasons.push(`-${pts}: ${why}`); };
-  let t = null;
-  if (gp.status === 'fulfilled' && gp.value?.result) { const res = gp.value.result; t = res[address] || res[address.toLowerCase()] || Object.values(res)[0] || null; }
-  const one = v => v === '1' || v === 1;
+  const evm = chain === 'solana' ? address : address.toLowerCase();
+  const goplus = chain === 'solana'
+    ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${encodeURIComponent(address)}`
+    : `https://api.gopluslabs.io/api/v1/token_security/${id}?contract_addresses=${evm}`;
+  return { goplus, dexscreener: `https://api.dexscreener.com/tokens/v1/${chain}/${encodeURIComponent(evm)}` };
+}
+const FETCH_MS = 8000;
+async function defaultFetchJson(url) {
+  let r;
+  try { r = await fetch(url, { signal: AbortSignal.timeout(FETCH_MS), headers: { accept: 'application/json' } }); }
+  catch (e) {
+    const err = new Error('fetch failed');
+    err.detail = e && (e.name === 'TimeoutError' || e.name === 'AbortError') ? 'timeout' : 'unavailable';
+    throw err;
+  }
+  if (!r.ok) { const err = new Error('http'); err.detail = `http_${r.status}`; throw err; }
+  try { return await r.json(); }
+  catch { const err = new Error('bad_json'); err.detail = 'bad_json'; throw err; }
+}
+async function readSource(run) {
+  try { return { ok: true, body: await run() }; }
+  catch (e) { return { ok: false, detail: (e && e.detail) || 'unavailable' }; }
+}
+function readGoPlus(chain, address, got) {
+  if (!got.ok) return { status: 'error', detail: got.detail, token: null };
+  const body = got.body;
+  if (!body || typeof body !== 'object' || Number(body.code) !== 1 || !body.result || typeof body.result !== 'object')
+    return { status: 'error', detail: 'api_code', token: null };
+  const res = body.result;
+  let token = res[address] || res[address.toLowerCase()] || null;
+  if (!token) {
+    const vals = Object.values(res).filter(v => v && typeof v === 'object');
+    token = vals.length === 1 ? vals[0] : null;
+  }
+  return token ? { status: 'ok', detail: null, token } : { status: 'empty', detail: 'no_record', token: null };
+}
+function readDex(got) {
+  if (!got.ok) return { status: 'error', detail: got.detail, pairs: [] };
+  if (!Array.isArray(got.body)) return { status: 'error', detail: 'bad_json', pairs: [] };
+  return got.body.length ? { status: 'ok', detail: null, pairs: got.body } : { status: 'empty', detail: 'no_pairs', pairs: [] };
+}
+// Failed lookup: nothing factual to return. The paid route sees `error` and does not settle.
+function failedLookup(goplus, dex) {
+  const gpDead = goplus.status === 'error';
+  const dexDead = dex.status === 'error';
+  if (gpDead && dexDead) return true;
+  if (gpDead && dex.status === 'empty') return true;
+  if (dexDead && goplus.status === 'empty') return true;
+  return false;
+}
+function sourceStatus(goplus, dex) {
+  return {
+    goplus: goplus.status === 'error' ? goplus.detail : goplus.status,
+    dexscreener: dex.status === 'error' ? dex.detail : dex.status
+  };
+}
+function lpCoveredPct(holders) {
+  let covered = 0;
+  for (const h of holders) {
+    const pct = Number(h.percent) || 0;
+    const addr = String(h.address || h.token_account || '').toLowerCase();
+    const tag = String(h.tag || '').toLowerCase();
+    if (flag(h.is_locked) || tag.includes('lock') || BURNS.has(addr) || tag.includes('burn')) covered += pct;
+  }
+  return covered * 100;
+}
+export function scoreVerdict(chain, address, input, now = Date.now()) {
+  const goplus = input.goplus, dex = input.dex;
+  const fetchedAt = input.fetchedAt || new Date(now).toISOString();
+  const urls = input.urls || verdictSourceUrls(chain, address);
+  const sources = [
+    { name: 'goplus', url: urls.goplus, status: goplus.status, ...(goplus.detail ? { detail: goplus.detail } : {}), fetchedAt },
+    { name: 'dexscreener', url: urls.dexscreener, status: dex.status, ...(dex.detail ? { detail: dex.detail } : {}), fetchedAt }
+  ];
+  const freshness = { checkedAt: fetchedAt, cached: false, cacheTtlSec: VERDICT_TTL_SEC, ageSec: 0 };
+  const base = { engine: 'gw8-token-verdict/2', chain, address, sources, freshness, checkedAt: fetchedAt, cached: false, rules: VERDICT_RULES, note: VERDICT_NOTE, disclaimer: VERDICT_NOTE, coverage: { chains: Object.keys(VERDICT_CHAINS) } };
+  if (goplus.status === 'empty' && dex.status === 'empty') {
+    return { ...base, verdict: 'UNKNOWN', score: null, market: null, token: null,
+      reasons: [{ code: 'no_record', points: 0, detail: 'GoPlus has no token security record and DexScreener has no pairs for this address.' }],
+      unknowns: [
+        { code: 'goplus_no_record', detail: 'GoPlus token security has no row for this address.', limitsVerdict: true },
+        { code: 'dex_no_pairs', detail: 'DexScreener returned no pairs for this address.', limitsVerdict: true }
+      ] };
+  }
+  let score = 100;
+  const reasons = [], unknowns = [];
+  const hit = (code, points, detail) => { score -= points; reasons.push({ code, points: -points, detail }); };
+  const t = goplus.token;
+  if (goplus.status === 'error') unknowns.push({ code: 'goplus_unavailable', detail: `GoPlus token security did not answer (${goplus.detail}).`, limitsVerdict: true });
+  else if (goplus.status === 'empty') {
+    hit('no_security_record', 15, 'no GoPlus token security record');
+    unknowns.push({ code: 'goplus_no_record', detail: 'GoPlus token security has no row for this address.', limitsVerdict: true });
+  }
   if (t && chain !== 'solana') {
-    if (one(t.is_honeypot)) hit_(100, 'honeypot detected');
-    if (one(t.cannot_sell_all)) hit_(40, 'cannot sell all tokens');
-    const tax = Math.max(+t.buy_tax || 0, +t.sell_tax || 0) * 100;
-    if (tax > 10) hit_(30, `tax ${r2(tax)}%`); else if (tax >= 5) hit_(10, `tax ${r2(tax)}%`);
-    if (one(t.hidden_owner)) hit_(25, 'hidden owner');
-    if (one(t.can_take_back_ownership)) hit_(25, 'owner can take back ownership');
-    if (one(t.owner_change_balance)) hit_(30, 'owner can change balances');
-    if (one(t.selfdestruct)) hit_(25, 'selfdestruct');
-    if (one(t.is_mintable)) hit_(15, 'mintable');
-    if (one(t.transfer_pausable)) hit_(15, 'trading can be paused');
-    if (one(t.is_blacklisted)) hit_(10, 'blacklist function');
-    if (one(t.trading_cooldown)) hit_(10, 'transfer cooldown');
-    if (one(t.slippage_modifiable)) hit_(15, 'tax modifiable');
-    if (one(t.is_proxy)) hit_(10, 'upgradeable proxy');
-    if (t.is_open_source === '0') hit_(25, 'source not verified');
-    const top = (t.holders || []).filter(h => !h.is_locked && !h.is_contract).slice(0, 10).reduce((a, h) => a + (+h.percent || 0), 0) * 100;
-    if (top > 80) hit_(20, `top holders own ${r2(top)}%`); else if (top > 50) hit_(10, `top holders own ${r2(top)}%`);
-    if ((+t.creator_percent || 0) * 100 > 20) hit_(10, `creator holds ${r2(+t.creator_percent * 100)}%`);
-    if (t.is_in_dex === '0') hit_(15, 'not seen on any DEX');
+    if (flag(t.is_honeypot)) hit('honeypot', 100, 'GoPlus is_honeypot=1');
+    if (flag(t.cannot_sell_all)) hit('cannot_sell_all', 40, 'cannot sell the full balance');
+    const tax = Math.max(Number(t.buy_tax) || 0, Number(t.sell_tax) || 0) * 100;
+    if (tax > 10) hit('tax', 30, `buy or sell tax ${r2(tax)}%`);
+    else if (tax >= 5) hit('tax', 10, `buy or sell tax ${r2(tax)}%`);
+    if (flag(t.hidden_owner)) hit('hidden_owner', 25, 'hidden owner');
+    if (flag(t.can_take_back_ownership)) hit('ownership_reclaim', 25, 'owner can take back ownership');
+    if (flag(t.owner_change_balance)) hit('owner_change_balance', 30, 'owner can change balances');
+    if (flag(t.selfdestruct)) hit('selfdestruct', 25, 'selfdestruct present');
+    if (flag(t.is_mintable)) hit('mintable', 15, 'mint function present');
+    if (flag(t.transfer_pausable)) hit('pausable', 15, 'transfers can be paused');
+    if (flag(t.is_blacklisted)) hit('blacklist', 10, 'blacklist function present');
+    if (flag(t.is_whitelisted)) hit('whitelist', 10, 'whitelist function present');
+    if (flag(t.trading_cooldown)) hit('cooldown', 10, 'transfer cooldown present');
+    if (flag(t.slippage_modifiable)) hit('tax_modifiable', 15, 'tax can be changed');
+    if (flag(t.personal_slippage_modifiable)) hit('personal_tax', 15, 'per-address tax can be changed');
+    if (flag(t.is_proxy)) hit('proxy', 10, 'upgradeable proxy');
+    if (t.is_open_source === '0') hit('unverified', 25, 'source not verified');
+    if (flag(t.external_call)) hit('external_call', 10, 'contract makes external calls');
+    if (flag(t.cannot_buy)) hit('cannot_buy', 20, 'buys are blocked');
+    if (flag(t.honeypot_with_same_creator)) hit('creator_honeypot', 25, 'same creator is linked to a honeypot');
+    if (flag(t.is_airdrop_scam)) hit('airdrop_scam', 40, 'GoPlus airdrop-scam flag');
+    const fake = t.fake_token;
+    if ((fake && flag(fake.value)) || t.is_true_token === '0') hit('fake_token', 40, 'flagged as a fake of another token');
+    if (Array.isArray(t.holders) && t.holders.length) {
+      const top = t.holders.filter(h => !flag(h.is_locked) && !flag(h.is_contract)).slice(0, 10).reduce((a, h) => a + (Number(h.percent) || 0), 0) * 100;
+      if (top > 80) hit('holder_concentration', 20, `top holders own ${r2(top)}%`);
+      else if (top > 50) hit('holder_concentration', 10, `top holders own ${r2(top)}%`);
+    }
+    if (Number(t.creator_percent) * 100 > 20) hit('creator_balance', 10, `creator holds ${r2(Number(t.creator_percent) * 100)}%`);
+    if (t.is_in_dex === '0') hit('not_in_dex', 15, 'GoPlus has not seen this token on a DEX');
+    if (Array.isArray(t.lp_holders) && t.lp_holders.length) {
+      const covered = lpCoveredPct(t.lp_holders);
+      if (covered < 50) hit('lp_unlocked', 20, `LP locked or burned ${r2(covered)}%`);
+    } else unknowns.push({ code: 'lp_lock', detail: 'GoPlus did not include LP lock or burn status.', limitsVerdict: false });
   } else if (t && chain === 'solana') {
     const on = f => f && f.status === '1';
-    if (on(t.mintable)) hit_(20, 'mint authority active');
-    if (on(t.freezable)) hit_(25, 'freeze authority active');
-    if (on(t.balance_mutable_authority)) hit_(40, 'balances mutable by authority');
-    if (t.non_transferable === '1') hit_(40, 'non-transferable');
-    if (t.transfer_fee && Object.keys(t.transfer_fee).length) hit_(15, 'transfer fee set');
-    if (on(t.metadata_mutable)) hit_(5, 'metadata mutable');
-    if (on(t.closable)) hit_(10, 'closable');
+    if (on(t.mintable)) hit('mint_authority', 20, 'mint authority active');
+    if (on(t.freezable)) hit('freeze_authority', 25, 'freeze authority active');
+    if (on(t.balance_mutable_authority)) hit('balance_mutable', 40, 'balances mutable by authority');
+    if (t.non_transferable === '1') hit('non_transferable', 40, 'non-transferable');
+    if (t.transfer_fee && Object.keys(t.transfer_fee).length) hit('transfer_fee', 15, 'transfer fee set');
+    if (on(t.metadata_mutable)) hit('metadata_mutable', 5, 'metadata mutable');
+    if (on(t.closable)) hit('closable', 10, 'token account closable');
   }
   let market = null;
-  if (ds.status === 'fulfilled' && Array.isArray(ds.value)) {
-    const pairs = ds.value.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
-    if (!pairs.length) hit_(20, 'no DEX pairs found');
-    else {
-      const p = pairs[0], liq = p.liquidity?.usd || 0;
-      market = { symbol: p.baseToken?.symbol, priceUsd: +p.priceUsd || null, liquidityUsd: liq, volume24hUsd: p.volume?.h24 ?? null, pairs: pairs.length, topPair: p.url };
-      if (liq < 10000) hit_(20, `low liquidity $${Math.round(liq)}`); else if (liq < 50000) hit_(10, `thin liquidity $${Math.round(liq)}`);
-      if (p.pairCreatedAt && Date.now() - p.pairCreatedAt < 86400000) hit_(10, 'pair younger than 24h');
-    }
+  if (dex.status === 'error') unknowns.push({ code: 'dexscreener_unavailable', detail: `DexScreener did not answer (${dex.detail}).`, limitsVerdict: true });
+  else if (dex.status === 'empty') {
+    hit('no_pairs', 20, 'no DEX pairs found');
+    unknowns.push({ code: 'dex_no_pairs', detail: 'DexScreener returned no pairs for this address.', limitsVerdict: true });
+  } else {
+    const pairs = [...dex.pairs].sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+    const p = pairs[0], liq = Number(p.liquidity?.usd) || 0;
+    const ageMs = p.pairCreatedAt ? now - Number(p.pairCreatedAt) : null;
+    market = { symbol: p.baseToken?.symbol || null, priceUsd: Number(p.priceUsd) || null, liquidityUsd: liq, volume24hUsd: p.volume?.h24 ?? null, pairs: pairs.length, topPair: p.url || null, pairAgeHours: ageMs == null ? null : Math.round(ageMs / 36e5) };
+    if (liq < 10000) hit('low_liquidity', 20, `top pair liquidity $${Math.round(liq)}`);
+    else if (liq < 50000) hit('thin_liquidity', 10, `top pair liquidity $${Math.round(liq)}`);
+    if (ageMs != null && ageMs >= 0 && ageMs < 86400000) hit('new_pair', 10, 'top pair younger than 24h');
   }
   score = Math.max(0, Math.min(100, score));
-  let verdict = score >= 75 ? 'safe' : score >= 40 ? 'caution' : 'danger';
-  if (!t) { reasons.push('GoPlus data unavailable for this token: verdict capped at caution'); if (verdict === 'safe') verdict = 'caution'; }
-  const data = { chain, address, score, verdict, reasons: reasons.length ? reasons : ['no risk flags found by the rules'], market,
-    token: t ? { name: t.token_name || t.metadata?.name || null, symbol: t.token_symbol || t.metadata?.symbol || null, holders: t.holder_count ? +t.holder_count : null } : null,
-    sources: [gpUrl, dsUrl], rules: VERDICT_RULES, checkedAt: new Date().toISOString(),
-    note: 'Automated rule-based screen of public data. A safe score is not a guarantee; new scam patterns may not be detected.', disclaimer: DISCLAIMER };
-  vcache.set(key, { t: Date.now(), data }); if (vcache.size > 2000) vcache.delete(vcache.keys().next().value);
+  const hard = reasons.some(r => AVOID_CODES.has(r.code));
+  const blocksClear = reasons.some(r => BLOCKS_CLEAR.has(r.code));
+  const limited = unknowns.some(u => u.limitsVerdict);
+  const verdict = hard || score < 40 ? 'AVOID' : (limited || blocksClear || score < 75) ? 'CAUTION' : 'CLEAR';
+  if (!reasons.length) reasons.push({ code: 'no_flags', points: 0, detail: 'No published rule fired on the records retrieved.' });
+  const token = t ? { name: t.token_name || t.metadata?.name || null, symbol: t.token_symbol || t.metadata?.symbol || null, holders: t.holder_count ? Number(t.holder_count) : null, trustListed: flag(t.trust_list) } : null;
+  return { ...base, verdict, score, reasons, unknowns, market, token };
+}
+export async function getVerdict(chain, address, opts = {}) {
+  const bad = validVerdictInput(chain, address);
+  if (bad) return { error: bad, http: 400 };
+  const fresh = opts.fresh === true || opts.fresh === '1' || opts.fresh === 1;
+  const key = `${chain}:${chain === 'solana' ? address : address.toLowerCase()}`;
+  if (!fresh) {
+    const hit = vcache.get(key);
+    if (hit && Date.now() - hit.t < VTTL) {
+      const ageSec = Math.max(0, Math.round((Date.now() - hit.t) / 1000));
+      return { ...hit.data, cached: true, freshness: { ...hit.data.freshness, cached: true, ageSec } };
+    }
+  }
+  const urls = verdictSourceUrls(chain, address);
+  const fetchJson = opts.fetchJson || defaultFetchJson;
+  const [gp, ds] = await Promise.all([readSource(() => fetchJson(urls.goplus)), readSource(() => fetchJson(urls.dexscreener))]);
+  const goplus = readGoPlus(chain, address, gp);
+  const dex = readDex(ds);
+  if (failedLookup(goplus, dex)) return { error: 'upstream data unavailable, retry shortly', http: 503, sourceStatus: sourceStatus(goplus, dex) };
+  const data = scoreVerdict(chain, address, { goplus, dex, urls, fetchedAt: new Date().toISOString() });
+  vcache.set(key, { t: Date.now(), data });
+  if (vcache.size > 2000) vcache.delete(vcache.keys().next().value);
   return data;
 }
 

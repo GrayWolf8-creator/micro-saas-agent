@@ -1,5 +1,5 @@
 # GW8 Signal API (x402): agent payment risk checks + crypto market data
-> Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), token verdicts, payment-rail costs, crypto market data. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
+> Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), token safety (rug check, honeypot, contract risk), payment-rail costs, crypto market data. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
 > Agent guide with "use this when", examples, idempotency and receipt verification: GET /agents.md
 
 ## Day pass first
@@ -77,7 +77,7 @@ POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fai
 - GET /api/coin/:symbol ($0.002): WaveTrend 4h for one coin (cheapest).
 - GET /api/history ($0.05): **simulated** 90-day hit-rate backtest (+4h/+24h/+3d). Not a live trade log.
 - GET /api/brief ($0.02): once-per-day MT digest — regime, top 10 dots with strength, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser.
-- GET /api/verdict/:chain/:address ($0.01): token safety 0-100 (GoPlus + DexScreener). Automated screen, not a guarantee.
+- GET /api/verdict/:chain/:address ($0.01): token safety, rug check, honeypot, and contract risk. `signal.verdict` is CLEAR, CAUTION, AVOID, or UNKNOWN, with score (null only for UNKNOWN), reasons[{code, points, detail}], unknowns[{code, detail, limitsVerdict}], sources[{name, url, status, fetchedAt}], and freshness. GoPlus token security plus DexScreener liquidity. Chains: base, ethereum, bsc, polygon, arbitrum, optimism, avalanche, linea, scroll, zksync, mantle, blast, gnosis, cronos, unichain, berachain, sonic, worldchain, abstract, soneium, story, opbnb, solana. `?fresh=1` skips the 10-minute cache. Failed lookups (both sources down, or the only source that answered had nothing on file) are 503 and are not charged. UNKNOWN means both sources answered and found no security record and no pair. CLEAR means score >= 75 with no blocking control rule and no limiting unknown. Optional free sample: `?sample=1` returns score and verdict only.
 - GET /api/flows/:symbol ($0.02): Kraken large-print flows + WaveTrend (single venue).
 - GET /api/kraken/listings ($0.02): new Kraken USD pairs (30d) + WaveTrend state.
 - GET /api/rs ($0.02): relative strength (1w/1m returns, ranks, 0-100 score) on 66 Kraken pairs + sector scores and breadth.

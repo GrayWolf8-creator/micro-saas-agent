@@ -12,6 +12,12 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Which paid routes sold (2026-11-05)
+- `GET /api/sales` (free, public, not an x402 route and not in the Bazaar paid list): counts of successful sales by route template, surface, and UTC day. `paid` is a new x402 facilitator settlement (HTTP, not a safe-retry replay) or an MCP in-band settlement, or a RapidAPI/Apify proxy response of 2xx. `pass` is a call served by a day pass (the USDC sale is `POST /api/pass/day`). `quotes` is every HTTP 402. `sample` and `free` are unpaid 2xx. `?days=` is 1..35, default 7.
+- The response is route names, counts, and dates only. No IPs, wallet addresses, headers, query strings, or request bodies.
+- Persistence without a new service or secret: `data/sales-counts.json` on the instance disk (reloaded on boot, about 35 days) plus one stdout line per sale, `[gw8-sale] {"v":1,"day","route","surface","event":"paid"}`. SIGTERM/SIGINT also prints `[gw8-sales-snapshot]` with the aggregates. Render free disk is wiped on redeploy and can be wiped when the instance sleeps, and this process does not read the logs back, so after a wipe the endpoint shows only what the file still holds. Older sales stay in the Render logs for as long as Render keeps them: search for `[gw8-sale]`.
+- Prices, the payment flow, and the payout wallet are unchanged. `/api/stats` and `/api/traffic` are unchanged apart from a link to `/api/sales`.
+
 ### Stats Redis command use (2026-10-31)
 - Per-request stats and traffic counters are summed in memory and flushed to Upstash about every 5 minutes, and on SIGTERM/SIGINT, as one APPEND per dirty key (`gw8:stats:buf:<MT day>`, `gw8:traffic:v1:buf:<UTC day>`). `/api/stats` and `/api/traffic` merge those buffers with anything not yet flushed, so the report shapes and day boundaries stay the same. A hard crash can drop up to about 5 minutes of counts; a deploy flush does not.
 - A failed Redis read of the alerts (and weekly-brief) subscriber list no longer looks like an empty list. Subscribe or cancel will not SET over the stored list unless the read succeeded.

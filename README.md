@@ -17,3 +17,5 @@ claude mcp add --scope user --transport http gw8-signal-api-mcp https://micro-sa
   Data source: Alchemy Transfers API when the server has `ALCHEMY_API_KEY` set (free plan is enough), else keyless Blockscout. `GET /api/seller/reputation/status` shows which source is active.
 
 All three return Ed25519-signed receipts (free check: `POST /api/receipt/verify`). Value-capture and growth-lane screens are on `/api/value` and `/api/growth` (free `/status` on each). Day pass first for repeated calls: `POST /api/pass/day`. Full list: [`/llms.txt`](https://micro-saas-agent.onrender.com/llms.txt).
+
+**Which routes sold:** [`GET /api/sales`](https://micro-saas-agent.onrender.com/api/sales) (add `?days=30` for a longer window). Free, no payment. Counts by route template, surface (`x402`, `rapidapi`, `apify`), and UTC day: `paid` (a new x402 settlement or a marketplace 2xx), `pass` (served with a day pass), `quotes` (HTTP 402), `sample`, and `free`. No buyer addresses or request data. The on-chain USDC transfer still shows only the amount; this is the route name that goes with it.

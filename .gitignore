@@ -1,2 +1,4 @@
 .env
 node_modules
+data/sales-counts.json
+data/sales-counts.json.*.tmp

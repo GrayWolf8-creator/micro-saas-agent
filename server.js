@@ -22,6 +22,7 @@ import { getRails, validAmount } from './rails.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
 import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute, mountTrafficReport, installStatsFlush } from './stats.js';
+import { salesMiddleware, mountSalesReport, installSalesFlush, recordMcpSale } from './sales.js';
 import { funnel, dayPassNote, receiptHeaders, receiptKeyInfo, replayKey, once, TRUST_LINE, RECEIPT_KEY_PATH, buildReceipt, verifyReceipt, VERIFY_PATH } from './trust.js';
 import { getValueSymbol, getValueBatch, getValueHistory, getValueStatus, parseValueQuery, parseWeeks, findCoin, VALUE_PRICES } from './value.js';
 import { getGrowthOne, getGrowthList, getGrowthHistory, getGrowthStatus, parseGrowthQuery, findGrowth, GROWTH_PRICES } from './growth.js';
@@ -41,6 +42,9 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 // Per-endpoint request tallies (402 quotes vs paid 2xx etc). Free, no PII. Before x402 handlers.
 app.use(statsMiddleware);
+// Which routes sold (x402 vs RapidAPI). Counts only. Register the shutdown flush before stats so it runs first.
+app.use(salesMiddleware);
+installSalesFlush();
 installStatsFlush();
 let sampleRouteCache = { t: 0, routes: null };
 async function currentSampleRoutes() {
@@ -267,7 +271,7 @@ app.get('/', (req, res) => {
                 ]
             }
         },
-        free: { teaser: "/api/brief/teaser", sample: "/api/sample", valueStatus: "/api/value/status", growthStatus: "/api/growth/status", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", traffic: "/api/traffic", trafficHtml: "/traffic.html", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH, receiptVerify: VERIFY_PATH, sellerReputationStatus: "/api/seller/reputation/status" },
+        free: { teaser: "/api/brief/teaser", sample: "/api/sample", valueStatus: "/api/value/status", growthStatus: "/api/growth/status", trackRecord: "/track", trackJson: "/api/track", stats: "/api/stats", statsHtml: "/stats.html", traffic: "/api/traffic", trafficHtml: "/traffic.html", sales: "/api/sales", proofPubkey: "/api/proof/pubkey", receiptKey: RECEIPT_KEY_PATH, receiptVerify: VERIFY_PATH, sellerReputationStatus: "/api/seller/reputation/status" },
         bestValue: { path: "/api/pass/day", method: "POST", priceUsd: "1.00", note: "one payment, 24h of every paid data endpoint" },
         trust: TRUST_LINE + " Safe retry: same PAYMENT-SIGNATURE within 15 min is not charged twice.",
         docs: "/llms.txt",
@@ -386,6 +390,9 @@ function openApiDoc() {
         { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 30, default: 1 } },
         { name: 'format', in: 'query', schema: { type: 'string', enum: ['json', 'md'], default: 'json' } }
     ], responses: { '200': { description: 'Stats JSON or markdown' } } } };
+    paths['/api/sales'] = { get: { operationId: 'sales', summary: 'Free: which paid routes sold. Counts of x402 settlements, RapidAPI and Apify 2xx calls, day-pass uses, 402 challenges, and free/sample calls, by route template and UTC day. No IPs, wallet addresses, headers, or request bodies. Not an x402 route.', security: [], parameters: [
+        { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 35, default: 7 } }
+    ], responses: { '200': { description: 'Sales counts JSON' } } } };
     paths['/api/traffic'] = { get: { operationId: 'traffic', summary: 'Free operator report: requests by route template x HTTP status x UTC day, surfaces (x402 /api, RapidAPI /mkt/rapidapi, free/public), and a capped list of sanitized unmatched probe paths. HTML at /traffic.html. Not counted in its own totals. If TRAFFIC_REPORT_TOKEN is set on the server, send Authorization: Bearer. No IPs, headers, or payment payloads.', security: [], parameters: [
         { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 30, default: 7 } }
     ], responses: { '200': { description: 'Traffic JSON' }, '401': { description: 'TRAFFIC_REPORT_TOKEN is set and Authorization Bearer did not match' } } } };
@@ -603,6 +610,7 @@ async function handleX402Agent(req, res, product = null) {
         let out;
         try { out = await deliver(); } catch (e) { out = { error: 'upstream data unavailable, retry shortly' }; }
         if (!out || out.error) { await refundPass(p); const status = out && Number(out.http) >= 400 && Number(out.http) < 500 ? Number(out.http) : 503; return res.status(status).json({ error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'pass call not counted', ...(out && out.sourceStatus ? { sourceStatus: out.sourceStatus } : {}) }); }
+        res.locals.gw8Access = 'daypass';
         return res.set('X-GW8-Pass-Remaining', String(p.remaining)).json({ status: 'success', accessType: 'DAY_PASS', pass: { remaining: p.remaining, expiresAt: p.expiresAt }, timestamp: new Date().toISOString(), signal: out,
             receipt: buildReceipt({ endpoint: `${req.method} ${req.path}`, query: req.query, amount: null, tx: null, accessType: 'DAY_PASS' }, out) });
     }
@@ -626,6 +634,7 @@ async function handleX402Agent(req, res, product = null) {
             if (r.status === 200) {
                 res.locals.gw8Payer = r.payer || null;
                 if (r.replay) { res.locals.gw8Replay = true; res.set('X-GW8-Replay', 'true'); }
+                else res.locals.gw8Access = 'x402';
             }
             if (r.headers) res.set(r.headers);
             return res.status(r.status).json(r.body);
@@ -696,6 +705,8 @@ app.get('/stats.html', async (req, res) => {
 });
 // Route x status report. Not an x402 route. Skipped by statsMiddleware so it does not count itself.
 mountTrafficReport(app);
+// Which routes sold. Not an x402 route and not part of the Bazaar paid catalog.
+mountSalesReport(app);
 
 // Card-paid marketplace channels (RapidAPI / Apify). Off unless GW8 sets the channel env var on Render.
 mountMarketplace(app, signResponses);
@@ -1122,7 +1133,7 @@ app.get('/api/growth', (req, res) => {
     });
 });
 
-initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: recordMcpPaid })
+initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: (tool, payer) => { recordMcpPaid(tool, payer); recordMcpSale(tool); } })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))
     .catch(() => console.log('[mcp-pay] mode: pointer (init error)'));
 app.listen(PORT, () => {

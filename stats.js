@@ -108,8 +108,8 @@ const PAID_PATHS = new Set([
     '/api/brief/weekly/subscribe',
 ]);
 
-/** Skip recording entirely (self + HTML views). The traffic report must not count itself. */
-const SKIP = new Set(['/api/stats', '/stats.html', '/stats', '/api/traffic', '/traffic.html', '/traffic']);
+/** Skip recording entirely (self + HTML views). The traffic report and the sales ledger must not count themselves. */
+const SKIP = new Set(['/api/stats', '/stats.html', '/stats', '/api/traffic', '/traffic.html', '/traffic', '/api/sales']);
 
 /** Home keep-warm: counted under meta, not route totals. */
 const HOME = '/';
@@ -524,7 +524,7 @@ export async function getStats(days = 1) {
         audience,
         meta: {
             homeKeepWarm: home,
-            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats, /stats.html, /api/traffic and /traffic.html are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0). Route x HTTP status (UTC) and unmatched probes: /api/traffic and /traffic.html. When Redis is configured, counter writes are summed in memory and flushed about every 5 minutes (and on shutdown); this report includes counts not yet flushed. A hard crash can drop up to about 5 minutes of counts.',
+            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats, /stats.html, /api/traffic, /traffic.html and /api/sales are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0). Route x HTTP status (UTC) and unmatched probes: /api/traffic and /traffic.html. Which routes sold (x402 settlement vs RapidAPI/Apify, counts only, no payer ids): /api/sales. When Redis is configured, counter writes are summed in memory and flushed about every 5 minutes (and on shutdown); this report includes counts not yet flushed. A hard crash can drop up to about 5 minutes of counts.',
         },
     };
 }
@@ -688,7 +688,7 @@ export function renderStatsMd(s) {
                 `- Grader wallets: ${c.graders.wallets} (settled calls ${c.graders.settledCalls}). ${c.graders.note}`);
         }
     }
-    lines.push(``, `_Generated ${s.asOf}_`);
+    lines.push(``, `Sales by route and surface (counts only, no payer ids): /api/sales`, ``, `_Generated ${s.asOf}_`);
     return lines.join('\n');
 }
 
@@ -731,7 +731,7 @@ ${audienceHtml(s.audience)}
   <th>Route</th><th>Req</th><th>402</th><th>Paid</th><th>Served</th><th>404</th><th>405</th><th>5xx</th>
 </tr></thead><tbody>${rows}</tbody></table>
 </div>
-<p class="note">${esc(s.meta.note)} · JSON: <a href="/api/stats">/api/stats</a> · md: <a href="/api/stats?format=md">?format=md</a> · Route x status (UTC): <a href="/traffic.html">/traffic.html</a></p>
+<p class="note">${esc(s.meta.note)} · JSON: <a href="/api/stats">/api/stats</a> · md: <a href="/api/stats?format=md">?format=md</a> · Route x status (UTC): <a href="/traffic.html">/traffic.html</a> · Sales: <a href="/api/sales">/api/sales</a></p>
 </body></html>`;
 }
 

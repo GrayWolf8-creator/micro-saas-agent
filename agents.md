@@ -43,8 +43,13 @@ Body `{"address": "0x…"}` (seller wallet on Base) and/or `{"endpoint": "https:
 Returns `{score 0-100, verdict: trusted|caution|avoid|unknown, components:{distinctBuyers, washShare, walletAge, concentration, volume30d}, reasons, flags, reputationReceipt}`.
 Data: public USDC transfers on Base (Alchemy Transfers API; keyless Blockscout fallback). Heuristic, not a guarantee. **Free first:** `GET /api/seller/reputation/status` → `{source, keyed, reachable, http_status}`. If `reachable` is false, paid calls return 503 and are not charged.
 
-## Featured: verdicts and payment rails
-- **GET /api/verdict/{chain}/{address} · $0.01 · MCP `get_token_verdict`.** Use this when you're about to buy, hold or accept a token and want a 0-100 safety verdict (safe / caution / danger) with reasons (GoPlus + DexScreener). Example: `/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.
+## Featured: token safety (rug check, honeypot, contract risk)
+- **GET /api/verdict/{chain}/{address} · $0.01 · MCP `get_token_verdict`.** Use this before a swap, transfer, or approval when you need a factual token safety screen. Example: `/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`. Optional `?fresh=1` skips the 10-minute cache.
+- The paid JSON field `signal` is `{verdict, score, reasons:[{code, points, detail}], unknowns:[{code, detail, limitsVerdict}], sources:[{name, url, status, fetchedAt}], freshness:{checkedAt, cached, cacheTtlSec, ageSec}}`.
+- `verdict` is **CLEAR**, **CAUTION**, **AVOID**, or **UNKNOWN**. CLEAR means score >= 75, every unknown has `limitsVerdict: false`, and no control rule that blocks CLEAR fired (mint, freeze, pause, hidden owner, unverified source, unlocked LP). A small flag such as an upgradeable proxy can still be CLEAR. AVOID means a honeypot, a blocked full transfer, mutable balances, a fake-token or airdrop-scam flag, or a score under 40. UNKNOWN means both sources answered and there is no security record and no DEX pair (`score` is null). CAUTION is everything else, including a source that failed while the other still had a record.
+- A failed lookup (both sources down, or the only source that answered had nothing on file) is **503** and is not settled. UNKNOWN is a finished lookup. Data: GoPlus token security and DexScreener liquidity, no API key. Chains include base, ethereum, bsc, polygon, arbitrum, optimism, avalanche, solana, and the rest of `coverage.chains` on the result. Free truncated sample: `?sample=1` (score and verdict only).
+
+## Featured: payment rails
 - **GET /api/rails?amount=100 · $0.002 · MCP `get_payment_rails`.** Use this when choosing how to move a USD amount: live fee and speed for Base USDC, XRPL, Tempo and Arc vs card, plus a recommended rail.
 
 ## Value-capture and growth lane

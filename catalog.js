@@ -5,7 +5,7 @@ export const CATEGORIES = [
     [/^\/api\/pay\/should-i-pay/, 'Payment decision: spend policy + seller reputation risk check, one verdict'],
     [/^\/api\/spend\/check/, 'Spend policy: agent payment risk check'],
     [/^\/api\/seller\/reputation/, 'Seller reputation: x402 seller risk check, verdict'],
-    [/^\/api\/verdict\//, 'Token risk check: safety verdict'],
+    [/^\/api\/verdict\//, 'Token safety verdict: rug check, honeypot, contract risk'],
     [/^\/api\/rails/, 'Payment rails: fee + speed comparison'],
     [/^\/api\/(pass|alerts|brief\/weekly)/, 'Access'],
     [/^\/api\/value/, 'Market data: value-capture score'],

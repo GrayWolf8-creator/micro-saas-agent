@@ -12,7 +12,7 @@ Signal-only market and public-sector data for agents and analysts, billed per re
 | `regime` | Stage 1 crypto regime score 0–4 with raw values (ETF flows, BTC support, alt breadth, Fear & Greed) | $0.02 |
 | `dots` | WaveTrend oversold/overbought band dots on 66 Kraken 4h USD pairs | $0.02 |
 | `coin` | WaveTrend 4h snapshot for one symbol | $0.01 |
-| `verdict` | Token safety score 0–100 (GoPlus + DexScreener, fixed rules); base/ethereum/bsc/arbitrum/solana | $0.02 |
+| `verdict` | Token safety screen CLEAR / CAUTION / AVOID / UNKNOWN (GoPlus + DexScreener); base, ethereum, bsc, polygon, arbitrum, optimism, avalanche, solana, and the other supported slugs | $0.01 |
 | `rwa` | Tokenized RWA protocols by TVL, 7d flows, movers, yields (DefiLlama + CoinGecko) | $0.03 |
 | `kraken-listings` | Kraken new USD listings (30 days) with % since listing and WaveTrend state | $0.03 |
 | `rules` | CFTC + SEC crypto rule-change feed (90 days) with comment deadlines | $0.03 |

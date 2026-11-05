@@ -22,7 +22,7 @@
     "ticker": { "title": "Ticker filter (govcontracts)", "type": "string", "description": "Optional, e.g. PLTR", "editor": "textfield" },
     "sector": { "title": "Sector filter (govcontracts)", "type": "string", "description": "Optional", "editor": "select", "enum": ["ai", "defense-tech", "drones", "nuclear", "space", "quantum", "robotics", "defense-prime"] },
     "q": { "title": "Keyword (govcontracts)", "type": "string", "description": "Optional free-text filter, e.g. NASA", "editor": "textfield" },
-    "chain": { "title": "Chain (verdict)", "type": "string", "description": "Blockchain the token lives on (verdict only).", "editor": "select", "enum": ["base", "ethereum", "bsc", "arbitrum", "solana"], "default": "base" },
+    "chain": { "title": "Chain (verdict)", "type": "string", "description": "Chain slug for the token safety screen (verdict only).", "editor": "select", "enum": ["ethereum", "bsc", "polygon", "avalanche", "cronos", "gnosis", "optimism", "base", "arbitrum", "opbnb", "zksync", "linea", "scroll", "mantle", "blast", "unichain", "berachain", "sonic", "worldchain", "abstract", "soneium", "story", "solana"], "default": "base" },
     "address": { "title": "Token address (verdict)", "type": "string", "description": "Token contract address to check (verdict only).", "editor": "textfield" },
     "pair": { "title": "Pair (history)", "type": "string", "description": "Optional coin symbol, e.g. BTC", "editor": "textfield" },
     "weeks": { "title": "Weeks (value-history / growth-history)", "type": "integer", "description": "1-52, default 12", "editor": "number", "minimum": 1, "maximum": 52 },

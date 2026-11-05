@@ -1,6 +1,7 @@
 
 import express from 'express';
 import path from 'path';
+import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
@@ -108,12 +109,31 @@ function generateCdpJwt(method, uriPath) {
     return jwt.sign(payload, privateKey, { algorithm: 'ES256', header });
 }
 
+// JSON Schema (draft 2020-12) for a response example, so every 402 carries an output schema.
+function schemaFromExample(value, depth = 0) {
+    if (value == null || depth > 5) return {};
+    if (Array.isArray(value)) return { type: 'array', items: value.length ? schemaFromExample(value[0], depth + 1) : { type: 'object' } };
+    if (typeof value === 'object') {
+        const properties = {};
+        for (const [k, v] of Object.entries(value)) properties[k] = schemaFromExample(v, depth + 1);
+        return { type: 'object', properties };
+    }
+    if (typeof value === 'boolean') return { type: 'boolean' };
+    if (typeof value === 'number') return { type: Number.isInteger(value) ? 'integer' : 'number' };
+    return { type: 'string' };
+}
+
 // Official x402 Version 2 + Bazaar Discovery Spec
 // Bazaar catalogs a resource only after CDP Facilitator *settles* a payment that echoes extensions.bazaar.
 function getX402ChallengeV2(o = {}) {
     const method = String(o.method || (o.url ? 'GET' : 'POST')).toUpperCase();
     const isBody = method === 'POST' || method === 'PUT' || method === 'PATCH';
-    const inProps = o.inputProps || {};
+    // CDP validate rejects an empty queryParams object. A GET with no query string still accepts
+    // ?sample= (the free-sample switch). example "0" is the paid call, so the object is never {}.
+    let inProps = { ...(o.inputProps || {}) };
+    if (!isBody && Object.keys(inProps).length === 0) {
+        inProps = { sample: { type: 'string', enum: ['0', '1'], description: '1 asks for the free truncated sample when this route is in today\'s sample set. 0 is the paid call.', example: '0' } };
+    }
     const exampleFromProps = (props) => Object.fromEntries(Object.entries(props).flatMap(([k, v]) => {
         if (v && Object.prototype.hasOwnProperty.call(v, 'example')) return [[k, v.example]];
         if (v && Array.isArray(v.enum) && v.enum.length) return [[k, v.enum[0]]];
@@ -175,6 +195,11 @@ function getX402ChallengeV2(o = {}) {
         inputRequired.push('pathParams');
     }
 
+    const outputExampleSchema = (o.outputSchema && typeof o.outputSchema === 'object')
+        ? { ...o.outputSchema }
+        : schemaFromExample(example);
+    if (!outputExampleSchema.description) outputExampleSchema.description = description;
+
     const bazaar = {
         info: {
             input,
@@ -185,9 +210,17 @@ function getX402ChallengeV2(o = {}) {
             type: 'object',
             properties: {
                 input: { type: 'object', properties: inputSchemaProps, required: inputRequired, additionalProperties: false },
-                output: { type: 'object', properties: { type: { type: 'string' }, example: (o.outputSchema && typeof o.outputSchema === 'object') ? o.outputSchema : {} }, required: ['type'] }
+                output: {
+                    type: 'object',
+                    description: description,
+                    properties: {
+                        type: { type: 'string', const: 'json' },
+                        example: outputExampleSchema
+                    },
+                    required: ['type', 'example']
+                }
             },
-            required: ['input']
+            required: ['input', 'output']
         }
     };
     if (o.routeTemplate) bazaar.routeTemplate = o.routeTemplate;
@@ -225,7 +258,8 @@ app.get('/', (req, res) => {
         asset: "USDC",
         about: "Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), payment risk checks, token safety verdicts (rug check, honeypot, contract risk), payment-rail costs, and crypto market data (regime, WaveTrend dots, relative strength). Signed receipts. Signal only, not financial advice.",
         humans: { pay: "/pay.html", track: "/track" },
-        startHere: { agentGuide: "/agents.md", freeTeaser: "/api/brief/teaser", freeSample: "/api/sample", agentDocs: "/llms.txt", openapi: "/openapi.json", discovery: "/.well-known/x402", payPage: "/pay.html" },
+        lead: { method: "GET", path: "/api/verdict/{chain}/{address}", priceUsd: "0.01", example: "GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0", note: "Token safety screen: honeypot, rug check, contract risk. CLEAR, CAUTION, AVOID, or UNKNOWN." },
+        startHere: { agentGuide: "/agents.md", freeTeaser: "/api/brief/teaser", freeSample: "/api/sample", agentDocs: "/llms.txt", openapi: "/openapi.json", discovery: "/.well-known/x402", agentCard: "/.well-known/agent.json", payPage: "/pay.html" },
         tiers: {
             starter: {
                 free: ["/api/brief/teaser", "/api/sample"],
@@ -237,14 +271,14 @@ app.get('/', (req, res) => {
             },
             research: {
                 paid: [
+                    { path: "/api/verdict/{chain}/{address}", priceUsd: "0.01", note: "token safety, honeypot, rug check, contract risk" },
                     { path: "/api/agent", method: "POST", priceUsd: "0.02" },
                     { path: "/api/brief", priceUsd: "0.02" },
                     { path: "/api/history", priceUsd: "0.05" },
                     { path: "/api/flows/{symbol}", priceUsd: "0.02" },
                     { path: "/api/kraken/listings", priceUsd: "0.02" },
                     { path: "/api/rs", priceUsd: "0.02" },
-                    { path: "/api/rails", priceUsd: "0.002" },
-                    { path: "/api/verdict/{chain}/{address}", priceUsd: "0.01" }
+                    { path: "/api/rails", priceUsd: "0.002" }
                 ]
             },
             agentPayments: {
@@ -287,12 +321,8 @@ app.get('/', (req, res) => {
 });
 
 // 2. Manifest Endpoints
-app.get('/llms.txt', (req, res) => {
-    res.sendFile(path.join(__dirname, 'llms.txt'));
-});
-app.get('/agents.md', (req, res) => {
-    res.type('text/markdown; charset=utf-8').sendFile(path.join(__dirname, 'agents.md'));
-});
+app.get('/llms.txt', (req, res) => serveDoc(res, 'llms.txt', 'text/plain; charset=utf-8'));
+app.get('/agents.md', (req, res) => serveDoc(res, 'agents.md', 'text/markdown; charset=utf-8'));
 
 // Alias of /.well-known/x402 (x402scan fan-out). Not the proposed origin-manifest format.
 app.get(['/.well-known/x402.json', '/well-known/x402.json'], (req, res) => {
@@ -307,20 +337,30 @@ function discoveryFanout() {
     return {
         version: 1,
         resources: [passUrl, ...urls.filter(u => u !== passUrl)],
-        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource. Token safety, rug check, honeypot, and contract risk: GET /api/verdict/{chain}/{address} ($0.01) returns CLEAR, CAUTION, AVOID, or UNKNOWN.`,
-        tokenSafety: { method: 'GET', path: '/api/verdict/{chain}/{address}', priceUsd: '0.01', verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['token safety', 'rug check', 'honeypot', 'contract risk'], chains: Object.keys(VERDICT_CHAINS) },
+        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. Lead product, listed first in endpoints: token safety, rug check, honeypot, and contract risk at GET /api/verdict/{chain}/{address} ($0.01) returns CLEAR, CAUTION, AVOID, or UNKNOWN. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt and /agents.md. A2A agent card at /.well-known/agent.json. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base) and extensions.bazaar (input schema, output schema, resource description). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
+        tokenSafety: { method: 'GET', path: '/api/verdict/{chain}/{address}', priceUsd: '0.01', verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['honeypot', 'honeypot check', 'rug pull', 'token safety', 'token security', 'scam token', 'contract risk', 'rug check'], chains: Object.keys(VERDICT_CHAINS), example: 'GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0', alias: { method: 'GET', path: '/api/honeypot/{chain}/{address}', priceUsd: '0.01', example: 'GET /api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' } },
+        endpoints: PAID.map(p => ({
+            method: p.method.toUpperCase(),
+            path: p.path,
+            priceUsd: p.price,
+            description: p.summary,
+            example: p.exampleRequest,
+            url: 'https://micro-saas-agent.onrender.com' + (p.ex || p.path)
+        })),
         openapi: 'https://micro-saas-agent.onrender.com/openapi.json',
-        llms: 'https://micro-saas-agent.onrender.com/llms.txt'
+        llms: 'https://micro-saas-agent.onrender.com/llms.txt',
+        agents: 'https://micro-saas-agent.onrender.com/agents.md',
+        agentCard: 'https://micro-saas-agent.onrender.com/.well-known/agent.json'
     };
 }
 
 const RAW_PAID = [
-    { path: '/api/agent', method: 'post', price: '0.02', summary: 'Full crypto market regime + WaveTrend band-dot snapshot (66 Kraken 4h pairs). Use for a one-shot risk-on/risk-off + oversold scan. $0.02.' },
+    { path: '/api/agent', method: 'post', price: '0.02', summary: 'Full crypto market regime + WaveTrend band-dot snapshot (66 Kraken 4h pairs). Use for a one-shot risk-on/risk-off + oversold scan. $0.02.', bodyEx: 'empty' },
     { path: '/api/history', method: 'get', price: '0.05', summary: 'Simulated 90-day WaveTrend band-dot hit-rate backtest (+4h/+24h/+3d). Optional ?pair=BTC. Past performance is not indicative of future results. $0.05.', query: { pair: { type: 'string', description: 'Optional coin symbol, e.g. BTC' } } },
     { path: '/api/regime', method: 'get', price: '0.01', summary: 'Stage 1 crypto market regime check detail (ETF flows, BTC support, alt breadth, Fear & Greed). $0.01.' },
     { path: '/api/dots', method: 'get', price: '0.01', summary: 'Current WaveTrend oversold/overbought band dots across 66 Kraken 4h USD pairs. $0.01.' },
     { path: '/api/coin/{symbol}', method: 'get', price: '0.002', summary: 'WaveTrend 4h snapshot for one coin (cheapest call). $0.002.', pathParam: true, ex: '/api/coin/BTC', pathEx: { symbol: 'BTC' } },
-    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.01', summary: VERDICT_BLURB, params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain slug for a token safety, rug check, honeypot, or contract risk screen' }, address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58)' } }, query: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener. 0 or omitted uses the 10-minute cache.' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', pathEx: { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }, responseDescription: 'Paid JSON. The screen is in signal: verdict CLEAR, CAUTION, AVOID, or UNKNOWN, with score, reasons, unknowns, sources, and freshness. Settled only after that screen is ready. A failed lookup is not settled.', responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: VERDICT_OUTPUT_SCHEMA }, required: ['signal'] } },
+    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.01', summary: VERDICT_BLURB, params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain for a honeypot check: token safety, token security, rug pull, scam token, or contract risk' }, address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58) to honeypot-check for rug pull, scam token, and contract risk' } }, query: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener for this honeypot check. 0 uses the 10-minute cache.' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', pathEx: { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }, responseDescription: 'Paid JSON. The screen is in signal: verdict CLEAR, CAUTION, AVOID, or UNKNOWN, with score, reasons, unknowns, sources, and freshness. Settled only after that screen is ready. A failed lookup is not settled.', responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: VERDICT_OUTPUT_SCHEMA }, required: ['signal'] } },
     { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Kraken large-print buy/sell flow summary joined with WaveTrend 4h state (single venue, not on-chain). $0.02.', pathParam: true, ex: '/api/flows/BTC', pathEx: { symbol: 'BTC' } },
     { path: '/api/brief', method: 'get', price: '0.02', summary: 'Once-per-day (Mountain Time) crypto brief: regime, WaveTrend dot counts, top coins, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser. $0.02.' },
     { path: '/api/rwa', method: 'get', price: '0.02', summary: 'Tokenized RWA flows: protocol TVL, 7d change/estimated flows, movers, yields, top RWA tokens (DefiLlama + CoinGecko). $0.02.' },
@@ -338,10 +378,25 @@ const RAW_PAID = [
     { path: '/api/pay/should-i-pay', method: 'post', price: PAYDECISION_PLAN.priceUsd, summary: `Should my agent pay this? One call runs the spend-policy check (your limits, caps, categories, lists, hours) AND the x402 seller reputation check (public Base USDC history) and returns one verdict pay / dont_pay / ask_human, the reasons, both sub-results and one signed receipt. Deterministic; stateless; never pays anyone. Free when the seller data source is down. $${PAYDECISION_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'as in /api/spend/check' }, policy: { type: 'object', description: 'as in /api/spend/check' }, seller: { type: 'object', description: '{address (Base 0x...), endpoint (x402 https URL), lookbackDays}' }, sellerRules: { type: 'object', description: 'optional {onCaution, onUnknown: pay|ask_human|dont_pay (default ask_human), minScore 0-100}' } }, required: ['payment', 'policy', 'seller'], bodyEx: 'should-i-pay' },
     { path: '/api/spend/check', method: 'post', price: SPEND_PLAN.priceUsd, summary: `Spend-policy check for AI agents: POST a proposed payment + the buyer's rules (per-tx limit, rolling cap with your spent-so-far, categories, allow/deny lists, hours+timezone, assets/chains, human-approval threshold). Returns allow / deny / needs_approval, which rules fired, and a signed decision receipt. Stateless, deterministic; not custody, does not move money. $${SPEND_PLAN.priceUsd}.`, body: { payment: { type: 'object', description: 'amount (decimal string), currency, recipientId and/or recipientDomain, merchantCategory, chain, timestamp (ISO), agentId, memo' }, policy: { type: 'object', description: 'currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted, allowedHours {start, end, timezone, days}, allowedAssets, allowedChains, requireApprovalAbove' } }, required: ['payment', 'policy'], bodyEx: 'spend' },
     { path: '/api/seller/reputation', method: 'post', price: REPUTATION_PLAN.priceUsd, summary: `x402 seller reputation for AI agents: before paying a seller, POST its Base wallet and/or x402 endpoint URL. Reads public USDC (Base) transfer history (Alchemy Transfers API, or keyless Blockscout as fallback when no key is configured) and returns a 0-100 score, verdict trusted / caution / avoid / unknown, components (distinct paying buyers, wash/self-dealing share, wallet age, top-payer concentration, 30-day organic volume), reasons and a signed receipt. Deterministic formula; stateless; never pays anyone. $${REPUTATION_PLAN.priceUsd}.`, body: { address: { type: 'string', description: 'seller wallet on Base (0x...)' }, endpoint: { type: 'string', format: 'uri', description: 'x402 https URL; payTo is read from its unpaid 402 challenge' }, lookbackDays: { type: 'integer', minimum: 1, maximum: 90, default: 90 } }, bodyRequired: true, anyOf: [{ required: ['address'] }, { required: ['endpoint'] }], bodyEx: 'reputation' },
-    { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to paid data endpoints via X-GW8-Pass (excludes alert subscribe). Fair use ${PASS_PLAN.dailyCap}/day, ${PASS_PLAN.perMinute}/min. $1.00.` },
-    ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly Monday brief webhook (${p.weeks} issues): regime, top WaveTrend dots, 7d hit rates, RWA, federal contracts (DoD ~90d lag). $${p.priceUsd}.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' } }, required: ['webhookUrl'] })),
-    { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Webhook alerts for NEW green WaveTrend band dots (${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts), HMAC-signed. $0.50.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'] }
+    { path: '/api/pass/day', method: 'post', price: PASS_PLAN.priceUsd, summary: `Day pass: ${PASS_PLAN.hours}h access to paid data endpoints via X-GW8-Pass (excludes alert subscribe). Fair use ${PASS_PLAN.dailyCap}/day, ${PASS_PLAN.perMinute}/min. $1.00.`, bodyEx: 'empty' },
+    ...Object.values(WEEKLY_PLANS).map(p => ({ path: p.path, method: 'post', price: p.priceUsd, summary: `Weekly Monday brief webhook (${p.weeks} issues): regime, top WaveTrend dots, 7d hit rates, RWA, federal contracts (DoD ~90d lag). $${p.priceUsd}.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL', example: 'https://example.com/hook' } }, required: ['webhookUrl'], bodyEx: 'weekly' })),
+    { path: '/api/alerts/subscribe', method: 'post', price: ALERT_PLAN.priceUsd, summary: `Webhook alerts for NEW green WaveTrend band dots (${ALERT_PLAN.days} days or ${ALERT_PLAN.maxAlerts} alerts), HMAC-signed. $0.50.`, body: { webhookUrl: { type: 'string', format: 'uri', description: 'public https URL', example: 'https://example.com/hook' }, filter: { type: 'string', enum: ['outer', 'inner', 'all'], default: 'outer' }, pairs: { type: 'array', items: { type: 'string' }, description: 'optional coin symbols, default all 66' } }, required: ['webhookUrl'], bodyEx: 'alerts' }
 ];
+// Lead product first on every generated surface (OpenAPI path order, discovery endpoints, agent card, llms/agents catalog).
+const _verdictFirst = RAW_PAID.findIndex(p => String(p.path).startsWith('/api/verdict/'));
+if (_verdictFirst > 0) RAW_PAID.unshift(RAW_PAID.splice(_verdictFirst, 1)[0]);
+// Same $0.01 screen on a URL that contains "honeypot", so Bazaar keyword search can match the resource path.
+{
+    const verdictSpec = RAW_PAID.find(p => String(p.path).startsWith('/api/verdict/'));
+    if (verdictSpec && !RAW_PAID.some(p => String(p.path).startsWith('/api/honeypot/'))) {
+        RAW_PAID.splice(RAW_PAID.indexOf(verdictSpec) + 1, 0, {
+            ...verdictSpec,
+            path: '/api/honeypot/{chain}/{address}',
+            ex: '/api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+            pathEx: { ...verdictSpec.pathEx }
+        });
+    }
+}
 // Proposal 25: request examples in /openapi.json so scanners (x402scan) and agents can build a valid call. Unpaid calls
 // still get the 402 first regardless of input.
 const EX_ADDR = '0x1111111111111111111111111111111111111111';
@@ -350,9 +405,40 @@ const EX_POLICY = { currency: 'USDC', perTxLimit: '1', rollingCap: { limit: '10'
 const BODY_EXAMPLES = {
     spend: { payment: EX_PAYMENT, policy: EX_POLICY },
     reputation: { address: EX_ADDR, lookbackDays: 90 },
-    'should-i-pay': { payment: EX_PAYMENT, policy: EX_POLICY, seller: { address: EX_ADDR }, sellerRules: { onCaution: 'ask_human', onUnknown: 'ask_human' } }
+    'should-i-pay': { payment: EX_PAYMENT, policy: EX_POLICY, seller: { address: EX_ADDR }, sellerRules: { onCaution: 'ask_human', onUnknown: 'ask_human' } },
+    empty: {},
+    weekly: { webhookUrl: 'https://example.com/hook' },
+    alerts: { webhookUrl: 'https://example.com/hook', filter: 'outer', pairs: ['BTC', 'ETH'] }
 };
-const PAID = RAW_PAID.map(p => ({ ...p, summary: withCategory(p.path, p.summary), category: categoryOf(p.path), featured: isFeatured(p.path) }));
+const EXAMPLE_QUERY = {
+    '/api/verdict/{chain}/{address}': '?fresh=0',
+    '/api/honeypot/{chain}/{address}': '?fresh=0',
+    '/api/history': '?pair=BTC',
+    '/api/rails': '?amount=100',
+    '/api/govcontracts': '?ticker=PLTR&sector=ai',
+    '/api/value': '?symbols=BNB,ETH&sort=score',
+    '/api/value/{symbol}/history': '?weeks=12',
+    '/api/growth': '?kind=chain&minRulesPassed=2',
+    '/api/growth/history': '?weeks=12&kind=chain'
+};
+function exampleRequestFor(p) {
+    const concrete = p.ex || p.path;
+    if (p.method === 'post') {
+        const body = Object.prototype.hasOwnProperty.call(BODY_EXAMPLES, p.bodyEx) ? BODY_EXAMPLES[p.bodyEx] : {};
+        return `POST ${concrete} ${JSON.stringify(body)}`;
+    }
+    return `GET ${concrete}${EXAMPLE_QUERY[p.path] || ''}`;
+}
+const PAID = RAW_PAID.map(p => ({ ...p, summary: withCategory(p.path, p.summary), category: categoryOf(p.path), featured: isFeatured(p.path), exampleRequest: exampleRequestFor(p) }));
+function paidCatalogMarkdown() {
+    const lines = ['| # | Call | Price | What it returns | Example request |', '| --- | --- | --- | --- | --- |'];
+    PAID.forEach((p, i) => lines.push(`| ${i + 1} | \`${p.method.toUpperCase()} ${p.path}\` | $${p.price} | ${p.summary.replace(/\|/g, '/')} | \`${p.exampleRequest}\` |`));
+    return lines.join('\n');
+}
+function serveDoc(res, file, contentType) {
+    const raw = readFileSync(path.join(__dirname, file), 'utf8').replaceAll('<!--PAID_CATALOG-->', paidCatalogMarkdown());
+    res.type(contentType).send(raw);
+}
 function openApiDoc() {
     const paths = {};
     for (const p of PAID) {
@@ -360,17 +446,25 @@ function openApiDoc() {
         const pex = p.pathEx || {};
         if (p.pathParam) parameters.push({ name: 'symbol', in: 'path', required: true, schema: { type: 'string', enum: COINS, example: pex.symbol }, example: pex.symbol });
         for (const [name, schema] of Object.entries(p.params || {})) parameters.push({ name, in: 'path', required: true, schema: { ...schema, ...(pex[name] ? { example: pex[name] } : {}) }, ...(pex[name] ? { example: pex[name] } : {}) });
-        for (const [name, schema] of Object.entries(p.query || {})) parameters.push({ name, in: 'query', required: false, schema });
+        const querySchema = { ...(p.query || {}) };
+        if (p.method === 'get' && Object.keys(querySchema).length === 0) querySchema.sample = { type: 'string', enum: ['0', '1'], description: '1 asks for the free truncated sample when this route is in today\'s sample set. 0 is the paid call.', example: '0' };
+        const queryExamples = { pair: 'BTC', fresh: '0', ticker: 'PLTR', sector: 'ai', q: 'NASA', amount: 100, symbols: 'BNB,ETH', sort: 'score', minScore: 0, weeks: 12, kind: 'chain', minRulesPassed: 2, triggerOnly: false, minTvlUsd: 50000000, window: '90d', sample: '0' };
+        for (const [name, schema] of Object.entries(querySchema)) {
+            const example = schema.example !== undefined ? schema.example : (queryExamples[name] !== undefined ? queryExamples[name] : (Array.isArray(schema.enum) ? schema.enum[0] : undefined));
+            parameters.push({ name, in: 'query', required: false, schema: example === undefined ? schema : { ...schema, example }, ...(example !== undefined ? { example } : {}) });
+        }
+        const bodyExample = p.method === 'post' && Object.prototype.hasOwnProperty.call(BODY_EXAMPLES, p.bodyEx) ? BODY_EXAMPLES[p.bodyEx] : (p.method === 'post' ? {} : undefined);
         paths[p.path] = { [p.method]: {
             operationId: p.path.replace(/[^a-z]/gi, '_'),
             summary: p.summary,
             tags: [p.category, ...(p.featured ? [] : ['not-featured'])].filter(Boolean),
-            description: p.summary,
+            description: `${p.summary} Example request: ${p.exampleRequest}`,
+            'x-example-request': p.exampleRequest,
             security: [],
             ...(parameters.length ? { parameters } : {}),
             ...(p.method === 'post' ? { requestBody: { required: !!(p.required || p.bodyRequired), content: { 'application/json': {
                 schema: { type: 'object', properties: p.body || {}, ...(p.required ? { required: p.required } : {}), ...(p.anyOf ? { anyOf: p.anyOf } : {}) },
-                ...(p.bodyEx && BODY_EXAMPLES[p.bodyEx] ? { example: BODY_EXAMPLES[p.bodyEx] } : {}) } } } } : {}),
+                example: bodyExample } } } } : {}),
             'x-payment-info': { protocols: [{ x402: {} }], price: { mode: 'fixed', currency: 'USD', amount: p.price } },
             responses: {
                 '200': { description: p.responseDescription || 'Signal JSON (signal only, not financial advice)', content: { 'application/json': { schema: p.responseSchema || { type: 'object' } } } },
@@ -403,7 +497,7 @@ function openApiDoc() {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { name: 'GW8', email: 'mariostefano3@gmail.com', url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call tools for AI agents via x402 (USDC on Base): should-I-pay decisions (spend policy + seller reputation in one call), spend-policy risk checks, x402 seller reputation verdicts, token safety verdicts (rug check, honeypot, contract risk: CLEAR / CAUTION / AVOID / UNKNOWN), payment-rail cost checks, and crypto market data (regime, WaveTrend band dots, relative strength, flows, simulated hit-rate backtests). Agent guide: /agents.md. No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
-            'x-guidance': 'Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times (N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.05 more than 20). Start free: GET /agents.md, GET /api/brief/teaser, GET /api/sample, GET /api/value/status, GET /api/growth/status, GET /api/seller/reputation/status, GET /llms.txt, GET /openapi.json, GET /.well-known/x402. Humans: /pay.html. Agent payments: POST /api/pay/should-i-pay ($0.02), POST /api/spend/check ($0.02), POST /api/seller/reputation ($0.01). Token safety, rug check, honeypot, contract risk: GET /api/verdict/{chain}/{address} ($0.01, CLEAR / CAUTION / AVOID / UNKNOWN). Payment rails: GET /api/rails ($0.002). Market data: GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/rs ($0.02), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/history ($0.05), GET /api/value/{symbol} ($0.015), GET /api/value ($0.03), GET /api/value/{symbol}/history ($0.07), GET /api/growth/{chain} ($0.015), GET /api/growth ($0.03), GET /api/growth/history ($0.07). Access: POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
+            'x-guidance': 'Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times (N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14). Token safety, honeypot check, rug pull, token security, scam token, contract risk: GET /api/verdict/{chain}/{address} ($0.01, example GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0) returns CLEAR / CAUTION / AVOID / UNKNOWN. Same $0.01 screen: GET /api/honeypot/{chain}/{address}. Then GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/rs ($0.02), GET /api/rails ($0.002), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/rules ($0.02), POST /api/pay/should-i-pay ($0.02), POST /api/spend/check ($0.02), POST /api/seller/reputation ($0.01), GET /api/value/{symbol} ($0.015), GET /api/value ($0.03), GET /api/value/{symbol}/history ($0.07), GET /api/growth/{chain} ($0.015), GET /api/growth ($0.03), GET /api/growth/history ($0.07), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Start free: GET /agents.md, GET /api/brief/teaser, GET /api/sample, GET /llms.txt, GET /openapi.json, GET /.well-known/x402, GET /.well-known/agent.json. Each paid operation has x-example-request. Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -411,6 +505,59 @@ function openApiDoc() {
 app.get(['/favicon.ico', '/favicon.svg'], (req, res) => res.type('image/svg+xml').send('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#0b1220"/><path d="M8 40 Q20 10 32 32 T56 24" stroke="#22c55e" stroke-width="6" fill="none"/></svg>'));
 app.get('/openapi.json', (req, res) => res.json(openApiDoc()));
 app.get('/.well-known/x402', (req, res) => res.json(discoveryFanout()));
+// A2A agent card. /.well-known/agent.json is the legacy well-known path; agent-card.json is the v1 path.
+function agentCard() {
+    const skills = PAID.map(p => {
+        const verdict = p.path.startsWith('/api/verdict/');
+        const honeypot = p.path.startsWith('/api/honeypot/');
+        return {
+            id: p.path.replace(/^\/api\//, '').replace(/[{}]/g, '').replace(/\//g, '-').replace(/-+/g, '-').replace(/^-|-$/g, ''),
+            name: verdict ? 'Token safety screen' : honeypot ? 'Honeypot check' : `${p.method.toUpperCase()} ${p.path}`,
+            description: p.summary,
+            tags: (verdict || honeypot) ? ['honeypot', 'honeypot check', 'token safety', 'token security', 'rug pull', 'scam token', 'contract risk', 'x402'] : ['x402', 'usdc', 'base', p.featured ? 'paid' : 'unfeatured'],
+            examples: (verdict || honeypot)
+                ? [p.exampleRequest, 'Run a honeypot check for token safety, token security, rug pull, scam token, and contract risk before a swap, transfer, or approval.']
+                : [p.exampleRequest],
+            inputModes: ['text/plain', 'application/json'],
+            outputModes: ['application/json']
+        };
+    });
+    const origin = 'https://micro-saas-agent.onrender.com';
+    return {
+        name: 'GW8 Signal API',
+        description: 'Pay-per-call tools for AI agents on x402 (USDC on Base). Lead skill: token safety screen for honeypot, rug check, and contract risk at GET /api/verdict/{chain}/{address} ($0.01), returning CLEAR, CAUTION, AVOID, or UNKNOWN. Each skill is an HTTP route, not an A2A task: call the example URL, read the HTTP 402 extensions.bazaar input and output schema, and retry with PAYMENT-SIGNATURE. Signal only, not financial advice.',
+        version: '1.2.0',
+        documentationUrl: origin + '/agents.md',
+        iconUrl: origin + '/favicon.svg',
+        provider: { organization: 'GW8', url: origin },
+        supportedInterfaces: [
+            { url: origin + '/mcp', protocolBinding: 'HTTP+JSON', protocolVersion: '1.0' },
+            { url: origin, protocolBinding: 'HTTP+JSON', protocolVersion: '1.0' }
+        ],
+        url: origin + '/mcp',
+        preferredTransport: 'HTTP+JSON',
+        protocolVersion: '1.0',
+        additionalInterfaces: [{ url: origin, transport: 'HTTP+JSON' }],
+        capabilities: {
+            streaming: false,
+            pushNotifications: false,
+            stateTransitionHistory: false,
+            extendedAgentCard: false,
+            extensions: [{
+                uri: 'https://github.com/x402-foundation/x402/blob/main/specs/extensions/bazaar.md',
+                description: 'Paid skills are x402 HTTP routes. An unpaid call returns 402 with resource.description and extensions.bazaar (input schema, output schema, example). Pay USDC on Base (eip155:8453), then retry with PAYMENT-SIGNATURE. CDP Bazaar indexes a route after a settle that echoes that extension.',
+                required: false,
+                params: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: origin + '/openapi.json', discovery: origin + '/.well-known/x402', lead: origin + '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }
+            }]
+        },
+        defaultInputModes: ['text/plain', 'application/json'],
+        defaultOutputModes: ['application/json'],
+        skills
+    };
+}
+app.get(['/.well-known/agent.json', '/.well-known/agent-card.json'], (req, res) => {
+    res.set('Cache-Control', 'public, max-age=300').json(agentCard());
+});
 app.get(RECEIPT_KEY_PATH, (req, res) => res.json(receiptKeyInfo()));
 // Free receipt check (public key only). POST {payload, signature, data?} or GET ?payload=&signature=.
 app.get(VERIFY_PATH, (req, res) => res.json(verifyReceipt({ payload: req.query.payload, signature: typeof req.query.signature === 'string' ? req.query.signature.replace(/ /g, '+') : undefined })));
@@ -466,7 +613,7 @@ async function buildMcp() {
         async a => { subV = await validateSubscribe(a, COINS); return subV.error || null; }, { noPass: true });
     await paidTool('buy_day_pass', 'Day pass (24h)', '/api/pass/day', 'POST', PASS_PLAN.priceUsd, `Buy a ${PASS_PLAN.hours}h pass for every paid GW8 data tool/endpoint: pass the returned token as the "pass" argument (MCP) or X-GW8-Pass header (HTTP). Fair use ${PASS_PLAN.dailyCap} calls, ${PASS_PLAN.perMinute}/min. Excludes alert subscriptions. Token shown once.`, {}, undefined, () => mintPass(), undefined, { noPass: true });
     await paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history', a => getHistory(a.pair || null));
-    await paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.01', 'Token safety, rug check, honeypot, and contract risk. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness (GoPlus + DexScreener). Optional fresh=true re-reads upstream. A failed lookup is not charged.', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict/${a.chain}/${a.address}`,
+    await paidTool('get_token_verdict', 'Honeypot check', '/api/verdict/{chain}/{address}', 'GET', '0.01', 'Honeypot check and token safety screen: honeypot, rug pull, scam token, token security, and contract risk. Returns CLEAR, CAUTION, AVOID, or UNKNOWN. Same screen at GET /api/honeypot/{chain}/{address} ($0.01). Optional fresh=true re-reads upstream. A failed lookup is not charged.', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict/${a.chain}/${a.address}`,
         a => getVerdict(String(a.chain).toLowerCase(), String(a.address), { fresh: a.fresh === true }), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
     await paidTool('get_flows', 'Large-print flows + dot state', '/api/flows/{symbol}', 'GET', '0.02', 'Kraken large-print buy/sell summary (single venue, not on-chain) joined with WaveTrend 4h state.', { symbol: z.enum(COINS) }, a => `/api/flows/${a.symbol}`, a => getFlows(a.symbol));
     await paidTool('get_rwa_feed', 'RWA feed', '/api/rwa', 'GET', '0.02', 'Real-world assets on-chain (tokenized treasuries, credit, stocks): top RWA protocols by TVL, 7d change + estimated flows, movers, new launches, yields, top RWA tokens by market cap, with sources and timestamp.', {}, undefined, () => getRwa());
@@ -713,7 +860,7 @@ mountSalesReport(app);
 
 // Card-paid marketplace channels (RapidAPI / Apify). Off unless GW8 sets the channel env var on Render.
 mountMarketplace(app, signResponses);
-app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/value', '/api/growth', '/api/spend/check', '/api/seller/reputation', '/api/pay/should-i-pay'], signResponses);
+app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/honeypot', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/value', '/api/growth', '/api/spend/check', '/api/seller/reputation', '/api/pay/should-i-pay'], signResponses);
 app.all('/api/agent', handleX402Agent);
 
 // Cheaper single-purpose products (signal only)
@@ -849,27 +996,32 @@ app.get('/api/coin/:symbol', (req, res) => {
 
 // Upgrades-4: token verdict, flows, daily brief (signal only, public data)
 app.get('/api/proof/pubkey', (req, res) => res.json(publicKeyInfo()));
-app.get('/api/verdict/:chain/:address', (req, res) => {
+// /api/honeypot is the same $0.01 screen as /api/verdict. The path is an alias so Bazaar can match "honeypot".
+function sendVerdictChallenge(req, res) {
+    const alias = String(req.path || '').startsWith('/api/honeypot/');
+    const root = alias ? '/api/honeypot' : '/api/verdict';
     const rawChain = String(req.params.chain).toLowerCase(), rawAddress = String(req.params.address);
     const bad = validVerdictInput(rawChain, rawAddress);
     if (bad && hasPaymentOrPass(req)) return res.status(400).json({ error: bad, chains: Object.keys(VERDICT_CHAINS), note: 'no payment was taken' });
     const chain = bad ? VERDICT_EXAMPLE.chain : rawChain, address = bad ? VERDICT_EXAMPLE.address : rawAddress;
     const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
     return handleX402Agent(req, res, {
-        url: bad ? `${BASE_URL}/api/verdict/{chain}/{address}` : `${BASE_URL}/api/verdict/${chain}/${address}`, amount: "10000", name: "GW8 Token Safety Verdict (GoPlus + DexScreener)",
+        url: bad ? `${BASE_URL}${root}/{chain}/{address}` : `${BASE_URL}${root}/${chain}/${address}`, amount: "10000", name: "GW8 Honeypot Check",
         description: VERDICT_BLURB,
         tags: VERDICT_TAGS,
         serviceName: VERDICT_SERVICE_NAME,
-        routeTemplate: "/api/verdict/:chain/:address",
+        routeTemplate: `${root}/:chain/:address`,
         pathParams: { chain, address },
         pathParamSchema: VERDICT_PATH_SCHEMA,
-        inputProps: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener; 0 uses the 10-minute cache', example: '0' } },
+        inputProps: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener for this honeypot check. 0 uses the 10-minute cache.', example: '0' } },
         outputSchema: VERDICT_OUTPUT_SCHEMA,
         example: VERDICT_EXAMPLE,
         precheck: async () => bad ? { error: bad } : null,
         deliver: () => getVerdict(chain, address, { fresh }).catch(() => ({ error: 'upstream data unavailable, retry shortly', http: 503, sourceStatus: { goplus: 'unavailable', dexscreener: 'unavailable' } }))
     });
-});
+}
+app.get('/api/verdict/:chain/:address', sendVerdictChallenge);
+app.get('/api/honeypot/:chain/:address', sendVerdictChallenge);
 app.get('/api/flows/:symbol', (req, res) => {
     const raw = String(req.params.symbol || '').toUpperCase();
     const ok = COINS.includes(raw);

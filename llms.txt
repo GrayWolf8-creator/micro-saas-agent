@@ -1,6 +1,12 @@
 # GW8 Signal API (x402): agent payment risk checks + crypto market data
-> Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), token safety (rug check, honeypot, contract risk), payment-rail costs, crypto market data. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
+> Pay-per-call tools for AI agents. Lead product: token safety (honeypot, rug check, contract risk) at GET /api/verdict/{chain}/{address} ($0.01) returns CLEAR, CAUTION, AVOID, or UNKNOWN. Also should-I-pay decisions, payment-rail costs, and crypto market data. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
 > Agent guide with "use this when", examples, idempotency and receipt verification: GET /agents.md
+> A2A agent card (verdict skill first): GET /.well-known/agent.json (same card at /.well-known/agent-card.json)
+
+## Every paid x402 route (verdict first)
+Row 1 is the token safety screen. Prices are USDC on Base. Example requests are valid unpaid calls: they return 402 with extensions.bazaar (input schema, output schema, description) until you pay.
+
+<!--PAID_CATALOG-->
 
 ## Day pass first
 POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fair use 2000/day, 60/min). Best value if you call more than N times, where N = floor($1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. The pass route itself is the day pass. Alert subscriptions are not covered.
@@ -8,7 +14,7 @@ POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fai
 ## Start here (free)
 - GET /api/brief/teaser — partial live brief: regime score x/4, green/red counts, top 3 dots (symbol+band only), simulated 7d hit-rate headline + upsells.
 - GET /api/sample — Stage 1 statuses + core WaveTrend values (BTC/ETH/SOL/LINK/XRP).
-- GET /agents.md — agent guide. GET /llms.txt — this file. GET /openapi.json — OpenAPI. GET /.well-known/x402 — resource fan-out.
+- GET /agents.md — agent guide. GET /llms.txt — this file. GET /openapi.json — OpenAPI. GET /.well-known/x402 — resource fan-out with every paid route. GET /.well-known/agent.json — A2A agent card.
 - GET /pay.html — human wallet pay page (mobile-friendly).
 - GET /track and GET /api/track — honest track record. Backtest is **simulated**. Live log accrues after deploy.
 - GET /api/stats, /stats.html — request tallies + bots vs likely buyers (no PII). GET /api/traffic, /traffic.html — route x HTTP status (UTC), surfaces, unmatched probes. GET /api/sales — which routes sold (x402, RapidAPI, Apify), counts and dates only. GET /api/proof/pubkey, GET /.well-known/gw8-receipt-key — signing / receipt key.
@@ -71,14 +77,14 @@ POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fai
 | POST /api/alerts/subscribe | $0.50 |
 
 ## Paid detail (what / when)
-- POST /api/agent ($0.02): full Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs.
+- GET /api/verdict/:chain/:address ($0.01): honeypot check and token safety screen (token security, rug pull, rug check, scam token, contract risk). Example: `GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0`. Same $0.01 screen, honeypot in the URL: `GET /api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0`. `signal.verdict` is CLEAR, CAUTION, AVOID, or UNKNOWN, with score (null only for UNKNOWN), reasons[{code, points, detail}], unknowns[{code, detail, limitsVerdict}], sources[{name, url, status, fetchedAt}], and freshness. GoPlus token security plus DexScreener liquidity. Chains: base, ethereum, bsc, polygon, arbitrum, optimism, avalanche, linea, scroll, zksync, mantle, blast, gnosis, cronos, unichain, berachain, sonic, worldchain, abstract, soneium, story, opbnb, solana. `?fresh=1` skips the 10-minute cache. Failed lookups (both sources down, or the only source that answered had nothing on file) are 503 and are not charged. UNKNOWN means both sources answered and found no security record and no pair. CLEAR means score >= 75 with no blocking control rule and no limiting unknown. Optional free sample: `?sample=1` returns score and verdict only.
+- POST /api/agent ($0.02): full Stage 1 regime + WaveTrend band dots on 66 Kraken 4h pairs. Example: `POST /api/agent {}`.
 - GET /api/regime ($0.01): Stage 1 detail (ETF flows, BTC support, alt breadth, Fear & Greed).
 - GET /api/dots ($0.01): every green/red WaveTrend band dot (inner/outer) with wt1/wt2 and closes.
 - GET /api/coin/:symbol ($0.002): WaveTrend 4h for one coin (cheapest).
 - GET /api/history ($0.05): **simulated** 90-day hit-rate backtest (+4h/+24h/+3d). Not a live trade log.
 - GET /api/brief ($0.02): once-per-day MT digest — regime, top 10 dots with strength, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser.
-- GET /api/verdict/:chain/:address ($0.01): token safety, rug check, honeypot, and contract risk. `signal.verdict` is CLEAR, CAUTION, AVOID, or UNKNOWN, with score (null only for UNKNOWN), reasons[{code, points, detail}], unknowns[{code, detail, limitsVerdict}], sources[{name, url, status, fetchedAt}], and freshness. GoPlus token security plus DexScreener liquidity. Chains: base, ethereum, bsc, polygon, arbitrum, optimism, avalanche, linea, scroll, zksync, mantle, blast, gnosis, cronos, unichain, berachain, sonic, worldchain, abstract, soneium, story, opbnb, solana. `?fresh=1` skips the 10-minute cache. Failed lookups (both sources down, or the only source that answered had nothing on file) are 503 and are not charged. UNKNOWN means both sources answered and found no security record and no pair. CLEAR means score >= 75 with no blocking control rule and no limiting unknown. Optional free sample: `?sample=1` returns score and verdict only.
-- GET /api/flows/:symbol ($0.02): Kraken large-print flows + WaveTrend (single venue).
+- GET /api/flows/:symbol ($0.02): Kraken large-print flows + WaveTrend (single venue). Example: `GET /api/flows/BTC`.
 - GET /api/kraken/listings ($0.02): new Kraken USD pairs (30d) + WaveTrend state.
 - GET /api/rs ($0.02): relative strength (1w/1m returns, ranks, 0-100 score) on 66 Kraken pairs + sector scores and breadth.
 - GET /api/rails ($0.002): cheapest/fastest rail now for ?amount= (Base USDC, XRPL, Tempo, Arc live fees; card = static estimate) + agent protocols per rail (x402/MPP/card networks; unconfirmed ones marked unverified). Free truncated sample: `?sample=1` (recommended rail only, per-address daily cap).
@@ -100,5 +106,5 @@ POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fai
 ## Honesty
 - History/track **backtest** = simulated.
 - Track **live log** starts empty until the first logged dot.
-- Also live but not featured (see /openapi.json): /api/rules, /api/rwa, /api/govcontracts (DoD awards ≈ 90-day USAspending lag).
+- Also in the paid table above, and not on the homepage featured tiers: GET /api/rules ($0.02, example `GET /api/rules`), GET /api/rwa ($0.02, example `GET /api/rwa`), GET /api/govcontracts ($0.01, example `GET /api/govcontracts?ticker=PLTR&sector=ai`). DoD awards on /api/govcontracts lag about 90 days via USAspending.
 - Signal only — not financial advice, no trade execution.

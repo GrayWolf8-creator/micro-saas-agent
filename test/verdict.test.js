@@ -40,10 +40,9 @@ test('discovery text names the searches agents use and stays inside the CDP desc
   const d = withCategory('/api/verdict/base/' + ADDR, VERDICT_BLURB);
   assert.ok(d.length <= MAX_RESOURCE_DESCRIPTION, `description is ${d.length}`);
   assert.equal(d.endsWith('...'), false);
-  for (const phrase of ['token safety', 'rug check', 'honeypot', 'contract risk', 'CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN', '$0.01'])
+  for (const phrase of ['honeypot check', 'honeypot', 'rug pull', 'rug check', 'token safety', 'token security', 'scam token', 'contract risk', 'CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN', '$0.01'])
     assert.match(d, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.equal(VERDICT_TAGS.length, 5);
-  assert.ok(VERDICT_TAGS.includes('honeypot') && VERDICT_TAGS.includes('rug-check') && VERDICT_TAGS.includes('contract-risk'));
+  assert.deepEqual(VERDICT_TAGS, ['honeypot', 'token-safety', 'rug-pull', 'scam-token', 'contract-risk']);
   assert.ok(VERDICT_SERVICE_NAME.length <= 32);
   assert.equal(VERDICT_EXAMPLE.verdict, 'CLEAR');
   assert.ok(VERDICT_LABELS.includes('UNKNOWN'));
@@ -180,9 +179,20 @@ test('paid challenge, openapi, llms.txt, agents.md, and discovery advertise the 
   assert.ok(pr.extensions.bazaar.schema.properties.input.properties.pathParams.properties.chain.enum.includes('polygon'));
   assert.equal(pr.extensions.bazaar.info.output.example.verdict, 'CLEAR');
   assert.ok(pr.extensions.bazaar.schema.properties.output.properties.example.properties.verdict.enum.includes('UNKNOWN'));
-  assert.equal(pr.resource.serviceName, 'GW8 Token Safety');
+  assert.equal(pr.resource.serviceName, VERDICT_SERVICE_NAME);
+  assert.equal(VERDICT_SERVICE_NAME, 'GW8 Honeypot Check');
   assert.deepEqual(pr.resource.tags, VERDICT_TAGS);
-  for (const phrase of ['honeypot', 'rug check', 'contract risk', 'token safety']) assert.match(pr.resource.description, new RegExp(phrase));
+  for (const phrase of ['honeypot check', 'honeypot', 'rug pull', 'rug check', 'token safety', 'token security', 'scam token', 'contract risk']) assert.match(pr.resource.description, new RegExp(phrase));
+  assert.match(JSON.stringify(pr.extensions.bazaar.schema), /honeypot check/);
+  assert.match(pr.extensions.bazaar.schema.properties.input.properties.pathParams.properties.address.description, /honeypot/);
+  const honey = await fetch(base + '/api/honeypot/base/' + ADDR);
+  assert.equal(honey.status, 402);
+  const hp = JSON.parse(Buffer.from(honey.headers.get('payment-required'), 'base64').toString('utf8'));
+  assert.equal(hp.accepts[0].amount, '10000');
+  assert.equal(hp.resource.url, 'https://micro-saas-agent.onrender.com/api/honeypot/base/' + ADDR);
+  assert.equal(hp.extensions.bazaar.routeTemplate, '/api/honeypot/:chain/:address');
+  assert.equal(hp.resource.serviceName, VERDICT_SERVICE_NAME);
+  assert.match(hp.resource.description, /honeypot check/);
   const doc = await (await fetch(base + '/openapi.json')).json();
   const op = doc.paths['/api/verdict/{chain}/{address}'].get;
   assert.equal(op['x-payment-info'].price.amount, '0.01');

@@ -68,6 +68,7 @@ const EXACT = new Set([
 const PARAM = [
     [/^\/api\/coin\/[^/]+$/i, '/api/coin/:symbol'],
     [/^\/api\/verdict\/[^/]+\/[^/]+$/i, '/api/verdict/:chain/:address'],
+    [/^\/api\/honeypot\/[^/]+\/[^/]+$/i, '/api/honeypot/:chain/:address'],
     [/^\/api\/flows\/[^/]+$/i, '/api/flows/:symbol'],
     [/^\/api\/value\/[^/]+\/history$/i, '/api/value/:symbol/history'],
     [/^\/api\/value\/[^/]+$/i, '/api/value/:symbol'],
@@ -86,6 +87,7 @@ const PAID_PATHS = new Set([
     '/api/regime',
     '/api/coin/:symbol',
     '/api/verdict/:chain/:address',
+    '/api/honeypot/:chain/:address',
     '/api/flows/:symbol',
     '/api/brief',
     '/api/rwa',

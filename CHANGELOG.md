@@ -12,6 +12,13 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Agent discovery files and honeypot search terms (2026-11-05)
+- `GET /.well-known/agent.json` and `GET /.well-known/agent-card.json` serve one A2A agent card. The first skill is the token safety screen. Every paid x402 route is a skill, with method, price, and an example request.
+- `/llms.txt`, `/agents.md`, `/.well-known/x402`, and `/openapi.json` list every paid route from the same catalog, verdict first, with price, description, and example request. `/.well-known/x402` `resources[0]` stays the day pass.
+- Each paid 402 already carries `extensions.bazaar`. Output schemas are filled from the response example when a route has no hand-written schema. GETs with no query string advertise `sample=0` so `queryParams` is not an empty object.
+- Verdict 402 copy now uses the words paying agents search for: honeypot check, honeypot, rug pull, rug check, token safety, token security, scam token, contract risk. Service name is `GW8 Honeypot Check`. Tags are `honeypot`, `token-safety`, `rug-pull`, `scam-token`, `contract-risk`. Input and output schema descriptions use the same words. Price stays $0.01.
+- `GET /api/honeypot/{chain}/{address}` is the same screen, same price, and same handler as `/api/verdict/{chain}/{address}`. The path is so a Bazaar URL match can find a honeypot check. It does not change settlement.
+
 ### Which paid routes sold (2026-11-05)
 - `GET /api/sales` (free, public, not an x402 route and not in the Bazaar paid list): counts of successful sales by route template, surface, and UTC day. `paid` is a new x402 facilitator settlement (HTTP, not a safe-retry replay) or an MCP in-band settlement, or a RapidAPI/Apify proxy response of 2xx. `pass` is a call served by a day pass (the USDC sale is `POST /api/pass/day`). `quotes` is every HTTP 402. `sample` and `free` are unpaid 2xx. `?days=` is 1..35, default 7.
 - The response is route names, counts, and dates only. No IPs, wallet addresses, headers, query strings, or request bodies.

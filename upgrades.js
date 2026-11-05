@@ -20,9 +20,10 @@ export const VERDICT_LABELS = ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'];
 export const VERDICT_TTL_SEC = 600;
 export const VERDICT_NOTE = 'Factual screen of public GoPlus and DexScreener records. CLEAR means the score is at least 75, no limiting unknown is open, and no control rule that blocks CLEAR fired. It is not a guarantee that a transfer will succeed.';
 // Kept under the CDP 500-char resource.description cap after the catalog category prefix.
-export const VERDICT_BLURB = 'Factual token safety screen for a rug check, honeypot, and contract risk before a swap, transfer, or approval. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness. GoPlus plus DexScreener. Base, Ethereum, BSC, Polygon, Arbitrum, Optimism, Avalanche, Solana, and other supported chains. ?fresh=1 skips cache. $0.01 USDC. CLEAR means no blocking rule fired.';
-export const VERDICT_TAGS = ['token-safety', 'rug-check', 'honeypot', 'contract-risk', 'goplus'];
-export const VERDICT_SERVICE_NAME = 'GW8 Token Safety';
+// Phrases match how paying agents search Bazaar (honeypot check, token safety, rug pull, scam token).
+export const VERDICT_BLURB = 'A honeypot check and token safety screen for token security: honeypot, rug pull, rug check, scam token, and contract risk before a swap, transfer, or approval. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness. GoPlus plus DexScreener. $0.01 USDC.';
+export const VERDICT_TAGS = ['honeypot', 'token-safety', 'rug-pull', 'scam-token', 'contract-risk'];
+export const VERDICT_SERVICE_NAME = 'GW8 Honeypot Check';
 const VTTL = VERDICT_TTL_SEC * 1000;
 const AVOID_CODES = new Set(['honeypot', 'cannot_sell_all', 'non_transferable', 'balance_mutable', 'airdrop_scam', 'fake_token']);
 const BLOCKS_CLEAR = new Set(['freeze_authority', 'mint_authority', 'mintable', 'pausable', 'hidden_owner', 'ownership_reclaim', 'owner_change_balance', 'unverified', 'lp_unlocked']);
@@ -39,7 +40,7 @@ export const VERDICT_RULES = [
 ];
 export const VERDICT_EXAMPLE = {
   chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', verdict: 'CLEAR', score: 90,
-  reasons: [{ code: 'proxy', points: -10, detail: 'upgradeable proxy' }],
+  reasons: [{ code: 'proxy', points: -10, detail: 'upgradeable proxy: contract risk, not a honeypot, rug pull, or scam token' }],
   unknowns: [],
   sources: [
     { name: 'goplus', status: 'ok', url: 'https://api.gopluslabs.io/' },
@@ -49,13 +50,14 @@ export const VERDICT_EXAMPLE = {
 };
 export const VERDICT_OUTPUT_SCHEMA = {
   type: 'object',
+  description: 'Honeypot check output: token safety and token security screen. verdict is CLEAR, CAUTION, AVOID, or UNKNOWN. AVOID covers a honeypot, rug pull, or scam token. reasons[].code honeypot means the honeypot check failed.',
   additionalProperties: true,
   properties: {
-    chain: { type: 'string' },
-    address: { type: 'string' },
-    verdict: { type: 'string', enum: VERDICT_LABELS },
-    score: { type: 'number' },
-    reasons: { type: 'array', items: { type: 'object', required: ['code', 'points', 'detail'], properties: { code: { type: 'string' }, points: { type: 'number' }, detail: { type: 'string' } } } },
+    chain: { type: 'string', description: 'Chain the honeypot check ran on.' },
+    address: { type: 'string', description: 'Token contract screened for honeypot, rug pull, scam token, token security, and contract risk.' },
+    verdict: { type: 'string', enum: VERDICT_LABELS, description: 'Token safety verdict: CLEAR, CAUTION, AVOID, or UNKNOWN. AVOID includes honeypot, rug pull, and scam token.' },
+    score: { type: 'number', description: 'Token security score 0-100. Null when the honeypot check verdict is UNKNOWN.' },
+    reasons: { type: 'array', description: 'Honeypot check, rug pull, scam token, and contract risk rules that fired.', items: { type: 'object', required: ['code', 'points', 'detail'], properties: { code: { type: 'string', description: 'Rule id. honeypot means a honeypot or sell-blocking scam token. Other codes cover rug pull and contract risk.' }, points: { type: 'number' }, detail: { type: 'string' } } } },
     unknowns: { type: 'array', items: { type: 'object', required: ['code', 'detail', 'limitsVerdict'], properties: { code: { type: 'string' }, detail: { type: 'string' }, limitsVerdict: { type: 'boolean' } } } },
     sources: { type: 'array' },
     freshness: { type: 'object', properties: { checkedAt: { type: 'string' }, cached: { type: 'boolean' }, cacheTtlSec: { type: 'number' }, ageSec: { type: 'number' } }, required: ['checkedAt', 'cached', 'cacheTtlSec', 'ageSec'] }
@@ -63,8 +65,8 @@ export const VERDICT_OUTPUT_SCHEMA = {
   required: ['verdict', 'score', 'reasons', 'unknowns', 'sources', 'freshness']
 };
 export const VERDICT_PATH_SCHEMA = {
-  chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain slug for a token safety, rug check, honeypot, or contract risk screen' },
-  address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58)' }
+  chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain for a honeypot check: token safety, token security, rug pull, scam token, or contract risk' },
+  address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58) to honeypot-check for rug pull, scam token, and contract risk' }
 };
 const vcache = new Map();
 export function _resetVerdictCache() { vcache.clear(); }

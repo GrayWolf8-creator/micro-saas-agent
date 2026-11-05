@@ -2,7 +2,12 @@
 
 Base URL: `https://micro-saas-agent.onrender.com` · MCP: `https://micro-saas-agent.onrender.com/mcp` (Streamable HTTP, no sign-in)
 Pay per call with x402 v2: USDC on Base (`eip155:8453`), asset `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`.
-Signal only. No trading, no custody, not financial advice. Full route list: `/openapi.json`. Short menu: `/llms.txt`.
+Signal only. No trading, no custody, not financial advice. Full route list: `/openapi.json`. Short menu: `/llms.txt`. A2A agent card: `/.well-known/agent.json` (same document at `/.well-known/agent-card.json`).
+
+## Every paid x402 route (verdict first)
+Row 1 is the token safety screen ($0.01): honeypot, rug check, contract risk. `signal.verdict` is CLEAR, CAUTION, AVOID, or UNKNOWN. Example requests are the unpaid call; the 402 body includes `extensions.bazaar` input schema, output schema, and description.
+
+<!--PAID_CATALOG-->
 
 ## How paying works (all paid calls)
 Day pass first: `POST /api/pass/day` ($1.00) is the best value if you call more than N times (N = floor($1.00 / per-call price); $0.002 → more than 500, $0.01 → more than 100, $0.02 → more than 50, $0.05 → more than 20).
@@ -18,6 +23,12 @@ Every paid response carries a signed receipt (`receipt` in the body, plus `X-GW8
 - Free check: `POST /api/receipt/verify` with `{"payload": "<receipt.payload>", "signature": "<receipt.signature>", "data": <the result object without its receipt>}` → `{valid, dataMatches}`.
 - Offline: Ed25519-verify `utf8(payload)` against `base64(signature)` with the key from `GET /api/proof/pubkey`. `response_sha256` = sha256 of `JSON.stringify(data)`.
 - `query.requestSha256` = sha256 of the canonical JSON (sorted keys, no spaces) of what you sent. It proves which request the decision was for.
+
+## Featured: token safety (rug check, honeypot, contract risk)
+- **GET /api/verdict/{chain}/{address} · $0.01 · MCP `get_token_verdict`.** Use this before a swap, transfer, or approval when you need a honeypot check: token safety, token security, rug pull, scam token, and contract risk. Example: `GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0`. Optional `?fresh=1` skips the 10-minute cache. Same screen and price: `GET /api/honeypot/{chain}/{address}` (example `GET /api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0`).
+- The paid JSON field `signal` is `{verdict, score, reasons:[{code, points, detail}], unknowns:[{code, detail, limitsVerdict}], sources:[{name, url, status, fetchedAt}], freshness:{checkedAt, cached, cacheTtlSec, ageSec}}`.
+- `verdict` is **CLEAR**, **CAUTION**, **AVOID**, or **UNKNOWN**. CLEAR means score >= 75, every unknown has `limitsVerdict: false`, and no control rule that blocks CLEAR fired (mint, freeze, pause, hidden owner, unverified source, unlocked LP). A small flag such as an upgradeable proxy can still be CLEAR. AVOID means a honeypot, a blocked full transfer, mutable balances, a fake-token or airdrop-scam flag, or a score under 40. UNKNOWN means both sources answered and there is no security record and no DEX pair (`score` is null). CAUTION is everything else, including a source that failed while the other still had a record.
+- A failed lookup (both sources down, or the only source that answered had nothing on file) is **503** and is not settled. UNKNOWN is a finished lookup. Data: GoPlus token security and DexScreener liquidity, no API key. Chains include base, ethereum, bsc, polygon, arbitrum, optimism, avalanche, solana, and the rest of `coverage.chains` on the result. Free truncated sample: `?sample=1` (score and verdict only).
 
 ## Featured: agent payments (risk checks before paying)
 
@@ -42,12 +53,6 @@ Body `{payment, policy}` (same shape as above). Returns `{decision: allow|deny|n
 Body `{"address": "0x…"}` (seller wallet on Base) and/or `{"endpoint": "https://…"}` (we read `payTo` from its unpaid 402), optional `lookbackDays` 1-90.
 Returns `{score 0-100, verdict: trusted|caution|avoid|unknown, components:{distinctBuyers, washShare, walletAge, concentration, volume30d}, reasons, flags, reputationReceipt}`.
 Data: public USDC transfers on Base (Alchemy Transfers API; keyless Blockscout fallback). Heuristic, not a guarantee. **Free first:** `GET /api/seller/reputation/status` → `{source, keyed, reachable, http_status}`. If `reachable` is false, paid calls return 503 and are not charged.
-
-## Featured: token safety (rug check, honeypot, contract risk)
-- **GET /api/verdict/{chain}/{address} · $0.01 · MCP `get_token_verdict`.** Use this before a swap, transfer, or approval when you need a factual token safety screen. Example: `/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`. Optional `?fresh=1` skips the 10-minute cache.
-- The paid JSON field `signal` is `{verdict, score, reasons:[{code, points, detail}], unknowns:[{code, detail, limitsVerdict}], sources:[{name, url, status, fetchedAt}], freshness:{checkedAt, cached, cacheTtlSec, ageSec}}`.
-- `verdict` is **CLEAR**, **CAUTION**, **AVOID**, or **UNKNOWN**. CLEAR means score >= 75, every unknown has `limitsVerdict: false`, and no control rule that blocks CLEAR fired (mint, freeze, pause, hidden owner, unverified source, unlocked LP). A small flag such as an upgradeable proxy can still be CLEAR. AVOID means a honeypot, a blocked full transfer, mutable balances, a fake-token or airdrop-scam flag, or a score under 40. UNKNOWN means both sources answered and there is no security record and no DEX pair (`score` is null). CAUTION is everything else, including a source that failed while the other still had a record.
-- A failed lookup (both sources down, or the only source that answered had nothing on file) is **503** and is not settled. UNKNOWN is a finished lookup. Data: GoPlus token security and DexScreener liquidity, no API key. Chains include base, ethereum, bsc, polygon, arbitrum, optimism, avalanche, solana, and the rest of `coverage.chains` on the result. Free truncated sample: `?sample=1` (score and verdict only).
 
 ## Featured: payment rails
 - **GET /api/rails?amount=100 · $0.002 · MCP `get_payment_rails`.** Use this when choosing how to move a USD amount: live fee and speed for Base USDC, XRPL, Tempo and Arc vs card, plus a recommended rail.
@@ -83,10 +88,15 @@ Repeated calls: day pass first. POST /api/pass/day ($1.00) is cheaper after more
 
 Example output (`/api/coin/BTC`, inside `signal`): `{"asOf":"…","name":"BTC","wt1":-12.4,"wt2":-10.1,…,"disclaimer":"signal only, not financial advice"}`. Free try: `GET /api/sample`.
 
+## Also paid (not on the homepage featured tiers)
+- GET /api/rwa ($0.02). Example: `GET /api/rwa`. Tokenized RWA flows: protocol TVL, 7d change, movers, yields, top tokens.
+- GET /api/govcontracts ($0.01). Example: `GET /api/govcontracts?ticker=PLTR&sector=ai`. Federal awards. DoD rows lag about 90 days. Free health: `/api/govcontracts/status`.
+- GET /api/rules ($0.02). Example: `GET /api/rules`. CFTC and SEC crypto rule changes for 90 days. Free health: `/api/rules/status`.
+
 ## Access
 - POST /api/pass/day ($1.00): 24h pass (`X-GW8-Pass`).
 - POST /api/alerts/subscribe ($0.50): green-dot webhooks (HMAC). Body `{"webhookUrl":"https://…"}`.
 - POST /api/brief/weekly/subscribe ($0.25): 4 Monday briefs by webhook.
 
 ## Free
-`/api/sample`, `/api/brief/teaser`, `/api/seller/reputation/status`, `/track`, `/api/stats`, `/api/traffic`, `/api/sales`, `/api/proof/pubkey`, `/api/receipt/verify`, `/llms.txt`, `/openapi.json`, `/.well-known/x402`.
+`/api/sample`, `/api/brief/teaser`, `/api/seller/reputation/status`, `/track`, `/api/stats`, `/api/traffic`, `/api/sales`, `/api/proof/pubkey`, `/api/receipt/verify`, `/llms.txt`, `/openapi.json`, `/.well-known/x402`, `/.well-known/agent.json`, `/.well-known/agent-card.json`.

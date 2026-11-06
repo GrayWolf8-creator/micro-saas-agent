@@ -12,6 +12,12 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Token safety verdict name and tags (2026-11-06)
+- `resource.serviceName` on `GET /api/verdict/{chain}/{address}` and the existing same-handler alias `GET /api/honeypot/{chain}/{address}` is `GW8 Token Safety Verdict`. It was `GW8 Honeypot Check`. The MCP tool id stays `get_token_verdict`; its title is `Token safety verdict`.
+- Resource tags are `honeypot`, `token safety`, `rug-pull`, `scam-token`, `contract-risk`. The plain phrase `token safety` takes the slot of the hyphenated `token-safety` tag. Bazaar keeps at most five tags, so the other four prior tags stay and both forms are not published together.
+- Price stays $0.01 (amount `10000`). Routes, settlement fields, scoring, and the response shape are unchanged. This does not claim a change in CDP Bazaar search rank.
+- CDP Bazaar copies `serviceName` and `tags` from the resource block echoed on a settled payment. Refreshing the live index with this wording would take a later settlement of the updated 402. That settlement was not run. The settlements on 2026-11-05 already indexed the previous name and tags.
+
 ### Deep honeypot check, token brief, and crypto bottom watch (2026-11-05)
 - `GET /api/verdict-deep/{chain}/{address}` is **$0.05**. Alias `GET /api/honeypot-deep/{chain}/{address}` is the same handler and price. It returns the $0.01 verdict plus holder concentration (top-10 %), liquidity amount and whether LP is locked or burned, owner/mint/proxy/blacklist privileges, buy and sell tax, and contract age. Missing reads are UNKNOWN. Sources are GoPlus, honeypot.is, and DexScreener, each with a timeout. Verdict is CLEAR, CAUTION, AVOID, or UNKNOWN. The $0.01 route is unchanged.
 - `GET /api/token-brief/{chain}/{address}` is **$0.02**. One call returns the $0.01 safety verdict plus a market snapshot: price, 24h change, 24h volume, liquidity, and FDV.

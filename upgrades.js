@@ -22,8 +22,12 @@ export const VERDICT_NOTE = 'Factual screen of public GoPlus and DexScreener rec
 // Kept under the CDP 500-char resource.description cap after the catalog category prefix.
 // Phrases match how paying agents search Bazaar (honeypot check, token safety, rug pull, scam token).
 export const VERDICT_BLURB = 'A honeypot check and token safety screen for token security: honeypot, rug pull, rug check, scam token, and contract risk before a swap, transfer, or approval. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness. GoPlus plus DexScreener. $0.01 USDC.';
-export const VERDICT_TAGS = ['honeypot', 'token-safety', 'rug-pull', 'scam-token', 'contract-risk'];
-export const VERDICT_SERVICE_NAME = 'GW8 Honeypot Check';
+// Bazaar resource metadata: serviceName is printable ASCII and at most 32 characters; tags are at most
+// five entries, each printable ASCII and at most 32 characters. Facilitators drop tags past five.
+// "token safety" is the plain phrase in place of the hyphenated token-safety tag. honeypot, rug-pull,
+// scam-token, and contract-risk stay. This wording does not control or promise CDP search rank.
+export const VERDICT_TAGS = ['honeypot', 'token safety', 'rug-pull', 'scam-token', 'contract-risk'];
+export const VERDICT_SERVICE_NAME = 'GW8 Token Safety Verdict';
 const VTTL = VERDICT_TTL_SEC * 1000;
 const AVOID_CODES = new Set(['honeypot', 'cannot_sell_all', 'non_transferable', 'balance_mutable', 'airdrop_scam', 'fake_token']);
 const BLOCKS_CLEAR = new Set(['freeze_authority', 'mint_authority', 'mintable', 'pausable', 'hidden_owner', 'ownership_reclaim', 'owner_change_balance', 'unverified', 'lp_unlocked']);

@@ -663,7 +663,7 @@ async function buildMcp() {
         async a => { subV = await validateSubscribe(a, COINS); return subV.error || null; }, { noPass: true });
     await paidTool('buy_day_pass', 'Day pass (24h)', '/api/pass/day', 'POST', PASS_PLAN.priceUsd, `Buy a ${PASS_PLAN.hours}h pass for every paid GW8 data tool/endpoint: pass the returned token as the "pass" argument (MCP) or X-GW8-Pass header (HTTP). Fair use ${PASS_PLAN.dailyCap} calls, ${PASS_PLAN.perMinute}/min. Excludes alert subscriptions. Token shown once.`, {}, undefined, () => mintPass(), undefined, { noPass: true });
     await paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history', a => getHistory(a.pair || null));
-    await paidTool('get_token_verdict', 'Honeypot check', '/api/verdict/{chain}/{address}', 'GET', '0.01', 'Honeypot check and token safety screen: honeypot, rug pull, scam token, token security, and contract risk. Returns CLEAR, CAUTION, AVOID, or UNKNOWN. Same screen at GET /api/honeypot/{chain}/{address} ($0.01). Optional fresh=true re-reads upstream. A failed lookup is not charged.', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict/${a.chain}/${a.address}`,
+    await paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.01', 'Token safety verdict (honeypot check and token safety screen): honeypot, rug pull, scam token, token security, and contract risk. Returns CLEAR, CAUTION, AVOID, or UNKNOWN. Same screen at GET /api/honeypot/{chain}/{address} ($0.01). Optional fresh=true re-reads upstream. A failed lookup is not charged.', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict/${a.chain}/${a.address}`,
         a => getVerdict(String(a.chain).toLowerCase(), String(a.address), { fresh: a.fresh === true }), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
     await paidTool('get_token_verdict_deep', 'Deep honeypot check', '/api/verdict-deep/{chain}/{address}', 'GET', '0.05', DEEP_BLURB, { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict-deep/${a.chain}/${a.address}`,
         a => getDeepVerdict(String(a.chain).toLowerCase(), String(a.address), { fresh: a.fresh === true }), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
@@ -1061,7 +1061,7 @@ function sendVerdictChallenge(req, res) {
     const chain = bad ? VERDICT_EXAMPLE.chain : rawChain, address = bad ? VERDICT_EXAMPLE.address : rawAddress;
     const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
     return handleX402Agent(req, res, {
-        url: bad ? `${BASE_URL}${root}/{chain}/{address}` : `${BASE_URL}${root}/${chain}/${address}`, amount: "10000", name: "GW8 Honeypot Check",
+        url: bad ? `${BASE_URL}${root}/{chain}/{address}` : `${BASE_URL}${root}/${chain}/${address}`, amount: "10000", name: VERDICT_SERVICE_NAME,
         description: VERDICT_BLURB,
         tags: VERDICT_TAGS,
         serviceName: VERDICT_SERVICE_NAME,

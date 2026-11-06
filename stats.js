@@ -63,10 +63,14 @@ const EXACT = new Set([
     '/.well-known/gw8-receipt-key',
     '/api/receipt/verify',
     '/api/brief/weekly/subscribe',
+    '/api/signals/crypto-bottom',
 ]);
 
 const PARAM = [
     [/^\/api\/coin\/[^/]+$/i, '/api/coin/:symbol'],
+    [/^\/api\/verdict-deep\/[^/]+\/[^/]+$/i, '/api/verdict-deep/:chain/:address'],
+    [/^\/api\/honeypot-deep\/[^/]+\/[^/]+$/i, '/api/honeypot-deep/:chain/:address'],
+    [/^\/api\/token-brief\/[^/]+\/[^/]+$/i, '/api/token-brief/:chain/:address'],
     [/^\/api\/verdict\/[^/]+\/[^/]+$/i, '/api/verdict/:chain/:address'],
     [/^\/api\/honeypot\/[^/]+\/[^/]+$/i, '/api/honeypot/:chain/:address'],
     [/^\/api\/flows\/[^/]+$/i, '/api/flows/:symbol'],
@@ -88,6 +92,10 @@ const PAID_PATHS = new Set([
     '/api/coin/:symbol',
     '/api/verdict/:chain/:address',
     '/api/honeypot/:chain/:address',
+    '/api/verdict-deep/:chain/:address',
+    '/api/honeypot-deep/:chain/:address',
+    '/api/token-brief/:chain/:address',
+    '/api/signals/crypto-bottom',
     '/api/flows/:symbol',
     '/api/brief',
     '/api/rwa',

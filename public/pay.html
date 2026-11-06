@@ -22,6 +22,14 @@ optgroup{color:#94a3b8;font-weight:700}
 <div class="box">Open this page inside the MetaMask or Coinbase Wallet app browser. Use a wallet that is <b>not</b> the payout wallet, on Base, holding a little USDC. No gas needed — you only sign; the facilitator pays gas.</div>
 <label for="ep">Endpoint</label>
 <select id="ep">
+<optgroup label="Token safety">
+<option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict honeypot check — $0.01</option>
+<option value="/api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/honeypot same screen — $0.01</option>
+<option value="/api/verdict-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict-deep deep honeypot check — $0.05</option>
+<option value="/api/honeypot-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/honeypot-deep same deep check — $0.05</option>
+<option value="/api/token-brief/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/token-brief safety plus price — $0.02</option>
+<option value="/api/signals/crypto-bottom|GET">/api/signals/crypto-bottom research — $0.01</option>
+</optgroup>
 <optgroup label="Starter">
 <option value="/api/coin/BTC|GET">/api/coin/BTC — $0.002</option>
 <option value="/api/regime|GET">/api/regime — $0.01</option>

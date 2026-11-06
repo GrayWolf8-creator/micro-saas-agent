@@ -12,6 +12,12 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Deep honeypot check, token brief, and crypto bottom watch (2026-11-05)
+- `GET /api/verdict-deep/{chain}/{address}` is **$0.05**. Alias `GET /api/honeypot-deep/{chain}/{address}` is the same handler and price. It returns the $0.01 verdict plus holder concentration (top-10 %), liquidity amount and whether LP is locked or burned, owner/mint/proxy/blacklist privileges, buy and sell tax, and contract age. Missing reads are UNKNOWN. Sources are GoPlus, honeypot.is, and DexScreener, each with a timeout. Verdict is CLEAR, CAUTION, AVOID, or UNKNOWN. The $0.01 route is unchanged.
+- `GET /api/token-brief/{chain}/{address}` is **$0.02**. One call returns the $0.01 safety verdict plus a market snapshot: price, 24h change, 24h volume, liquidity, and FDV.
+- `GET /api/signals/crypto-bottom` is **$0.01**. Research data, not financial advice. Per coin (BTC, ETH, SOL, XRP, AAVE, HYPE, MON, CC, and the rest of that set): sweep-and-reclaim of the 30-day low, 2x volume, RSI turning up from oversold, 4h higher low, and funding or liquidation flush. `tells_count` and tier NONE, EARLY_TELL at 2 or more, CONFIRMED only when BTC itself has reclaimed. Computed on demand from public Kraken OHLC, with Binance public klines as fallback, and cached about 10 minutes.
+- All three are in the paid catalog that feeds `/llms.txt`, `/agents.md`, `/.well-known/x402`, `/.well-known/agent.json`, `/openapi.json`, and `/pay.html`. Verdict stays first. Each 402 carries bazaar input and output schemas. `/api/sales` counts them on their route templates. Existing prices and handlers are unchanged.
+
 ### Agent discovery files and honeypot search terms (2026-11-05)
 - `GET /.well-known/agent.json` and `GET /.well-known/agent-card.json` serve one A2A agent card. The first skill is the token safety screen. Every paid x402 route is a skill, with method, price, and an example request.
 - `/llms.txt`, `/agents.md`, `/.well-known/x402`, and `/openapi.json` list every paid route from the same catalog, verdict first, with price, description, and example request. `/.well-known/x402` `resources[0]` stays the day pass.

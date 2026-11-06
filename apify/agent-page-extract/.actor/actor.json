@@ -1,0 +1,16 @@
+{
+  "actorSpecification": 1,
+  "name": "agent-page-extract",
+  "title": "Agent Page Extract: Website to Markdown for AI Agents and RAG",
+  "description": "Give it URLs. Get clean, LLM-ready Markdown. Cheerio first, a real browser only when the page is JavaScript-rendered. For RAG pipelines, AI agents, and html to markdown.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "minMemoryMbytes": 2048,
+  "maxMemoryMbytes": 8192,
+  "dockerfile": "../Dockerfile",
+  "input": "./input_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
+  "output": "./output_schema.json"
+}

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Dashboard</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    var sentence = 'The browser rendered this operations note so an agent can read the dashboard. RENDERED-PHRASE ';
+    var paragraphs = '';
+    for (var i = 0; i < 8; i += 1) paragraphs += '<p>' + sentence + '</p>';
+    document.getElementById('root').innerHTML = '<article><h1>Rendered dashboard</h1>' + paragraphs + '</article>';
+  </script>
+  <noscript>You need to enable JavaScript to run this app.</noscript>
+</body>
+</html>

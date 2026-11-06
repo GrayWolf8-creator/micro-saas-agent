@@ -1,0 +1,14 @@
+{
+  "actor-start": {
+    "eventTitle": "Actor start",
+    "eventDescription": "Charged once when the Actor run starts.",
+    "eventPriceUsd": 0.005,
+    "isOneTimeEvent": true
+  },
+  "page-extracted": {
+    "eventTitle": "Page extracted",
+    "eventDescription": "Charged for each page successfully extracted to the dataset (status ok).",
+    "eventPriceUsd": 0.002,
+    "isPrimaryEvent": true
+  }
+}

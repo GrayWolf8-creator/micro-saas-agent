@@ -1,0 +1,40 @@
+{
+  "actorSpecification": 1,
+  "fields": {},
+  "views": {
+    "overview": {
+      "title": "Overview",
+      "transformation": {
+        "fields": ["url", "title", "description", "status", "wordCount", "tokenEstimate", "fetchedAt"]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "url": { "label": "URL", "format": "link" },
+          "title": { "label": "Title", "format": "text" },
+          "description": { "label": "Description", "format": "text" },
+          "status": { "label": "Status", "format": "text" },
+          "wordCount": { "label": "Words", "format": "number" },
+          "tokenEstimate": { "label": "Token estimate", "format": "number" },
+          "fetchedAt": { "label": "Fetched", "format": "date" }
+        }
+      }
+    },
+    "markdown": {
+      "title": "Markdown",
+      "transformation": {
+        "fields": ["url", "title", "status", "markdown", "wordCount"]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "url": { "label": "URL", "format": "link" },
+          "title": { "label": "Title", "format": "text" },
+          "status": { "label": "Status", "format": "text" },
+          "markdown": { "label": "Markdown", "format": "text" },
+          "wordCount": { "label": "Words", "format": "number" }
+        }
+      }
+    }
+  }
+}

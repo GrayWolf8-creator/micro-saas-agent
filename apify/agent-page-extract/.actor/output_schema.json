@@ -1,0 +1,13 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "Extracted pages",
+  "description": "One default-dataset row per fetched page: url, title, description, markdown and/or text, wordCount, tokenEstimate, optional links, fetchedAt, and status.",
+  "properties": {
+    "results": {
+      "type": "string",
+      "title": "Overview",
+      "description": "LLM-ready page rows. Successful pages are the ones with status ok.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items?view=overview"
+    }
+  }
+}

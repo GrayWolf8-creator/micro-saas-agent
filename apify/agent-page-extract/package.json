@@ -1,0 +1,33 @@
+{
+  "name": "agent-page-extract",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Apify Actor that turns URLs into clean, LLM-ready Markdown for AI agents and RAG pipelines.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test --test-force-exit \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "apify": "^3.4.2",
+    "crawlee": "^3.13.2",
+    "jsdom": "^26.1.0",
+    "playwright": "^1.55.0",
+    "turndown": "^7.2.0"
+  },
+  "license": "ISC",
+  "keywords": [
+    "website to markdown",
+    "webpage to markdown",
+    "LLM ready",
+    "RAG scraper",
+    "AI agent web reader",
+    "html to markdown",
+    "clean text extractor"
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "title": "Agent Page Extract input",
+  "description": "Turn public URLs into clean, LLM-ready Markdown or text.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "startUrls": {
+      "title": "Start URLs",
+      "type": "array",
+      "description": "Pages to extract. Each item is a URL string or an object with a url field.",
+      "editor": "requestListSources",
+      "prefill": [{ "url": "https://example.com" }]
+    },
+    "crawlDepth": {
+      "title": "Crawl depth",
+      "type": "integer",
+      "description": "How many same-host link hops to follow. 0 extracts only the URLs you provide. Maximum 2.",
+      "editor": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "default": 0
+    },
+    "maxPages": {
+      "title": "Maximum pages",
+      "type": "integer",
+      "description": "Stop after this many pages (including empty, blocked, and error rows). Default 10. Hard cap 200.",
+      "editor": "number",
+      "minimum": 1,
+      "maximum": 200,
+      "default": 10
+    },
+    "includeLinks": {
+      "title": "Include links",
+      "type": "boolean",
+      "description": "Add the links found in the extracted article to each dataset row.",
+      "editor": "checkbox",
+      "default": false
+    },
+    "outputFormat": {
+      "title": "Output format",
+      "type": "string",
+      "description": "markdown, plain text, or both. Word count and the token estimate always use the plain article text.",
+      "editor": "select",
+      "enum": ["markdown", "text", "both"],
+      "enumTitles": ["Markdown", "Plain text", "Markdown and text"],
+      "default": "markdown"
+    },
+    "removeSelectors": {
+      "title": "Extra CSS selectors to remove",
+      "type": "array",
+      "description": "Optional CSS selectors removed before main-content extraction, in addition to nav, footer, ads, and cookie banners.",
+      "editor": "stringList"
+    },
+    "useBrowserFallback": {
+      "title": "Browser fallback",
+      "type": "boolean",
+      "description": "When a cheap fetch is empty or still a JavaScript shell, render it once in Chrome. Turn off to stay on Cheerio only.",
+      "editor": "checkbox",
+      "default": true
+    },
+    "respectRobotsTxt": {
+      "title": "Respect robots.txt",
+      "type": "boolean",
+      "description": "Skip URLs disallowed by robots.txt and mark them blocked. On by default.",
+      "editor": "checkbox",
+      "default": true
+    }
+  },
+  "required": ["startUrls"]
+}

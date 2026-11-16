@@ -3,6 +3,7 @@
 import crypto from 'crypto';
 import { getDots, getRegime, getCoin, COINS, PAIRS_MAP } from './Signal.js';
 import { getTrack } from './track.js';
+import { VERDICT_PRICE_USD } from './prices.js';
 
 const DISCLAIMER = 'signal only, not financial advice';
 const r2 = v => Math.round(v * 100) / 100;
@@ -21,7 +22,7 @@ export const VERDICT_TTL_SEC = 600;
 export const VERDICT_NOTE = 'Factual screen of public GoPlus and DexScreener records. CLEAR means the score is at least 75, no limiting unknown is open, and no control rule that blocks CLEAR fired. It is not a guarantee that a transfer will succeed.';
 // Kept under the CDP 500-char resource.description cap after the catalog category prefix.
 // Phrases match how paying agents search Bazaar (honeypot check, token safety, rug pull, scam token).
-export const VERDICT_BLURB = 'A honeypot check and token safety screen for token security: honeypot, rug pull, rug check, scam token, and contract risk before a swap, transfer, or approval. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness. GoPlus plus DexScreener. $0.01 USDC.';
+export const VERDICT_BLURB = `A honeypot check and token safety screen for token security: honeypot, rug pull, rug check, scam token, and contract risk before a swap, transfer, or approval. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness. GoPlus plus DexScreener. $${VERDICT_PRICE_USD} USDC.`;
 // Bazaar resource metadata: serviceName is printable ASCII and at most 32 characters; tags are at most
 // five entries, each printable ASCII and at most 32 characters. Facilitators drop tags past five.
 // "token safety" is the plain phrase in place of the hyphenated token-safety tag. honeypot, rug-pull,

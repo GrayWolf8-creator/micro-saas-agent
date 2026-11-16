@@ -23,10 +23,10 @@ optgroup{color:#94a3b8;font-weight:700}
 <label for="ep">Endpoint</label>
 <select id="ep">
 <optgroup label="Token safety">
-<option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict token safety verdict — $0.01</option>
-<option value="/api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/honeypot same screen — $0.01</option>
-<option value="/api/verdict-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict-deep deep honeypot check — $0.05</option>
-<option value="/api/honeypot-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/honeypot-deep same deep check — $0.05</option>
+<option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict token safety verdict — $0.005</option>
+<option value="/api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/honeypot same screen — $0.005</option>
+<option value="/api/verdict-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict-deep deep honeypot check — $0.03</option>
+<option value="/api/honeypot-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/honeypot-deep same deep check — $0.03</option>
 <option value="/api/token-brief/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/token-brief safety plus price — $0.02</option>
 <option value="/api/signals/crypto-bottom|GET">/api/signals/crypto-bottom research — $0.01</option>
 </optgroup>
@@ -43,7 +43,8 @@ optgroup{color:#94a3b8;font-weight:700}
 <option value="/api/kraken/listings|GET">/api/kraken/listings — $0.02</option>
 <option value="/api/rs|GET">/api/rs — $0.02</option>
 <option value="/api/rails|GET">/api/rails — $0.002</option>
-<option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict token safety — $0.01</option>
+<option value="/api/rails/route?chain=base&amount=1|GET">/api/rails/route which facilitator — $0.005</option>
+<option value="/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913|GET">/api/verdict token safety — $0.005</option>
 </optgroup>
 <optgroup label="Agent payments (sample request body is sent for you)">
 <option value="/api/pay/should-i-pay|POST">/api/pay/should-i-pay — $0.02</option>
@@ -57,6 +58,9 @@ optgroup{color:#94a3b8;font-weight:700}
 <option value="/api/growth/solana|GET">/api/growth/solana — $0.015</option>
 <option value="/api/growth|GET">/api/growth — $0.03</option>
 <option value="/api/growth/history|GET">/api/growth/history — $0.07</option>
+</optgroup>
+<optgroup label="Truck">
+<option value="/api/truck/fuel-surcharge?padd=4&amp;base=5.5&amp;mpg=6|GET">/api/truck/fuel-surcharge EIA diesel — $0.005</option>
 </optgroup>
 <optgroup label="Access">
 <option value="/api/pass/day|POST">/api/pass/day — $1.00</option>

@@ -9,6 +9,8 @@ export const CATEGORIES = [
     [/^\/api\/token-brief\//, 'Token brief: token safety plus price, trade check'],
     [/^\/api\/signals\//, 'Crypto bottom watch: research data, not financial advice'],
     [/^\/api\/(verdict|honeypot)\//, 'Token safety verdict: rug check, honeypot, contract risk'],
+    [/^\/api\/rails\/route/, 'Which rail: x402 facilitator pick'],
+    [/^\/api\/truck\//, 'Truck fuel: EIA diesel surcharge'],
     [/^\/api\/rails/, 'Payment rails: fee + speed comparison'],
     [/^\/api\/(pass|alerts|brief\/weekly)/, 'Access'],
     [/^\/api\/value/, 'Market data: value-capture score'],

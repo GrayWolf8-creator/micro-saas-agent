@@ -46,7 +46,7 @@ test('sample truncators stay labeled and omit the paid detail', () => {
   assert.equal(v.sample, true);
   assert.equal(v.truncated, true);
   assert.equal(v.paidRoute, '/api/verdict/base/0xabc');
-  assert.equal(v.paidPriceUsd, '0.01');
+  assert.equal(v.paidPriceUsd, '0.005');
   assert.equal(Object.hasOwn(v, 'reasons'), false);
   assert.ok(v.disclaimer && v.sources.length);
   const rails = sample.truncateRails({ amountUsd: 100, recommended: { rail: 'base-usdc' }, rails: [{ rail: 'base-usdc', source: 'https://example.test/gas' }, { rail: 'card', source: 'card' }], disclaimer: 'signal only, not financial advice' });

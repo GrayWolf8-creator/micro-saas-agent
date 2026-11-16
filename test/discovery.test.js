@@ -28,8 +28,8 @@ test('agent card, docs, openapi, and x402 list every paid route, verdict first',
   assert.ok(paid.length >= 27, 'paid ops ' + paid.length);
   assert.equal(paid[0].path, '/api/verdict/{chain}/{address}');
   assert.equal(paid[1].path, '/api/honeypot/{chain}/{address}');
-  assert.equal(paid[0].price, '0.01');
-  assert.equal(paid[1].price, '0.01');
+  assert.equal(paid[0].price, '0.005');
+  assert.equal(paid[1].price, '0.005');
   assert.equal(paid[0].example, paid[1].example.replace('/api/honeypot/', '/api/verdict/'));
 
   const disc = await (await fetch(base + '/.well-known/x402')).json();

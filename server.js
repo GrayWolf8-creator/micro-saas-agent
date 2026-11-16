@@ -21,6 +21,9 @@ import { getKrakenListings, getKrakenStatus, snapshot as krakenSnapshot } from '
 import { getRules, getRulesStatus } from './rules.js';
 import { getRs } from './rs.js';
 import { getRails, validAmount } from './rails.js';
+import { getFacilitatorRoute, validRouteQuery, ROUTE_BLURB, ROUTE_TAGS, ROUTE_SERVICE_NAME, ROUTE_EXAMPLE, ROUTE_OUTPUT_SCHEMA } from './facilitators.js';
+import { getFuelSurcharge, validFuelQuery, FUEL_BLURB, FUEL_TAGS, FUEL_SERVICE_NAME, FUEL_EXAMPLE, FUEL_OUTPUT_SCHEMA } from './diesel.js';
+import { VERDICT_PRICE_USD, DEEP_PRICE_USD, RAILS_ROUTE_PRICE_USD, FUEL_SURCHARGE_PRICE_USD, usdAtomic } from './prices.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
 import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute, mountTrafficReport, installStatsFlush } from './stats.js';
@@ -259,7 +262,7 @@ app.get('/', (req, res) => {
         asset: "USDC",
         about: "Pay-per-call tools for AI agents: should-I-pay decisions (spend policy + x402 seller reputation), payment risk checks, token safety verdicts (rug check, honeypot, contract risk), payment-rail costs, and crypto market data (regime, WaveTrend dots, relative strength). Signed receipts. Signal only, not financial advice.",
         humans: { pay: "/pay.html", track: "/track" },
-        lead: { method: "GET", path: "/api/verdict/{chain}/{address}", priceUsd: "0.01", example: "GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0", note: "Token safety screen: honeypot, rug check, contract risk. CLEAR, CAUTION, AVOID, or UNKNOWN." },
+        lead: { method: "GET", path: "/api/verdict/{chain}/{address}", priceUsd: VERDICT_PRICE_USD, example: "GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0", note: "Token safety screen: honeypot, rug check, contract risk. CLEAR, CAUTION, AVOID, or UNKNOWN." },
         startHere: { agentGuide: "/agents.md", freeTeaser: "/api/brief/teaser", freeSample: "/api/sample", agentDocs: "/llms.txt", openapi: "/openapi.json", discovery: "/.well-known/x402", agentCard: "/.well-known/agent.json", payPage: "/pay.html" },
         tiers: {
             starter: {
@@ -272,8 +275,8 @@ app.get('/', (req, res) => {
             },
             research: {
                 paid: [
-                    { path: "/api/verdict/{chain}/{address}", priceUsd: "0.01", note: "token safety, honeypot, rug check, contract risk" },
-                    { path: "/api/verdict-deep/{chain}/{address}", priceUsd: "0.05", note: "deep honeypot check: holder concentration, liquidity lock, scam token" },
+                    { path: "/api/verdict/{chain}/{address}", priceUsd: VERDICT_PRICE_USD, note: "token safety, honeypot, rug check, contract risk" },
+                    { path: "/api/verdict-deep/{chain}/{address}", priceUsd: DEEP_PRICE_USD, note: "deep honeypot check: holder concentration, liquidity lock, scam token" },
                     { path: "/api/token-brief/{chain}/{address}", priceUsd: "0.02", note: "token safety plus price, token brief, trade check" },
                     { path: "/api/signals/crypto-bottom", priceUsd: "0.01", note: "crypto bottom-watch research data, not financial advice" },
                     { path: "/api/agent", method: "POST", priceUsd: "0.02" },
@@ -282,7 +285,9 @@ app.get('/', (req, res) => {
                     { path: "/api/flows/{symbol}", priceUsd: "0.02" },
                     { path: "/api/kraken/listings", priceUsd: "0.02" },
                     { path: "/api/rs", priceUsd: "0.02" },
-                    { path: "/api/rails", priceUsd: "0.002" }
+                    { path: "/api/rails", priceUsd: "0.002" },
+                    { path: "/api/rails/route", priceUsd: RAILS_ROUTE_PRICE_USD, note: "which x402 facilitator and which rail for a payment of this size" },
+                    { path: "/api/truck/fuel-surcharge", priceUsd: FUEL_SURCHARGE_PRICE_USD, note: "EIA weekly diesel per-mile surcharge. Source: U.S. EIA" }
                 ]
             },
             agentPayments: {
@@ -341,9 +346,9 @@ function discoveryFanout() {
     return {
         version: 1,
         resources: [passUrl, ...urls.filter(u => u !== passUrl)],
-        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. Lead product, listed first in endpoints: token safety, rug check, honeypot, and contract risk at GET /api/verdict/{chain}/{address} ($0.01) returns CLEAR, CAUTION, AVOID, or UNKNOWN. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt and /agents.md. A2A agent card at /.well-known/agent.json. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base) and extensions.bazaar (input schema, output schema, resource description). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
-        tokenSafety: { method: 'GET', path: '/api/verdict/{chain}/{address}', priceUsd: '0.01', verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['honeypot', 'honeypot check', 'rug pull', 'token safety', 'token security', 'scam token', 'contract risk', 'rug check'], chains: Object.keys(VERDICT_CHAINS), example: 'GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0', alias: { method: 'GET', path: '/api/honeypot/{chain}/{address}', priceUsd: '0.01', example: 'GET /api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' } },
-        deepToken: { method: 'GET', path: '/api/verdict-deep/{chain}/{address}', priceUsd: '0.05', verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['deep honeypot check', 'rug pull', 'token safety', 'holder concentration', 'liquidity lock', 'scam token'], example: 'GET /api/verdict-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0', alias: { method: 'GET', path: '/api/honeypot-deep/{chain}/{address}', priceUsd: '0.05', example: 'GET /api/honeypot-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' } },
+        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.005 more than 200, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. Lead product, listed first in endpoints: token safety, rug check, honeypot, and contract risk at GET /api/verdict/{chain}/{address} ($${VERDICT_PRICE_USD}) returns CLEAR, CAUTION, AVOID, or UNKNOWN. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt and /agents.md. A2A agent card at /.well-known/agent.json. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base) and extensions.bazaar (input schema, output schema, resource description). ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
+        tokenSafety: { method: 'GET', path: '/api/verdict/{chain}/{address}', priceUsd: VERDICT_PRICE_USD, verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['honeypot', 'honeypot check', 'rug pull', 'token safety', 'token security', 'scam token', 'contract risk', 'rug check'], chains: Object.keys(VERDICT_CHAINS), example: 'GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0', alias: { method: 'GET', path: '/api/honeypot/{chain}/{address}', priceUsd: VERDICT_PRICE_USD, example: 'GET /api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' } },
+        deepToken: { method: 'GET', path: '/api/verdict-deep/{chain}/{address}', priceUsd: DEEP_PRICE_USD, verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['deep honeypot check', 'rug pull', 'token safety', 'holder concentration', 'liquidity lock', 'scam token'], example: 'GET /api/verdict-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0', alias: { method: 'GET', path: '/api/honeypot-deep/{chain}/{address}', priceUsd: DEEP_PRICE_USD, example: 'GET /api/honeypot-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' } },
         tokenBrief: { method: 'GET', path: '/api/token-brief/{chain}/{address}', priceUsd: '0.02', searches: ['token safety plus price', 'token brief', 'trade check'], example: 'GET /api/token-brief/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' },
         cryptoBottom: { method: 'GET', path: '/api/signals/crypto-bottom', priceUsd: '0.01', tiers: ['NONE', 'EARLY_TELL', 'CONFIRMED'], disclaimer: BOTTOM_DISCLAIMER, example: 'GET /api/signals/crypto-bottom?fresh=0' },
         endpoints: PAID.map(p => ({
@@ -367,7 +372,7 @@ const RAW_PAID = [
     { path: '/api/regime', method: 'get', price: '0.01', summary: 'Stage 1 crypto market regime check detail (ETF flows, BTC support, alt breadth, Fear & Greed). $0.01.' },
     { path: '/api/dots', method: 'get', price: '0.01', summary: 'Current WaveTrend oversold/overbought band dots across 66 Kraken 4h USD pairs. $0.01.' },
     { path: '/api/coin/{symbol}', method: 'get', price: '0.002', summary: 'WaveTrend 4h snapshot for one coin (cheapest call). $0.002.', pathParam: true, ex: '/api/coin/BTC', pathEx: { symbol: 'BTC' } },
-    { path: '/api/verdict/{chain}/{address}', method: 'get', price: '0.01', summary: VERDICT_BLURB, params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain for a honeypot check: token safety, token security, rug pull, scam token, or contract risk' }, address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58) to honeypot-check for rug pull, scam token, and contract risk' } }, query: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener for this honeypot check. 0 uses the 10-minute cache.' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', pathEx: { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }, responseDescription: 'Paid JSON. The screen is in signal: verdict CLEAR, CAUTION, AVOID, or UNKNOWN, with score, reasons, unknowns, sources, and freshness. Settled only after that screen is ready. A failed lookup is not settled.', responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: VERDICT_OUTPUT_SCHEMA }, required: ['signal'] } },
+    { path: '/api/verdict/{chain}/{address}', method: 'get', price: VERDICT_PRICE_USD, summary: VERDICT_BLURB, params: { chain: { type: 'string', enum: Object.keys(VERDICT_CHAINS), description: 'Chain for a honeypot check: token safety, token security, rug pull, scam token, or contract risk' }, address: { type: 'string', description: 'Token contract (0x and 40 hex) or Solana mint (base58) to honeypot-check for rug pull, scam token, and contract risk' } }, query: { fresh: { type: 'string', enum: ['0', '1'], description: '1 re-reads GoPlus and DexScreener for this honeypot check. 0 uses the 10-minute cache.' } }, ex: '/api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', pathEx: { chain: 'base', address: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }, responseDescription: 'Paid JSON. The screen is in signal: verdict CLEAR, CAUTION, AVOID, or UNKNOWN, with score, reasons, unknowns, sources, and freshness. Settled only after that screen is ready. A failed lookup is not settled.', responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: VERDICT_OUTPUT_SCHEMA }, required: ['signal'] } },
     { path: '/api/flows/{symbol}', method: 'get', price: '0.02', summary: 'Kraken large-print buy/sell flow summary joined with WaveTrend 4h state (single venue, not on-chain). $0.02.', pathParam: true, ex: '/api/flows/BTC', pathEx: { symbol: 'BTC' } },
     { path: '/api/brief', method: 'get', price: '0.02', summary: 'Once-per-day (Mountain Time) crypto brief: regime, WaveTrend dot counts, top coins, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser. $0.02.' },
     { path: '/api/rwa', method: 'get', price: '0.02', summary: 'Tokenized RWA flows: protocol TVL, 7d change/estimated flows, movers, yields, top RWA tokens (DefiLlama + CoinGecko). $0.02.' },
@@ -376,6 +381,8 @@ const RAW_PAID = [
     { path: '/api/rules', method: 'get', price: '0.02', summary: 'CFTC + SEC crypto rule-change feed (90 days): ANPRM/NPRM/final/notice/press, RIN, comment deadlines. $0.02.' },
     { path: '/api/rs', method: 'get', price: '0.02', summary: 'Relative strength: 1w/1m % return, percentile ranks and 0-100 strength score for 66 Kraken USD pairs, plus sector scores and breadth (L1, L2, DeFi, RWA, oracles/infra, payments, AI, memes). $0.02.' },
     { path: '/api/rails', method: 'get', price: '0.002', summary: 'Cheapest/fastest payment rail right now for a USD amount: Base USDC, XRPL, Tempo, Arc (live fees) vs card (static estimate), with agent-protocol support per rail, with fee USD/%, settlement time and a recommended pick. Optional ?amount=100. $0.002.', query: { amount: { type: 'number', description: 'USD amount, default 100' } } },
+    { path: '/api/rails/route', method: 'get', price: RAILS_ROUTE_PRICE_USD, summary: ROUTE_BLURB, query: { chain: { type: 'string', description: 'Mainnet chain. Omit and the route chooses. base, solana, polygon, arbitrum, avalanche, optimism, ethereum, bsc, sei, or worldchain.', example: 'base' }, amount: { type: 'number', description: 'Payment size in USD. Default 1. Under $1 the lowest live facilitator fee wins. At $1 and above, stay on Base unless another chain is cheaper by more than 1% of the payment.', example: 1 } }, ex: '/api/rails/route', responseDescription: 'Paid JSON. recommended is the one facilitator and chain to use, with why. alternatives, fee, settle_time, and status are supporting fields. status is up, down, or unknown.', responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: ROUTE_OUTPUT_SCHEMA }, required: ['signal'] } },
+    { path: '/api/truck/fuel-surcharge', method: 'get', price: FUEL_SURCHARGE_PRICE_USD, summary: FUEL_BLURB, query: { padd: { type: 'string', description: 'us or a PADD: 1, 1A, 1B, 1C, 2, 3, 4 (Rocky Mountain, default), 5.', example: '4' }, base: { type: 'number', description: 'Base diesel price, USD per gallon, 0 to 100.', example: 5.5 }, mpg: { type: 'number', description: 'Miles per gallon, greater than 0 and at most 100.', example: 6 } }, ex: '/api/truck/fuel-surcharge', responseDescription: 'Paid JSON. EIA weekly on-highway diesel, week-over-week change, and per-mile surcharge max(0, current - base) / mpg. Source: U.S. EIA. A failed page read is not settled.', responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: FUEL_OUTPUT_SCHEMA }, required: ['signal'] } },
     { path: '/api/value/{symbol}', method: 'get', price: VALUE_PRICES.one, summary: 'Value-capture score for one coin (net supply, holder yield, usage class, burn-versus-held, unlock overhang). $0.015.', params: { symbol: { type: 'string', description: 'Ticker, e.g. BNB' } }, ex: '/api/value/BNB', pathEx: { symbol: 'BNB' } },
     { path: '/api/value', method: 'get', price: VALUE_PRICES.batch, summary: 'Value-capture screen: up to 25 symbols or the whole covered set. Sort score, yield or netSupply90d. $0.03.', query: { symbols: { type: 'string', description: 'Comma-separated tickers, max 25' }, sort: { type: 'string', enum: ['score', 'yield', 'netSupply90d'] }, minScore: { type: 'number', description: '0-100, default 0' } } },
     { path: '/api/value/{symbol}/history', method: 'get', price: VALUE_PRICES.history, summary: 'Weekly value-capture snapshots for one coin, up to 52 weeks. Rule classes are carried forward; yield is recomputed. $0.07.', params: { symbol: { type: 'string', description: 'Ticker, e.g. BNB' } }, query: { weeks: { type: 'integer', description: '1-52, default 12' } }, ex: '/api/value/BNB/history', pathEx: { symbol: 'BNB' } },
@@ -392,7 +399,7 @@ const RAW_PAID = [
 // Lead product first on every generated surface (OpenAPI path order, discovery endpoints, agent card, llms/agents catalog).
 const _verdictFirst = RAW_PAID.findIndex(p => String(p.path).startsWith('/api/verdict/'));
 if (_verdictFirst > 0) RAW_PAID.unshift(RAW_PAID.splice(_verdictFirst, 1)[0]);
-// Same $0.01 screen on a URL that contains "honeypot", so Bazaar keyword search can match the resource path.
+// Same token-safety screen on a URL that contains "honeypot", so Bazaar keyword search can match the resource path. Price is VERDICT_PRICE_USD.
 {
     const verdictSpec = RAW_PAID.find(p => String(p.path).startsWith('/api/verdict/'));
     if (verdictSpec && !RAW_PAID.some(p => String(p.path).startsWith('/api/honeypot/'))) {
@@ -410,17 +417,17 @@ const FRESH_QUERY = { fresh: { type: 'string', enum: ['0', '1'], description: '1
     const honeypotSpec = RAW_PAID.find(p => p.path === '/api/honeypot/{chain}/{address}');
     const at = honeypotSpec ? RAW_PAID.indexOf(honeypotSpec) + 1 : 2;
     const deepSpec = {
-        path: '/api/verdict-deep/{chain}/{address}', method: 'get', price: '0.05', summary: DEEP_BLURB,
+        path: '/api/verdict-deep/{chain}/{address}', method: 'get', price: DEEP_PRICE_USD, summary: DEEP_BLURB,
         params: DEEP_PATH_SCHEMA, query: FRESH_QUERY,
         ex: '/api/verdict-deep/base/' + EX_TOKEN, pathEx: { chain: 'base', address: EX_TOKEN },
-        responseDescription: 'Paid JSON. signal is the $0.01 screen plus deep: holder concentration, liquidity and LP lock, privileges, buy/sell tax, and contract age. Verdict CLEAR, CAUTION, AVOID, or UNKNOWN. A failed lookup is not settled.',
+        responseDescription: `Paid JSON. signal is the $${VERDICT_PRICE_USD} screen plus deep: holder concentration, liquidity and LP lock, privileges, buy/sell tax, and contract age. Verdict CLEAR, CAUTION, AVOID, or UNKNOWN. A failed lookup is not settled.`,
         responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: DEEP_OUTPUT_SCHEMA }, required: ['signal'] }
     };
     const briefSpec = {
         path: '/api/token-brief/{chain}/{address}', method: 'get', price: '0.02', summary: BRIEF_BLURB,
         params: BRIEF_PATH_SCHEMA, query: FRESH_QUERY,
         ex: '/api/token-brief/base/' + EX_TOKEN, pathEx: { chain: 'base', address: EX_TOKEN },
-        responseDescription: 'Paid JSON. signal is the $0.01 safety verdict plus marketSnapshot (price, 24h change, 24h volume, liquidity, FDV). A failed lookup is not settled.',
+        responseDescription: `Paid JSON. signal is the $${VERDICT_PRICE_USD} safety verdict plus marketSnapshot (price, 24h change, 24h volume, liquidity, FDV). A failed lookup is not settled.`,
         responseSchema: { type: 'object', properties: { status: { type: 'string' }, signal: BRIEF_OUTPUT_SCHEMA }, required: ['signal'] }
     };
     const bottomSpec = {
@@ -453,6 +460,8 @@ const EXAMPLE_QUERY = {
     '/api/signals/crypto-bottom': '?fresh=0',
     '/api/history': '?pair=BTC',
     '/api/rails': '?amount=100',
+    '/api/rails/route': '?chain=base&amount=1',
+    '/api/truck/fuel-surcharge': '?padd=4&base=5.5&mpg=6',
     '/api/govcontracts': '?ticker=PLTR&sector=ai',
     '/api/value': '?symbols=BNB,ETH&sort=score',
     '/api/value/{symbol}/history': '?weeks=12',
@@ -486,7 +495,7 @@ function openApiDoc() {
         for (const [name, schema] of Object.entries(p.params || {})) parameters.push({ name, in: 'path', required: true, schema: { ...schema, ...(pex[name] ? { example: pex[name] } : {}) }, ...(pex[name] ? { example: pex[name] } : {}) });
         const querySchema = { ...(p.query || {}) };
         if (p.method === 'get' && Object.keys(querySchema).length === 0) querySchema.sample = { type: 'string', enum: ['0', '1'], description: '1 asks for the free truncated sample when this route is in today\'s sample set. 0 is the paid call.', example: '0' };
-        const queryExamples = { pair: 'BTC', fresh: '0', ticker: 'PLTR', sector: 'ai', q: 'NASA', amount: 100, symbols: 'BNB,ETH', sort: 'score', minScore: 0, weeks: 12, kind: 'chain', minRulesPassed: 2, triggerOnly: false, minTvlUsd: 50000000, window: '90d', sample: '0' };
+        const queryExamples = { pair: 'BTC', fresh: '0', ticker: 'PLTR', sector: 'ai', q: 'NASA', amount: 100, chain: 'base', padd: '4', base: 5.5, mpg: 6, symbols: 'BNB,ETH', sort: 'score', minScore: 0, weeks: 12, kind: 'chain', minRulesPassed: 2, triggerOnly: false, minTvlUsd: 50000000, window: '90d', sample: '0' };
         for (const [name, schema] of Object.entries(querySchema)) {
             const example = schema.example !== undefined ? schema.example : (queryExamples[name] !== undefined ? queryExamples[name] : (Array.isArray(schema.enum) ? schema.enum[0] : undefined));
             parameters.push({ name, in: 'query', required: false, schema: example === undefined ? schema : { ...schema, example }, ...(example !== undefined ? { example } : {}) });
@@ -535,7 +544,7 @@ function openApiDoc() {
         openapi: '3.1.0',
         info: { title: 'GW8 Crypto Regime + WaveTrend Signal API', version: '1.2.0', contact: { name: 'GW8', email: 'mariostefano3@gmail.com', url: 'https://github.com/GrayWolf8-creator/micro-saas-agent' },
             description: 'Pay-per-call tools for AI agents via x402 (USDC on Base): should-I-pay decisions (spend policy + seller reputation in one call), spend-policy risk checks, x402 seller reputation verdicts, token safety verdicts (rug check, honeypot, contract risk: CLEAR / CAUTION / AVOID / UNKNOWN), payment-rail cost checks, and crypto market data (regime, WaveTrend band dots, relative strength, flows, simulated hit-rate backtests). Agent guide: /agents.md. No charge on failure (settle only after data is ready), signed receipts, safe retries. Signal only, no trading, not financial advice.',
-            'x-guidance': 'Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times (N = floor(1.00 / per-call price): $0.002 more than 500, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14). Token safety, honeypot check, rug pull, token security, scam token, contract risk: GET /api/verdict/{chain}/{address} ($0.01, example GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0) returns CLEAR / CAUTION / AVOID / UNKNOWN. Same $0.01 screen: GET /api/honeypot/{chain}/{address}. Deep honeypot check ($0.05): GET /api/verdict-deep/{chain}/{address} and GET /api/honeypot-deep/{chain}/{address}. Token brief, token safety plus price, trade check ($0.02): GET /api/token-brief/{chain}/{address}. Crypto bottom watch ($0.01, research data, not financial advice): GET /api/signals/crypto-bottom. Then GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/rs ($0.02), GET /api/rails ($0.002), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/rules ($0.02), POST /api/pay/should-i-pay ($0.02), POST /api/spend/check ($0.02), POST /api/seller/reputation ($0.01), GET /api/value/{symbol} ($0.015), GET /api/value ($0.03), GET /api/value/{symbol}/history ($0.07), GET /api/growth/{chain} ($0.015), GET /api/growth ($0.03), GET /api/growth/history ($0.07), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Start free: GET /agents.md, GET /api/brief/teaser, GET /api/sample, GET /llms.txt, GET /openapi.json, GET /.well-known/x402, GET /.well-known/agent.json. Each paid operation has x-example-request. Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
+            'x-guidance': 'Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times (N = floor(1.00 / per-call price): $0.002 more than 500, $0.005 more than 200, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14). Token safety, honeypot check, rug pull, token security, scam token, contract risk: GET /api/verdict/{chain}/{address} ($0.005, example GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0) returns CLEAR / CAUTION / AVOID / UNKNOWN. Same $0.005 screen: GET /api/honeypot/{chain}/{address}. Deep honeypot check ($0.03): GET /api/verdict-deep/{chain}/{address} and GET /api/honeypot-deep/{chain}/{address}. Token brief, token safety plus price, trade check ($0.02): GET /api/token-brief/{chain}/{address}. Crypto bottom watch ($0.01, research data, not financial advice): GET /api/signals/crypto-bottom. Then GET /api/coin/{symbol} ($0.002), GET /api/regime ($0.01), GET /api/dots ($0.01), POST /api/agent ($0.02), GET /api/brief ($0.02), GET /api/history ($0.05), GET /api/flows/{symbol} ($0.02), GET /api/kraken/listings ($0.02), GET /api/rs ($0.02), GET /api/rails ($0.002), GET /api/rails/route ($0.005), GET /api/truck/fuel-surcharge ($0.005), GET /api/rwa ($0.02), GET /api/govcontracts ($0.01), GET /api/rules ($0.02), POST /api/pay/should-i-pay ($0.02), POST /api/spend/check ($0.02), POST /api/seller/reputation ($0.01), GET /api/value/{symbol} ($0.015), GET /api/value ($0.03), GET /api/value/{symbol}/history ($0.07), GET /api/growth/{chain} ($0.015), GET /api/growth ($0.03), GET /api/growth/history ($0.07), POST /api/brief/weekly/subscribe ($0.25), POST /api/alerts/subscribe ($0.50). Start free: GET /agents.md, GET /api/brief/teaser, GET /api/sample, GET /llms.txt, GET /openapi.json, GET /.well-known/x402, GET /.well-known/agent.json. Each paid operation has x-example-request. Pay by retrying with PAYMENT-SIGNATURE from the 402 challenge. No charge on failure; paid responses carry a signed X-GW8-Receipt (key: /.well-known/gw8-receipt-key); resending the same PAYMENT-SIGNATURE within 15 min returns the same response without a second charge.' },
         servers: [{ url: 'https://micro-saas-agent.onrender.com' }],
         paths
     };
@@ -549,17 +558,23 @@ function agentCard() {
         const deep = p.path.startsWith('/api/verdict-deep/') || p.path.startsWith('/api/honeypot-deep/');
         const brief = p.path.startsWith('/api/token-brief/');
         const bottoms = p.path === '/api/signals/crypto-bottom';
+        const whichRail = p.path === '/api/rails/route';
+        const fuel = p.path === '/api/truck/fuel-surcharge';
         const verdict = p.path.startsWith('/api/verdict/');
         const honeypot = p.path.startsWith('/api/honeypot/');
-        const name = deep ? 'Deep honeypot check' : brief ? 'Token brief' : bottoms ? 'Crypto bottom watch' : verdict ? 'Token safety screen' : honeypot ? 'Honeypot check' : `${p.method.toUpperCase()} ${p.path}`;
+        const name = deep ? 'Deep honeypot check' : brief ? 'Token brief' : bottoms ? 'Crypto bottom watch' : whichRail ? 'Which rail' : fuel ? 'Fuel surcharge' : verdict ? 'Token safety screen' : honeypot ? 'Honeypot check' : `${p.method.toUpperCase()} ${p.path}`;
         const tags = deep ? ['deep honeypot check', 'rug pull', 'token safety', 'holder concentration', 'liquidity lock', 'scam token', 'x402']
             : brief ? ['token safety plus price', 'token brief', 'trade check', 'x402']
             : bottoms ? ['crypto bottom', 'research data', 'not financial advice', 'x402']
+            : whichRail ? ['facilitator', 'which rail', 'x402', 'payment rail', 'base']
+            : fuel ? ['eia', 'diesel', 'fuel surcharge', 'truck', 'x402']
             : (verdict || honeypot) ? ['honeypot', 'honeypot check', 'token safety', 'token security', 'rug pull', 'scam token', 'contract risk', 'x402']
             : ['x402', 'usdc', 'base', p.featured ? 'paid' : 'unfeatured'];
         const examples = deep ? [p.exampleRequest, 'Deep honeypot check for rug pull, token safety, holder concentration, liquidity lock, and scam token.']
             : brief ? [p.exampleRequest, 'Token brief: token safety plus price, a trade check.']
             : bottoms ? [p.exampleRequest, 'Crypto bottom-watch tells. Research data, not financial advice.']
+            : whichRail ? [p.exampleRequest, 'Which x402 facilitator and which rail for a payment of this size.']
+            : fuel ? [p.exampleRequest, 'EIA weekly diesel per-mile fuel surcharge. Source: U.S. EIA.']
             : (verdict || honeypot) ? [p.exampleRequest, 'Run a honeypot check for token safety, token security, rug pull, scam token, and contract risk before a swap, transfer, or approval.']
             : [p.exampleRequest];
         return {
@@ -575,7 +590,7 @@ function agentCard() {
     const origin = 'https://micro-saas-agent.onrender.com';
     return {
         name: 'GW8 Signal API',
-        description: 'Pay-per-call tools for AI agents on x402 (USDC on Base). Lead skill: token safety screen for honeypot, rug check, and contract risk at GET /api/verdict/{chain}/{address} ($0.01), returning CLEAR, CAUTION, AVOID, or UNKNOWN. Each skill is an HTTP route, not an A2A task: call the example URL, read the HTTP 402 extensions.bazaar input and output schema, and retry with PAYMENT-SIGNATURE. Signal only, not financial advice.',
+        description: 'Pay-per-call tools for AI agents on x402 (USDC on Base). Lead skill: token safety screen for honeypot, rug check, and contract risk at GET /api/verdict/{chain}/{address} ($0.005), returning CLEAR, CAUTION, AVOID, or UNKNOWN. Each skill is an HTTP route, not an A2A task: call the example URL, read the HTTP 402 extensions.bazaar input and output schema, and retry with PAYMENT-SIGNATURE. Signal only, not financial advice.',
         version: '1.2.0',
         documentationUrl: origin + '/agents.md',
         iconUrl: origin + '/favicon.svg',
@@ -663,9 +678,9 @@ async function buildMcp() {
         async a => { subV = await validateSubscribe(a, COINS); return subV.error || null; }, { noPass: true });
     await paidTool('buy_day_pass', 'Day pass (24h)', '/api/pass/day', 'POST', PASS_PLAN.priceUsd, `Buy a ${PASS_PLAN.hours}h pass for every paid GW8 data tool/endpoint: pass the returned token as the "pass" argument (MCP) or X-GW8-Pass header (HTTP). Fair use ${PASS_PLAN.dailyCap} calls, ${PASS_PLAN.perMinute}/min. Excludes alert subscriptions. Token shown once.`, {}, undefined, () => mintPass(), undefined, { noPass: true });
     await paidTool('get_history', 'Band-dot history + hit rates', '/api/history', 'GET', '0.05', 'Rolling 90-day band-dot backtest with forward moves and live hit rates (green dots carry the edge; red near coin-flip).', { pair: z.enum(COINS).optional() }, a => a.pair ? `/api/history?pair=${a.pair}` : '/api/history', a => getHistory(a.pair || null));
-    await paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', '0.01', 'Token safety verdict (honeypot check and token safety screen): honeypot, rug pull, scam token, token security, and contract risk. Returns CLEAR, CAUTION, AVOID, or UNKNOWN. Same screen at GET /api/honeypot/{chain}/{address} ($0.01). Optional fresh=true re-reads upstream. A failed lookup is not charged.', { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict/${a.chain}/${a.address}`,
+    await paidTool('get_token_verdict', 'Token safety verdict', '/api/verdict/{chain}/{address}', 'GET', VERDICT_PRICE_USD, `Token safety verdict (honeypot check and token safety screen): honeypot, rug pull, scam token, token security, and contract risk. Returns CLEAR, CAUTION, AVOID, or UNKNOWN. Same screen at GET /api/honeypot/{chain}/{address} ($${VERDICT_PRICE_USD}). Optional fresh=true re-reads upstream. A failed lookup is not charged.`, { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict/${a.chain}/${a.address}`,
         a => getVerdict(String(a.chain).toLowerCase(), String(a.address), { fresh: a.fresh === true }), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
-    await paidTool('get_token_verdict_deep', 'Deep honeypot check', '/api/verdict-deep/{chain}/{address}', 'GET', '0.05', DEEP_BLURB, { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict-deep/${a.chain}/${a.address}`,
+    await paidTool('get_token_verdict_deep', 'Deep honeypot check', '/api/verdict-deep/{chain}/{address}', 'GET', DEEP_PRICE_USD, DEEP_BLURB, { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/verdict-deep/${a.chain}/${a.address}`,
         a => getDeepVerdict(String(a.chain).toLowerCase(), String(a.address), { fresh: a.fresh === true }), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
     await paidTool('get_token_brief', 'Token brief', '/api/token-brief/{chain}/{address}', 'GET', '0.02', BRIEF_BLURB, { chain: z.enum(Object.keys(VERDICT_CHAINS)), address: z.string(), fresh: z.boolean().optional() }, a => `/api/token-brief/${a.chain}/${a.address}`,
         a => getTokenBrief(String(a.chain).toLowerCase(), String(a.address), { fresh: a.fresh === true }), a => validVerdictInput(String(a.chain).toLowerCase(), String(a.address)) || null);
@@ -679,6 +694,12 @@ async function buildMcp() {
     await paidTool('get_relative_strength', 'Relative strength + sector scores', '/api/rs', 'GET', '0.02', 'Relative strength across 66 Kraken USD pairs: 1-week and 1-month % return, percentile ranks, 0-100 strength score (60% 1m rank + 40% 1w rank), leaders/laggards, and sector scores with breadth (% of coins with a positive 1m return).', {}, undefined, () => getRs());
     await paidTool('get_payment_rails', 'Cheapest payment rail now', '/api/rails', 'GET', '0.002', 'Which payment rail is cheapest and fastest right now for a USD amount: Base USDC (live gas x ETH/USD), XRPL (live fee x XRP/USD), Tempo and Circle Arc (live gas, USD-denominated) and card (static 2.9% + $0.30 estimate), with documented agent protocols (x402, MPP, card networks) per rail. Fee USD and %, settlement time, data timestamp, sources and a recommended pick. Arg amount (USD, default 100).', { amount: z.number().positive().max(1e7).optional() },
         a => a.amount ? `/api/rails?amount=${a.amount}` : '/api/rails', a => getRails(a.amount || 100));
+    await paidTool('get_facilitator_route', 'Which x402 facilitator and rail', '/api/rails/route', 'GET', RAILS_ROUTE_PRICE_USD, ROUTE_BLURB, { chain: z.string().optional(), amount: z.number().positive().max(1e7).optional() },
+        a => { const p = new URLSearchParams(); if (a.chain) p.set('chain', a.chain); if (a.amount != null) p.set('amount', String(a.amount)); const qs = p.toString(); return '/api/rails/route' + (qs ? '?' + qs : ''); },
+        a => getFacilitatorRoute({ chain: a.chain, amount: a.amount }), a => validRouteQuery({ chain: a.chain, amount: a.amount }).error || null);
+    await paidTool('get_fuel_surcharge', 'EIA diesel fuel surcharge', '/api/truck/fuel-surcharge', 'GET', FUEL_SURCHARGE_PRICE_USD, FUEL_BLURB, { padd: z.string().optional(), base: z.number().min(0).max(100), mpg: z.number().positive().max(100) },
+        a => `/api/truck/fuel-surcharge?padd=${encodeURIComponent(a.padd || '4')}&base=${a.base}&mpg=${a.mpg}`,
+        a => getFuelSurcharge({ padd: a.padd, base: a.base, mpg: a.mpg }), a => validFuelQuery({ padd: a.padd, base: a.base, mpg: a.mpg }).error || null);
     const spendSchema = {
         payment: z.object({ amount: z.union([z.string(), z.number()]), currency: z.string(), recipientId: z.string().optional(), recipientDomain: z.string().optional(), merchantCategory: z.string().optional(), chain: z.string().optional(), timestamp: z.string().optional(), agentId: z.string().optional(), memo: z.string().optional() }).passthrough(),
         policy: z.object({}).passthrough().describe('currency, perTxLimit, rollingCap {limit, spentSoFar, windowHours}, allowedCategories, blockedCategories, allowList, denyList, onUnlisted (deny|needs_approval), allowedHours {start, end, timezone, days}, allowedAssets, allowedChains, requireApprovalAbove')
@@ -720,7 +741,7 @@ app.get(['/.well-known/mcp.json', '/.well-known/mcp/server-card.json', '/mcp.jso
     name: 'gw8-crypto-signal', title: 'GW8 Crypto Regime + WaveTrend Signal', version: '1.2.0',
     description: 'Agent payment risk checks (should-I-pay, spend policy, x402 seller reputation), token safety verdicts (rug check, honeypot, contract risk), payment-rail costs and crypto market data (regime, WaveTrend dots, relative strength). Free sample; paid tools via x402 (USDC on Base). Signed receipts. Signal only, no trading.',
     transport: { type: 'streamable-http', url: `${ORIGIN}/mcp` },
-    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_value_score', 'get_value_screen', 'get_value_history', 'get_growth_setup', 'get_growth_screen', 'get_growth_history', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'should_i_pay', 'check_spend_policy', 'check_seller_reputation', 'buy_day_pass', 'get_signing_pubkey'],
+    tools: ['get_sample', 'get_brief_teaser', 'list_paid_endpoints', 'get_full_signal', 'get_band_dots', 'get_regime', 'get_coin', 'get_history', 'subscribe_green_dot_alerts', 'get_token_verdict', 'get_flows', 'get_daily_brief', 'get_value_score', 'get_value_screen', 'get_value_history', 'get_growth_setup', 'get_growth_screen', 'get_growth_history', 'get_rwa_feed', 'get_gov_contracts', 'get_kraken_listings', 'get_crypto_rules', 'get_relative_strength', 'get_payment_rails', 'get_facilitator_route', 'get_fuel_surcharge', 'should_i_pay', 'check_spend_policy', 'check_seller_reputation', 'buy_day_pass', 'get_signing_pubkey'],
     dayPass: { endpoint: `${ORIGIN}/api/pass/day`, mcpTool: 'buy_day_pass', priceUsd: PASS_PLAN.priceUsd, hours: PASS_PLAN.hours, dailyCap: PASS_PLAN.dailyCap, perMinute: PASS_PLAN.perMinute, header: 'X-GW8-Pass', mcpArg: 'pass' },
     payment: { protocol: 'x402', version: 2, network: 'eip155:8453', asset: 'USDC', openapi: `${ORIGIN}/openapi.json`, mcpInBand: mcpPayMode().mode === 'inband', mcpMetaKey: 'x402/payment' }
 }));
@@ -915,7 +936,7 @@ mountSalesReport(app);
 
 // Card-paid marketplace channels (RapidAPI / Apify). Off unless GW8 sets the channel env var on Render.
 mountMarketplace(app, signResponses);
-app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/honeypot', '/api/verdict-deep', '/api/honeypot-deep', '/api/token-brief', '/api/signals', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/value', '/api/growth', '/api/spend/check', '/api/seller/reputation', '/api/pay/should-i-pay'], signResponses);
+app.use(['/api/agent', '/api/dots', '/api/history', '/api/regime', '/api/coin', '/api/verdict', '/api/honeypot', '/api/verdict-deep', '/api/honeypot-deep', '/api/token-brief', '/api/signals', '/api/flows', '/api/brief', '/api/rwa', '/api/govcontracts', '/api/kraken/listings', '/api/rules', '/api/rs', '/api/rails', '/api/truck', '/api/value', '/api/growth', '/api/spend/check', '/api/seller/reputation', '/api/pay/should-i-pay'], signResponses);
 app.all('/api/agent', handleX402Agent);
 
 // Cheaper single-purpose products (signal only)
@@ -1051,7 +1072,7 @@ app.get('/api/coin/:symbol', (req, res) => {
 
 // Upgrades-4: token verdict, flows, daily brief (signal only, public data)
 app.get('/api/proof/pubkey', (req, res) => res.json(publicKeyInfo()));
-// /api/honeypot is the same $0.01 screen as /api/verdict. The path is an alias so Bazaar can match "honeypot".
+// /api/honeypot is the same screen and price as /api/verdict. The path is an alias so Bazaar can match "honeypot".
 function sendVerdictChallenge(req, res) {
     const alias = String(req.path || '').startsWith('/api/honeypot/');
     const root = alias ? '/api/honeypot' : '/api/verdict';
@@ -1061,7 +1082,7 @@ function sendVerdictChallenge(req, res) {
     const chain = bad ? VERDICT_EXAMPLE.chain : rawChain, address = bad ? VERDICT_EXAMPLE.address : rawAddress;
     const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
     return handleX402Agent(req, res, {
-        url: bad ? `${BASE_URL}${root}/{chain}/{address}` : `${BASE_URL}${root}/${chain}/${address}`, amount: "10000", name: VERDICT_SERVICE_NAME,
+        url: bad ? `${BASE_URL}${root}/{chain}/{address}` : `${BASE_URL}${root}/${chain}/${address}`, amount: usdAtomic(VERDICT_PRICE_USD), name: VERDICT_SERVICE_NAME,
         description: VERDICT_BLURB,
         tags: VERDICT_TAGS,
         serviceName: VERDICT_SERVICE_NAME,
@@ -1086,7 +1107,7 @@ function sendDeepChallenge(req, res) {
     const chain = bad ? DEEP_EXAMPLE.chain : rawChain, address = bad ? DEEP_EXAMPLE.address : rawAddress;
     const fresh = req.query.fresh === '1' || req.query.fresh === 'true';
     return handleX402Agent(req, res, {
-        url: bad ? `${BASE_URL}${root}/{chain}/{address}` : `${BASE_URL}${root}/${chain}/${address}`, amount: '50000', name: DEEP_SERVICE_NAME,
+        url: bad ? `${BASE_URL}${root}/{chain}/{address}` : `${BASE_URL}${root}/${chain}/${address}`, amount: usdAtomic(DEEP_PRICE_USD), name: DEEP_SERVICE_NAME,
         description: DEEP_BLURB,
         tags: DEEP_TAGS,
         serviceName: DEEP_SERVICE_NAME,
@@ -1230,6 +1251,50 @@ app.get('/api/rails', (req, res) => {
         inputProps: { amount: { type: "number", example: 100 } },
         example: { amountUsd: 100, recommended: { rail: "xrpl-rlusd-xrp", fastest: "base-usdc" }, rails: [{ rail: "base-usdc", status: "live", feeUsd: 0.00095, feePct: 0.00095, settlement: "~2s" }, { rail: "xrpl-rlusd-xrp", status: "live", feeUsd: 0.000025, feePct: 0.000025, settlement: "~3-5s" }, { rail: "card", status: "static-estimate", feeUsd: 3.2, feePct: 3.2, settlement: "~1-3 business days" }] },
         deliver: () => getRails(v.amount).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
+    });
+});
+
+// Which x402 facilitator and chain for one payment. GET /api/rails stays $0.002.
+// Unpaid calls always get the 402, including a bad query. A payment or pass header with a bad query is 400 before verify.
+app.get('/api/rails/route', (req, res) => {
+    const v = validRouteQuery(req.query);
+    if (v.error && hasPaymentOrPass(req)) return res.status(400).json({ error: v.error, note: 'no payment was taken' });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/rails/route`, amount: usdAtomic(RAILS_ROUTE_PRICE_USD), name: ROUTE_SERVICE_NAME,
+        description: ROUTE_BLURB,
+        tags: ROUTE_TAGS,
+        serviceName: ROUTE_SERVICE_NAME,
+        routeTemplate: '/api/rails/route',
+        inputProps: {
+            chain: { type: 'string', description: 'Mainnet chain. Omit and the route chooses.', example: 'base' },
+            amount: { type: 'number', description: 'Payment size in USD. Default 1.', example: 1 }
+        },
+        outputSchema: ROUTE_OUTPUT_SCHEMA,
+        example: ROUTE_EXAMPLE,
+        precheck: async (r) => { const bad = validRouteQuery(r.query); return bad.error ? { error: bad.error } : null; },
+        deliver: () => getFacilitatorRoute(req.query)
+    });
+});
+
+// EIA weekly on-highway diesel and a per-mile surcharge. Public page, no API key.
+app.get('/api/truck/fuel-surcharge', (req, res) => {
+    const v = validFuelQuery(req.query);
+    if (v.error && hasPaymentOrPass(req)) return res.status(400).json({ error: v.error, note: 'no payment was taken' });
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/truck/fuel-surcharge`, amount: usdAtomic(FUEL_SURCHARGE_PRICE_USD), name: FUEL_SERVICE_NAME,
+        description: FUEL_BLURB,
+        tags: FUEL_TAGS,
+        serviceName: FUEL_SERVICE_NAME,
+        routeTemplate: '/api/truck/fuel-surcharge',
+        inputProps: {
+            padd: { type: 'string', description: 'us or a PADD. Default 4 (Rocky Mountain).', example: '4' },
+            base: { type: 'number', description: 'Base diesel price, USD per gallon.', example: 5.5 },
+            mpg: { type: 'number', description: 'Miles per gallon.', example: 6 }
+        },
+        outputSchema: FUEL_OUTPUT_SCHEMA,
+        example: FUEL_EXAMPLE,
+        precheck: async (r) => { const bad = validFuelQuery(r.query); return bad.error ? { error: bad.error } : null; },
+        deliver: () => getFuelSurcharge(req.query)
     });
 });
 

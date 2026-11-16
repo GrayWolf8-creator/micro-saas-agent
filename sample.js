@@ -3,12 +3,13 @@
 import crypto from 'crypto';
 import { fetchOHLC, PAIRS_MAP } from './Signal.js';
 import { getVerdict, validVerdictInput } from './upgrades.js';
+import { VERDICT_PRICE_USD } from './prices.js';
 import { getRails, validAmount } from './rails.js';
 
 export const SAMPLE_CAP_DEFAULT = 20;
 export const SAMPLE_DISCLAIMER = 'Free truncated sample of public data. Not investment advice; no trade recommendation.';
 const PRICE = {
-  'GET /api/verdict/:chain/:address': '0.01',
+  'GET /api/verdict/:chain/:address': VERDICT_PRICE_USD,
   'GET /api/coin/:symbol': '0.002',
   'GET /api/rails': '0.002',
   'GET /api/regime': '0.01',
@@ -31,7 +32,7 @@ const PRICE = {
 };
 const PAID = new Set(Object.keys(PRICE));
 export const SAMPLE_FALLBACK = [
-  { route: 'GET /api/verdict/:chain/:address', quotes: 0, kind: 'verdict', priceUsd: '0.01' },
+  { route: 'GET /api/verdict/:chain/:address', quotes: 0, kind: 'verdict', priceUsd: VERDICT_PRICE_USD },
   { route: 'GET /api/coin/:symbol', quotes: 0, kind: 'coin', priceUsd: '0.002' },
   { route: 'GET /api/rails', quotes: 0, kind: 'rails', priceUsd: '0.002' }
 ];
@@ -96,7 +97,7 @@ export function truncateVerdict(v) {
     sample: true, truncated: true,
     label: 'Free sample (truncated). Score and verdict only; the paid route adds the reason list and market detail.',
     chain: v.chain, address: v.address, score: v.score, verdict: v.verdict,
-    paidRoute: `/api/verdict/${v.chain}/${v.address}`, paidPriceUsd: '0.01',
+    paidRoute: `/api/verdict/${v.chain}/${v.address}`, paidPriceUsd: VERDICT_PRICE_USD,
     disclaimer: v.disclaimer || SAMPLE_DISCLAIMER, sources: v.sources || []
   };
 }

@@ -69,7 +69,7 @@ describe('paid x402 products', { concurrency: false }, () => {
       assert.equal(d.endsWith('...'), false);
     }
     const re = phrase => new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    for (const phrase of ['deep honeypot check', 'rug pull', 'token safety', 'holder concentration', 'liquidity lock', 'scam token', '$0.05'])
+    for (const phrase of ['deep honeypot check', 'rug pull', 'token safety', 'holder concentration', 'liquidity lock', 'scam token', '$0.03'])
       assert.match(deep, re(phrase));
     for (const phrase of ['token safety plus price', 'token brief', 'trade check', '$0.02'])
       assert.match(brief, re(phrase));
@@ -328,13 +328,13 @@ describe('paid x402 products', { concurrency: false }, () => {
       return JSON.parse(Buffer.from(r.headers.get('payment-required'), 'base64').toString('utf8'));
     };
     const old = await challenge('/api/verdict/base/' + ADDR);
-    assert.equal(old.accepts[0].amount, '10000');
+    assert.equal(old.accepts[0].amount, '5000');
     const deep = await challenge('/api/verdict-deep/base/' + ADDR);
     const alias = await challenge('/api/honeypot-deep/base/' + ADDR);
     const brief = await challenge('/api/token-brief/base/' + ADDR);
     const bottom = await challenge('/api/signals/crypto-bottom');
-    assert.equal(deep.accepts[0].amount, '50000');
-    assert.equal(alias.accepts[0].amount, '50000');
+    assert.equal(deep.accepts[0].amount, '30000');
+    assert.equal(alias.accepts[0].amount, '30000');
     assert.equal(brief.accepts[0].amount, '20000');
     assert.equal(bottom.accepts[0].amount, '10000');
     assert.equal(deep.resource.serviceName, DEEP_SERVICE_NAME);
@@ -364,16 +364,16 @@ describe('paid x402 products', { concurrency: false }, () => {
     assert.equal(paid[3].path, '/api/honeypot-deep/{chain}/{address}');
     assert.equal(paid[4].path, '/api/token-brief/{chain}/{address}');
     assert.equal(paid[5].path, '/api/signals/crypto-bottom');
-    assert.equal(paid[0].price, '0.01');
-    assert.equal(paid[2].price, '0.05');
+    assert.equal(paid[0].price, '0.005');
+    assert.equal(paid[2].price, '0.03');
     assert.equal(paid[4].price, '0.02');
     assert.equal(paid[5].price, '0.01');
-    assert.equal(doc.paths['/api/verdict/{chain}/{address}'].get['x-payment-info'].price.amount, '0.01');
+    assert.equal(doc.paths['/api/verdict/{chain}/{address}'].get['x-payment-info'].price.amount, '0.005');
 
     const disc = await (await fetch(base + '/.well-known/x402')).json();
     assert.equal(disc.endpoints[0].path, '/api/verdict/{chain}/{address}');
-    assert.equal(disc.endpoints[2].priceUsd, '0.05');
-    assert.equal(disc.deepToken.priceUsd, '0.05');
+    assert.equal(disc.endpoints[2].priceUsd, '0.03');
+    assert.equal(disc.deepToken.priceUsd, '0.03');
     assert.equal(disc.tokenBrief.priceUsd, '0.02');
     assert.equal(disc.cryptoBottom.priceUsd, '0.01');
     assert.deepEqual(disc.cryptoBottom.tiers, ['NONE', 'EARLY_TELL', 'CONFIRMED']);
@@ -393,7 +393,7 @@ describe('paid x402 products', { concurrency: false }, () => {
     }
     assert.match(llms, /\$0\.05 \|/);
     assert.match(agents, /\$0\.02 \|/);
-    assert.match(pay, /verdict-deep deep honeypot check — \$0\.05/);
+    assert.match(pay, /verdict-deep deep honeypot check — \$0\.03/);
     assert.ok(llms.indexOf('/api/verdict/{chain}/{address}') < llms.indexOf('/api/verdict-deep/{chain}/{address}'));
   });
 });

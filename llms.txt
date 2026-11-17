@@ -108,6 +108,7 @@ POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fai
 ## Payment
 - x402 v2, USDC on Base (eip155:8453), asset `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`, payTo `0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd`. Base stays the first `accepts` entry on every paid route.
 - Polygon native USDC (`eip155:137`, asset `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`, same price, same payTo) is a second `accepts` entry on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol}. `POLYGON_PAYMENTS=off` removes that entry. Other routes stay Base only.
+- Solana USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`, payTo `HtffQ9mFdLcyCoNnh5nbDnTyaFLEcLQhS8NnWZp3axFg`) is a third `accepts` entry on those same five routes, at the same price. `SOLANA_PAYMENTS=off` removes it. The payTo must already have a USDC token account; the facilitator does not create one.
 - Unpaid → **402** with PAYMENT-REQUIRED. Retry with PAYMENT-SIGNATURE.
 - Discovery: /openapi.json, /.well-known/x402. CDP Bazaar indexes after first successful settlement.
 

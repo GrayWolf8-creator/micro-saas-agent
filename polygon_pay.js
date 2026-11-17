@@ -36,7 +36,7 @@ export function paymentNetwork(payload) {
     || payload.network
     || (payload.payload && typeof payload.payload === 'object' && payload.payload.network)
     || '';
-  return String(raw).trim().toLowerCase();
+  return String(raw).trim();
 }
 
 /**
@@ -46,7 +46,7 @@ export function paymentNetwork(payload) {
 export function selectPaymentRequirements(accepts, payload) {
   const list = Array.isArray(accepts) ? accepts : [];
   const base = list[0] || null;
-  const net = paymentNetwork(payload);
+  const net = paymentNetwork(payload).toLowerCase();
   if (net === POLYGON_NETWORK || net === 'polygon') {
     const poly = list.find(a => a && String(a.network).toLowerCase() === POLYGON_NETWORK);
     if (poly) return { requirements: poly, facilitator: 'polygon' };

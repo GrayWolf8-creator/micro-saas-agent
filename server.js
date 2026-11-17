@@ -24,7 +24,8 @@ import { getRails, validAmount } from './rails.js';
 import { getFacilitatorRoute, validRouteQuery, ROUTE_BLURB, ROUTE_TAGS, ROUTE_SERVICE_NAME, ROUTE_EXAMPLE, ROUTE_OUTPUT_SCHEMA } from './facilitators.js';
 import { getFuelSurcharge, validFuelQuery, FUEL_BLURB, FUEL_TAGS, FUEL_SERVICE_NAME, FUEL_EXAMPLE, FUEL_OUTPUT_SCHEMA } from './diesel.js';
 import { VERDICT_PRICE_USD, DEEP_PRICE_USD, RAILS_ROUTE_PRICE_USD, FUEL_SURCHARGE_PRICE_USD, usdAtomic } from './prices.js';
-import { polygonPaymentsEnabled, pathAcceptsPolygon, selectPaymentRequirements, USDC_POLYGON, POLYGON_FACILITATOR_URL } from './polygon_pay.js';
+import { polygonPaymentsEnabled, pathAcceptsPolygon, selectPaymentRequirements, paymentNetwork, USDC_POLYGON, POLYGON_FACILITATOR_URL } from './polygon_pay.js';
+import { solanaPaymentsEnabled, pathAcceptsSolana, refreshSolanaFeePayer, cachedSolanaFeePayer, solanaAccept, payeeUsdcAccountExists, SOLANA_PAYTO, SOLANA_NETWORK, SOLANA_FACILITATOR_URL, USDC_SOLANA } from './solana_pay.js';
 import { getGovContracts, validGovFilters, GOV_SECTORS, getGovStatus } from './gov.js';
 import { WEEKLY_PLANS, validateWeekly, createWeekly, cancelWeekly, getWeeklyStatus, weeklyTick } from './weekly.js';
 import { statsMiddleware, getStats, renderStatsHtml, renderStatsMd, recordMcpPaid, normalizeRoute, mountTrafficReport, installStatsFlush } from './stats.js';
@@ -83,6 +84,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Configuration
 const VAULT_ADDRESS = '0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd';
+// Public Solana payout. Same kind of config as VAULT_ADDRESS, not a secret. The owner created this key.
+const SOLANA_VAULT_ADDRESS = SOLANA_PAYTO;
 const USDC_BASE_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const RESOURCE_URL = 'https://micro-saas-agent.onrender.com/api/agent';
 const CDP_FACILITATOR_URL = process.env.CDP_FACILITATOR_URL || 'https://api.cdp.coinbase.com/platform/v2/x402';
@@ -259,8 +262,8 @@ function x402Accepts(url, amount) {
     };
     let pathname = '';
     try { pathname = new URL(url).pathname; } catch { /* no polygon entry without a resource path */ }
-    if (!polygonPaymentsEnabled() || !pathAcceptsPolygon(pathname)) return [base];
-    return [base, {
+    const accepts = [base];
+    if (polygonPaymentsEnabled() && pathAcceptsPolygon(pathname)) accepts.push({
         scheme: 'exact',
         network: 'eip155:137',
         amount,
@@ -268,7 +271,30 @@ function x402Accepts(url, amount) {
         payTo: VAULT_ADDRESS,
         maxTimeoutSeconds: 300,
         extra: { name: 'USD Coin', version: '2' }
-    }];
+    });
+    const feePayer = cachedSolanaFeePayer();
+    if (feePayer && solanaPaymentsEnabled() && pathAcceptsSolana(pathname)) accepts.push(solanaAccept(amount, SOLANA_VAULT_ADDRESS, feePayer));
+    return accepts;
+}
+
+// Solana's extra.feePayer is read from the public facilitator's /supported and is not hardcoded.
+async function prepareSolanaQuote(product) {
+    if (!solanaPaymentsEnabled()) return;
+    let pathname = '';
+    try { pathname = new URL((product && product.url) || RESOURCE_URL).pathname; } catch { return; }
+    if (!pathAcceptsSolana(pathname)) return;
+    await refreshSolanaFeePayer();
+}
+
+function chooseFacilitator(accepts, payload) {
+    const choice = selectPaymentRequirements(accepts, payload);
+    if (choice.facilitator !== 'cdp') return choice;
+    const net = paymentNetwork(payload);
+    if (net === SOLANA_NETWORK || net.toLowerCase() === 'solana') {
+        const sol = (accepts || []).find(a => a && a.network === SOLANA_NETWORK);
+        if (sol) return { requirements: sol, facilitator: 'solana' };
+    }
+    return choice;
 }
 
 // 1. Root Landing Page
@@ -365,7 +391,7 @@ function discoveryFanout() {
     return {
         version: 1,
         resources: [passUrl, ...urls.filter(u => u !== passUrl)],
-        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.005 more than 200, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. Lead product, listed first in endpoints: token safety, rug check, honeypot, and contract risk at GET /api/verdict/{chain}/{address} ($${VERDICT_PRICE_USD}) returns CLEAR, CAUTION, AVOID, or UNKNOWN. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt and /agents.md. A2A agent card at /.well-known/agent.json. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base) and extensions.bazaar (input schema, output schema, resource description). Polygon USDC (eip155:137, native USDC ${USDC_POLYGON}, same price and the same payTo) is a second accepts entry on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol}. POLYGON_PAYMENTS=off removes it. ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
+        instructions: `Day pass first: POST /api/pass/day ($1.00, 24h). Best value if you call more than N times, where N = floor(1.00 / per-call price): $0.002 more than 500, $0.005 more than 200, $0.01 more than 100, $0.015 more than 66, $0.02 more than 50, $0.03 more than 33, $0.05 more than 20, $0.07 more than 14. Lead product, listed first in endpoints: token safety, rug check, honeypot, and contract risk at GET /api/verdict/{chain}/{address} ($${VERDICT_PRICE_USD}) returns CLEAR, CAUTION, AVOID, or UNKNOWN. OpenAPI-first discovery at /openapi.json. Agent docs at /llms.txt and /agents.md. A2A agent card at /.well-known/agent.json. Free sample at /api/sample. Unpaid calls return 402 with PAYMENT-REQUIRED (x402 v2, USDC on Base) and extensions.bazaar (input schema, output schema, resource description). Polygon USDC (eip155:137, native USDC ${USDC_POLYGON}, same price and the same payTo) is a second accepts entry on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol}. POLYGON_PAYMENTS=off removes it. Solana USDC (${SOLANA_NETWORK}, mint ${USDC_SOLANA}, its own payTo) is a further accepts entry on those same routes. SOLANA_PAYMENTS=off removes it. ${TRUST_LINE} Receipt key: ${RECEIPT_KEY_PATH}. Signal only, not financial advice. CDP Bazaar indexes a route after the first successful facilitator settlement for that resource.`,
         tokenSafety: { method: 'GET', path: '/api/verdict/{chain}/{address}', priceUsd: VERDICT_PRICE_USD, verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['honeypot', 'honeypot check', 'rug pull', 'token safety', 'token security', 'scam token', 'contract risk', 'rug check'], chains: Object.keys(VERDICT_CHAINS), example: 'GET /api/verdict/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0', alias: { method: 'GET', path: '/api/honeypot/{chain}/{address}', priceUsd: VERDICT_PRICE_USD, example: 'GET /api/honeypot/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' } },
         deepToken: { method: 'GET', path: '/api/verdict-deep/{chain}/{address}', priceUsd: DEEP_PRICE_USD, verdicts: ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN'], searches: ['deep honeypot check', 'rug pull', 'token safety', 'holder concentration', 'liquidity lock', 'scam token'], example: 'GET /api/verdict-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0', alias: { method: 'GET', path: '/api/honeypot-deep/{chain}/{address}', priceUsd: DEEP_PRICE_USD, example: 'GET /api/honeypot-deep/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' } },
         tokenBrief: { method: 'GET', path: '/api/token-brief/{chain}/{address}', priceUsd: '0.02', searches: ['token safety plus price', 'token brief', 'trade check'], example: 'GET /api/token-brief/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0' },
@@ -784,20 +810,28 @@ function decodePaymentPayload(raw) {
 // Verify -> build data -> settle -> respond. Returns { status, headers, body, payer } and never sends.
 // Paid data is only ever returned after the facilitator reports a successful settlement.
 async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
+    await prepareSolanaQuote(product);
     const requirements = getX402ChallengeV2(product || {});
-    const choice = selectPaymentRequirements(requirements.accepts, paymentPayload);
+    const choice = chooseFacilitator(requirements.accepts, paymentPayload);
     const paymentRequirements = choice.requirements;
     const usePolygon = choice.facilitator === 'polygon';
+    const useSolana = choice.facilitator === 'solana';
+    if (useSolana) {
+        const exists = await payeeUsdcAccountExists(SOLANA_VAULT_ADDRESS);
+        if (exists == null) return { status: 503, body: { error: 'PAYEE_USDC_ACCOUNT_UNKNOWN', message: 'Could not read the payee USDC account on Solana. Nothing was submitted to the facilitator.', note: 'no payment was taken' } };
+        if (!exists) return { status: 402, body: { error: 'PAYEE_USDC_ACCOUNT_MISSING', message: 'The Solana payTo has no USDC associated token account yet. PayAI does not create it, and the fee payer must not. Create the native-USDC account for ' + SOLANA_VAULT_ADDRESS + ' (mint ' + USDC_SOLANA + ') with a SOL-funded setup key, then retry.', doc: 'https://docs.payai.network/x402/solana-mainnet-express', note: 'no payment was taken' } };
+    }
     // A client holding a challenge issued before the 500-char cap would still echo an over-long resource.description and
     // get CDP's schema 400. resource is not covered by the EIP-3009 signature, so capping it changes nothing that was signed.
     if (paymentPayload && paymentPayload.resource && typeof paymentPayload.resource.description === 'string')
         paymentPayload = { ...paymentPayload, resource: { ...paymentPayload.resource, description: capDescription(paymentPayload.resource.description) } };
     const facilitatorBody = { x402Version: 2, paymentPayload, paymentRequirements };
 
-    const facilitatorUrl = usePolygon ? POLYGON_FACILITATOR_URL : CDP_FACILITATOR_URL;
-    const verifyJwt = usePolygon ? null : generateCdpJwt('POST', '/platform/v2/x402/verify');
+    const facilitatorUrl = useSolana ? SOLANA_FACILITATOR_URL : usePolygon ? POLYGON_FACILITATOR_URL : CDP_FACILITATOR_URL;
+    const publicFacilitator = usePolygon || useSolana;
+    const verifyJwt = publicFacilitator ? null : generateCdpJwt('POST', '/platform/v2/x402/verify');
     const verifyHeaders = { 'Content-Type': 'application/json' };
-    if (!usePolygon) verifyHeaders.Authorization = `Bearer ${verifyJwt}`;
+    if (!publicFacilitator) verifyHeaders.Authorization = `Bearer ${verifyJwt}`;
     const verifyRes = await fetch(`${facilitatorUrl}/verify`, {
         method: 'POST',
         headers: verifyHeaders,
@@ -819,9 +853,9 @@ async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
         const status = out && Number(out.http) >= 400 && Number(out.http) < 500 ? Number(out.http) : 503;
         return { status, body: { error: (out && out.error) || 'upstream data unavailable, retry shortly', note: 'no payment was taken (payment verified but not settled)', ...(out && out.sourceStatus ? { sourceStatus: out.sourceStatus } : {}) } };
     }
-    const settleJwt = usePolygon ? null : generateCdpJwt('POST', '/platform/v2/x402/settle');
+    const settleJwt = publicFacilitator ? null : generateCdpJwt('POST', '/platform/v2/x402/settle');
     const settleHeaders = { 'Content-Type': 'application/json' };
-    if (!usePolygon) settleHeaders.Authorization = `Bearer ${settleJwt}`;
+    if (!publicFacilitator) settleHeaders.Authorization = `Bearer ${settleJwt}`;
     let settleRes, settleData;
     try {
         settleRes = await fetch(`${facilitatorUrl}/settle`, {
@@ -832,7 +866,7 @@ async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
         settleData = await settleRes.json().catch(() => ({}));
     } catch (e) { settleRes = { ok: false, status: 'network' }; settleData = {}; }
     if (!settleRes.ok || settleData.success === false) {
-        console.error(usePolygon ? "[POLYGON FACILITATOR] settle failed" : "[CDP FACILITATOR] settle failed", settleRes.status, settleData.errorReason);
+        console.error(useSolana ? "[SOLANA FACILITATOR] settle failed" : usePolygon ? "[POLYGON FACILITATOR] settle failed" : "[CDP FACILITATOR] settle failed", settleRes.status, settleData.errorReason);
         // Paid data is withheld when settlement fails; undo side effects (pass / subscription) created for it.
         if (product && product.rollback) { try { await product.rollback(out); } catch (e) { console.error('[x402] rollback failed', e.message); } }
         return { status: 402, body: { error: "Payment settlement failed", reason: settleData.errorReason || settleRes.status, note: 'no data returned and nothing was created; you can retry' } };
@@ -842,7 +876,7 @@ async function facilitatorPaidCall(req, product, paymentPayload, deliver) {
         receipt: buildReceipt({ endpoint: `${req.method} ${req.path}`, query: req.query, amount: paymentRequirements.amount, network: paymentRequirements.network, tx: settleData.transaction, payer, accessType: 'X402_FACILITATOR_SETTLED' }, out) };
     const headers = {
         'PAYMENT-RESPONSE': Buffer.from(JSON.stringify(settleData)).toString('base64'),
-        ...receiptHeaders({ route: `${req.method} ${req.path}`, resource: paymentRequirements && requirements.resource.url, amount: paymentRequirements.amount, network: paymentRequirements.network, payTo: VAULT_ADDRESS, tx: settleData.transaction, payer, accessType: 'X402_FACILITATOR_SETTLED' }, body)
+        ...receiptHeaders({ route: `${req.method} ${req.path}`, resource: paymentRequirements && requirements.resource.url, amount: paymentRequirements.amount, network: paymentRequirements.network, payTo: paymentRequirements.payTo, tx: settleData.transaction, payer, accessType: 'X402_FACILITATOR_SETTLED' }, body)
     };
     return { status: 200, headers, body, payer };
 }
@@ -875,17 +909,19 @@ async function handleX402Agent(req, res, product = null) {
     if (paymentSigHeader) {
         // Base still requires the CDP keys. A Polygon payment on a route that lists Polygon uses the public facilitator and does not.
         const peeked = decodePaymentPayload(paymentSigHeader);
-        let polygonPay = false;
-        try { polygonPay = selectPaymentRequirements(getX402ChallengeV2(product || {}).accepts, peeked).facilitator === 'polygon'; }
-        catch { polygonPay = false; }
-        if (!polygonPay && (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET)) {
+        let publicPay = false;
+        try {
+            await prepareSolanaQuote(product);
+            publicPay = chooseFacilitator(getX402ChallengeV2(product || {}).accepts, peeked).facilitator !== 'cdp';
+        } catch { publicPay = false; }
+        if (!publicPay && (!process.env.CDP_API_KEY_ID || !process.env.CDP_API_KEY_SECRET)) {
             console.error("[CDP FACILITATOR] KEYS_MISSING: CDP_API_KEY_ID or CDP_API_KEY_SECRET not set on Render.");
             return res.status(500).json({ error: "Facilitator Configuration Error", code: "KEYS_MISSING", note: 'no payment was taken' });
         }
         try {
             const paymentPayload = peeked;
             if (!paymentPayload) return res.status(400).json({ error: 'Unreadable PAYMENT-SIGNATURE', note: 'no payment was taken' });
-            const url = getX402ChallengeV2(product || {}).resource.url;
+            const url = getX402ChallengeV2(product || {}).resource.url; // quote already prepared above
             // Safe retry: the same signed payload to the same resource returns the first successful response.
             const r = await once(replayKey(url, paymentPayload), () => facilitatorPaidCall(req, product, paymentPayload, deliver));
             if (r.status === 200) {
@@ -905,6 +941,7 @@ async function handleX402Agent(req, res, product = null) {
     // visible to anyone, so redeeming a tx hash for data let third parties claim other people's payments. It had
     // no recorded use. Nothing is delivered for a tx hash; callers get the x402 challenge to pay the normal way.
     if (legacyTx && !product) {
+        await prepareSolanaQuote(null);
         const challenge = getX402ChallengeV2();
         return res.status(410)
             .set('PAYMENT-REQUIRED', Buffer.from(JSON.stringify(challenge)).toString('base64'))
@@ -912,6 +949,7 @@ async function handleX402Agent(req, res, product = null) {
     }
 
     // PRIMARY CHALLENGE: 402 Payment Required (x402 Version 2). v2 fields unchanged; GW8 extras ride alongside.
+    await prepareSolanaQuote(product);
     const challenge = getX402ChallengeV2(product || {});
     const challengeBase64 = Buffer.from(JSON.stringify(challenge)).toString('base64');
     const callUsd = product && product.amount ? Number(product.amount) / 1e6 : 0.02;

@@ -40,7 +40,7 @@ function polygonAccept(amount) {
 function boot(t, port, env) {
   const srv = spawn(process.execPath, ['server.js'], {
     cwd: ROOT,
-    env: { PATH: process.env.PATH, PORT: String(port), ...env },
+    env: { PATH: process.env.PATH, PORT: String(port), SOLANA_PAYMENTS: 'off', ...env },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let err = '';

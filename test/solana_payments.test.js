@@ -40,8 +40,9 @@ function polygonAccept(amount) {
   };
 }
 
-function boot(t, port, env) {
-  const srv = spawn(process.execPath, ['server.js'], {
+function boot(t, port, env, preload) {
+  const args = preload ? ['--import', path.join(ROOT, 'test', 'helpers', preload), 'server.js'] : ['server.js'];
+  const srv = spawn(process.execPath, args, {
     cwd: ROOT,
     env: { PATH: process.env.PATH, PORT: String(port), ...env },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -139,7 +140,8 @@ test('pay page offers only the networks in the 402 and builds the documented pay
 test('chosen routes list Base, then Polygon, then Solana; the flag drops Solana; a missing USDC account is not settled', async (t) => {
   _resetSolanaCache();
   const port = 40100 + Math.floor(Math.random() * 400);
-  const base = await boot(t, port, {});
+  // Stub only the payee-USDC-account RPC lookup so the result doesn't depend on the live wallet.
+  const base = await boot(t, port, {}, 'solana_rpc_no_usdc_account.mjs');
   for (const [key, amount] of Object.entries(CHOSEN)) {
     const sp = key.indexOf(' ');
     const pr = await challenge(base, key.slice(0, sp), concrete(key.slice(sp + 1)));

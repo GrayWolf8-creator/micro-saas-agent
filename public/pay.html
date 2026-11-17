@@ -247,7 +247,7 @@ async function paySolana() {
     if (String(buyer) === req.payTo) throw new Error('Connected wallet is the payout wallet');
     const { Connection, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } = await import('https://esm.sh/@solana/web3.js@1.98.4');
     const { getAssociatedTokenAddress, createTransferCheckedInstruction } = await import('https://esm.sh/@solana/spl-token@0.4.14');
-    const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+    const conn = new Connection('https://solana-rpc.publicnode.com', 'confirmed');
     const owner = new PublicKey(buyer);
     const mint = new PublicKey(req.asset);
     const destOwner = new PublicKey(req.payTo);

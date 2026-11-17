@@ -102,7 +102,7 @@ export function receiptHeaders(r, body) {
     try {
         const rec = {
             v: 1, service: 'GW8 Signal API', route: r.route, resource: r.resource,
-            amount: String(r.amount), amountUsd: (Number(r.amount) / 1e6).toString(), asset: 'USDC', network: 'eip155:8453', payTo: r.payTo,
+            amount: String(r.amount), amountUsd: (Number(r.amount) / 1e6).toString(), asset: 'USDC', network: r.network || 'eip155:8453', payTo: r.payTo,
             tx: r.tx || null, payer: r.payer || null, accessType: r.accessType, issuedAt: new Date().toISOString(),
             bodySha256: sha256hex(JSON.stringify(body)),
         };
@@ -124,7 +124,7 @@ export function buildReceipt(r, data) {
     try {
         const f = { v: 1, service: 'GW8 Signal API', endpoint: r.endpoint, query: r.query && Object.keys(r.query).length ? r.query : null,
             timestamp: new Date().toISOString(), response_sha256: sha256hex(JSON.stringify(data)), amountUsd: r.amount != null ? (Number(r.amount) / 1e6).toString() : null,
-            network: 'eip155:8453', tx: r.tx || null, payer: r.payer || null, accessType: r.accessType };
+            network: r.network || 'eip155:8453', tx: r.tx || null, payer: r.payer || null, accessType: r.accessType };
         f.id = 'rcpt_' + sha256hex(`${f.tx}|${f.endpoint}|${f.timestamp}|${f.response_sha256}`).slice(0, 20);
         const payload = b64u(JSON.stringify(f)), signature = signDetached(Buffer.from(payload, 'utf8'));
         return { ...f, payload, signed: !!signature, alg: signature ? 'Ed25519' : 'none', signature: signature || null,

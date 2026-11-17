@@ -12,6 +12,17 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Solana USDC on the same five routes (2026-11-17)
+- After Base and Polygon, `accepts` on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol} can list Solana mainnet USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`). The amount matches that route's Base price. payTo is `3ZgRNAMaM39WQt7rvwMf7tZjQakZqA5ieULpoQuo4chD`, set next to the Base payout address. `extra.feePayer` is read from the public facilitator and is not hardcoded. `SOLANA_PAYMENTS` defaults to on; `off` removes the entry.
+- Verify and settle go to `https://facilitator.payai.network` with no API key. Docs: https://docs.payai.network/x402/solana-mainnet-express and https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md . If the payTo has no USDC token account, settlement is refused and nothing is submitted. PayAI does not create that account.
+- `/pay.html` can pay the Base, Polygon, or Solana accept when the route's 402 lists it. Base stays the default and still signs Base EIP-3009.
+
+### Polygon USDC on five paid routes (2026-11-17)
+- The 402 `accepts` list on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol} now has a second entry: Polygon mainnet (`eip155:137`), native USDC `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`, the same atomic amount as that route's Base price, and the same payTo as Base. Base USDC stays first and is otherwise unchanged. Other paid routes, prices, OpenAPI prices, and the payout address are unchanged.
+- Those three extra routes are the paid methods with the most 2xx calls in GET /api/stats over 30 Mountain Time days, OPTIONS excluded: regime 9, should-i-pay 6, then a tie at 3 between coin, verdict, and govcontracts. likely-buyer paid calls break the tie (coin 2, verdict 1, govcontracts 1). GET /api/sales could not rank three routes: the on-disk log has two settlements (rails/route and the fuel surcharge).
+- Polygon verify and settle go to the public facilitator `https://x402.polygon.technology` (no new secret). Docs: https://docs.polygon.technology/payment-services/agentic-payments/x402/intro and https://docs.polygon.technology/payment-services/agentic-payments/x402/guides/quickstart-sellers . Base payments still use the CDP facilitator and still require the existing CDP keys.
+- `POLYGON_PAYMENTS` defaults to on. Set it to `off` to drop the Polygon entry from `accepts` without a code change.
+
 ### Token safety verdict name and tags (2026-11-06)
 - `resource.serviceName` on `GET /api/verdict/{chain}/{address}` and the existing same-handler alias `GET /api/honeypot/{chain}/{address}` is `GW8 Token Safety Verdict`. It was `GW8 Honeypot Check`. The MCP tool id stays `get_token_verdict`; its title is `Token safety verdict`.
 - Resource tags are `honeypot`, `token safety`, `rug-pull`, `scam-token`, `contract-risk`. The plain phrase `token safety` takes the slot of the hyphenated `token-safety` tag. Bazaar keeps at most five tags, so the other four prior tags stay and both forms are not published together.

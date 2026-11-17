@@ -70,11 +70,14 @@ optgroup{color:#94a3b8;font-weight:700}
 </select>
 <label for="hook">Webhook URL (only for subscribe options)</label>
 <input id="hook" type="url" placeholder="https://webhook.site/..." autocomplete="off">
+<label for="net">Network</label>
+<select id="net"><option value="base" selected>Base USDC</option></select>
 <button id="connect">1. Connect wallet</button>
 <button id="pay" disabled>2. Sign &amp; pay</button>
 <div id="status" class="box">Not connected.</div>
 <div id="out"></div>
-<script>
+<script type="module">
+import { acceptFor, offeredNetworks, solanaPaymentPayload, evmPaymentPayload, POLYGON_CHAIN_ID, POLYGON_CHAIN_NUM, POLYGON_USDC, SOLANA_USDC } from '/pay-networks.js';
 const BASE = '0x2105', USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const $ = id => document.getElementById(id);
 let eth = null; const announced = [];
@@ -152,13 +155,142 @@ $('connect').onclick = async () => {
     $('pay').disabled = false;
   } catch (e) { say('Error: ' + (e.message || e), 'warn'); }
 };
-$('pay').onclick = async () => {
+async function refreshNetworks() {
+  const sel = $('net');
+  const prev = sel.value || 'base';
+  const [path, method] = $('ep').value.split('|');
+  try {
+    const pr = await challenge(path, method);
+    const opts = offeredNetworks(pr.accepts);
+    if (!opts.length) throw new Error('no networks');
+    sel.innerHTML = opts.map(o => `<option value="${o.id}">${o.label}</option>`).join('');
+    sel.value = opts.some(o => o.id === prev) ? prev : (opts.some(o => o.id === 'base') ? 'base' : opts[0].id);
+  } catch {
+    sel.innerHTML = '<option value="base">Base USDC</option>';
+    sel.value = 'base';
+  }
+}
+$('ep').addEventListener('change', () => { refreshNetworks(); });
+refreshNetworks();
+async function ensurePolygon() {
+  const id = await eth.request({ method: 'eth_chainId' });
+  if (id === POLYGON_CHAIN_ID) return;
+  try { await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: POLYGON_CHAIN_ID }] }); }
+  catch (e) {
+    if (e.code !== 4902) throw e;
+    await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: POLYGON_CHAIN_ID, chainName: 'Polygon', nativeCurrency: { name: 'POL', symbol: 'POL', decimals: 18 }, rpcUrls: ['https://polygon-rpc.com'], blockExplorerUrls: ['https://polygonscan.com'] }] });
+  }
+}
+async function tokenBalance(token, a) {
+  const data = '0x70a08231' + a.slice(2).toLowerCase().padStart(64, '0');
+  const r = await eth.request({ method: 'eth_call', params: [{ to: token, data }, 'latest'] });
+  return Number(BigInt(r)) / 1e6;
+}
+function showPaid(r, j, explorer) {
+  let tx = j.settlement && j.settlement.transaction;
+  const ph = r.headers.get('PAYMENT-RESPONSE'); if (!tx && ph) try { tx = unb64(ph).transaction; } catch {}
+  if (r.ok) say(`✅ Paid. HTTP ${r.status}` + (tx ? `<br>Tx: <a href="${explorer}${tx}" target="_blank" rel="noopener">${tx}</a>` : ''), 'ok');
+  else say(`❌ HTTP ${r.status}: ${(j.error || '')} ${(j.message || '')} ${(j.reason || j.details || '')}`, 'warn');
+  $('out').innerHTML = '<div class="box"><pre></pre></div>'; $('out').querySelector('pre').textContent = JSON.stringify(j, null, 2);
+}
+async function payPolygon() {
+  const [path, method] = $('ep').value.split('|');
+  $('pay').disabled = true; $('out').innerHTML = '';
+    say('Starting… asking server for the Polygon price');
+  try {
+    if (!eth) eth = await waitForProvider();
+    if (!eth) { showOpenIn(); throw new Error('No EVM wallet in this browser'); }
+    if (!acct) [acct] = await eth.request({ method: 'eth_requestAccounts' });
+    await ensurePolygon();
+    const pr = await challenge(path, method), req = acceptFor(pr.accepts, 'polygon');
+    if (!req) throw new Error('This route does not list Polygon');
+    if (pr.x402Version !== 2 || req.scheme !== 'exact' || req.network !== 'eip155:137') throw new Error('Unexpected Polygon challenge');
+    if (req.asset.toLowerCase() !== POLYGON_USDC.toLowerCase()) throw new Error('Asset is not Polygon native USDC');
+    if (!req.extra || !req.extra.name || !req.extra.version) throw new Error('Missing EIP-712 domain in challenge');
+    if (acct.toLowerCase() === req.payTo.toLowerCase()) throw new Error('Connected wallet is the payout wallet');
+    const bal = await tokenBalance(POLYGON_USDC, acct);
+    const usd = Number(req.amount) / 1e6;
+    if (bal < usd) throw new Error(`Need ${usd} native USDC on Polygon. This wallet has ${bal.toFixed(4)}. The facilitator pays the POL gas; you only sign.`);
+    say(`Price ${usd} USDC on Polygon to ${req.payTo}. Opening your wallet to sign…`);
+    const now = Math.floor(Date.now() / 1000);
+    const authorization = { from: acct, to: req.payTo, value: String(req.amount), validAfter: '0', validBefore: String(now + req.maxTimeoutSeconds), nonce: hex(32) };
+    const typed = {
+      types: { EIP712Domain: [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }, { name: 'verifyingContract', type: 'address' }],
+        TransferWithAuthorization: [{ name: 'from', type: 'address' }, { name: 'to', type: 'address' }, { name: 'value', type: 'uint256' }, { name: 'validAfter', type: 'uint256' }, { name: 'validBefore', type: 'uint256' }, { name: 'nonce', type: 'bytes32' }] },
+      primaryType: 'TransferWithAuthorization',
+      domain: { name: req.extra.name, version: req.extra.version, chainId: POLYGON_CHAIN_NUM, verifyingContract: req.asset },
+      message: authorization
+    };
+    say('Waiting for your signature in the wallet…');
+    const signature = await eth.request({ method: 'eth_signTypedData_v4', params: [acct, JSON.stringify(typed)] });
+    const paymentPayload = evmPaymentPayload(pr, req, authorization, signature);
+    say('Signed. Settling Polygon payment…');
+    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? postBody(path) : undefined });
+    showPaid(r, await r.json().catch(() => ({})), 'https://polygonscan.com/tx/');
+  } catch (e) { say('Error: ' + (e.message || e), 'warn'); }
+  $('pay').disabled = false;
+}
+async function paySolana() {
+  const [path, method] = $('ep').value.split('|');
+  $('pay').disabled = true; $('out').innerHTML = '';
+  say('Starting… asking server for the Solana price');
+  try {
+    const provider = window.solana;
+    if (!provider || !provider.publicKey && !provider.connect) throw new Error('No Solana wallet. Install Phantom or another wallet that provides window.solana, then reload.');
+    if (!provider.publicKey) await provider.connect();
+    const buyer = provider.publicKey;
+    const pr = await challenge(path, method), req = acceptFor(pr.accepts, 'solana');
+    if (!req) throw new Error('This route does not list Solana');
+    if (pr.x402Version !== 2 || req.scheme !== 'exact' || req.network !== 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp') throw new Error('Unexpected Solana challenge');
+    if (req.asset !== SOLANA_USDC) throw new Error('Asset is not native Solana USDC');
+    if (!req.extra || !req.extra.feePayer) throw new Error('Challenge is missing the facilitator fee payer');
+    if (String(buyer) === req.payTo) throw new Error('Connected wallet is the payout wallet');
+    const { Connection, PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction } = await import('https://esm.sh/@solana/web3.js@1.98.4');
+    const { getAssociatedTokenAddress, createTransferCheckedInstruction } = await import('https://esm.sh/@solana/spl-token@0.4.14');
+    const conn = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+    const owner = new PublicKey(buyer);
+    const mint = new PublicKey(req.asset);
+    const destOwner = new PublicKey(req.payTo);
+    const source = await getAssociatedTokenAddress(mint, owner);
+    const dest = await getAssociatedTokenAddress(mint, destOwner);
+    const sourceInfo = await conn.getAccountInfo(source);
+    if (!sourceInfo) throw new Error('This wallet has no USDC token account yet. Creating one takes a little SOL for rent. Fund the wallet with SOL, receive USDC once, then pay.');
+    const destInfo = await conn.getAccountInfo(dest);
+    if (!destInfo) throw new Error('The payout wallet has no USDC account yet. The owner must create it (about 0.002 SOL rent) before a Solana payment can land. The facilitator will not create it.');
+    const usd = Number(req.amount) / 1e6;
+    say(`Price ${usd} USDC on Solana to ${req.payTo}. The facilitator pays the network fee. Opening your wallet to sign…`);
+    const limit = new Uint8Array(5); limit[0] = 2; new DataView(limit.buffer).setUint32(1, 50000, true);
+    const price = new Uint8Array(9); price[0] = 3; new DataView(price.buffer).setBigUint64(1, 1n, true);
+    const budget = new PublicKey('ComputeBudget111111111111111111111111111111');
+    const memoProg = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+    const nonce = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+    const ixs = [
+      new TransactionInstruction({ programId: budget, keys: [], data: limit }),
+      new TransactionInstruction({ programId: budget, keys: [], data: price }),
+      createTransferCheckedInstruction(source, mint, dest, owner, BigInt(req.amount), 6),
+      new TransactionInstruction({ programId: memoProg, keys: [{ pubkey: owner, isSigner: true, isWritable: false }], data: new TextEncoder().encode(nonce) })
+    ];
+    const { blockhash } = await conn.getLatestBlockhash('confirmed');
+    const message = new TransactionMessage({ payerKey: new PublicKey(req.extra.feePayer), recentBlockhash: blockhash, instructions: ixs }).compileToV0Message();
+    const tx = new VersionedTransaction(message);
+    const signed = await provider.signTransaction(tx);
+    const bytes = signed.serialize();
+    let bin = ''; for (const b of bytes) bin += String.fromCharCode(b);
+    const paymentPayload = solanaPaymentPayload(pr, req, btoa(bin));
+    say('Signed. Settling Solana payment…');
+    const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? postBody(path) : undefined });
+    showPaid(r, await r.json().catch(() => ({})), 'https://solscan.io/tx/');
+  } catch (e) { say('Error: ' + (e.message || e), 'warn'); }
+  $('pay').disabled = false;
+}
+async function payBase() {
   const [path, method] = $('ep').value.split('|');
   $('pay').disabled = true; $('out').innerHTML = '';
   say('Starting… asking server for the price');
   try {
     await ensureBase();
-    const pr = await challenge(path, method), req = pr.accepts[0];
+    const pr = await challenge(path, method), req = acceptFor(pr.accepts, 'base');
+    if (!req) throw new Error('This route does not list Base');
     if (pr.x402Version !== 2 || req.scheme !== 'exact' || req.network !== 'eip155:8453') throw new Error('Unexpected challenge');
     if (req.asset.toLowerCase() !== USDC.toLowerCase()) throw new Error('Asset is not Base USDC');
     if (!req.extra || !req.extra.name || !req.extra.version) throw new Error('Missing EIP-712 domain in challenge');
@@ -176,7 +308,7 @@ $('pay').onclick = async () => {
     };
     say('Waiting for your signature in the wallet…');
     const signature = await eth.request({ method: 'eth_signTypedData_v4', params: [acct, JSON.stringify(typed)] });
-    const paymentPayload = { x402Version: 2, payload: { authorization, signature }, extensions: pr.extensions, resource: pr.resource, accepted: req };
+    const paymentPayload = evmPaymentPayload(pr, req, authorization, signature);
     say('Signed. Settling payment (can take up to a minute on a cold start)…');
     const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'PAYMENT-SIGNATURE': b64(JSON.stringify(paymentPayload)) }, body: method === 'POST' ? postBody(path) : undefined });
     const j = await r.json().catch(() => ({}));
@@ -187,5 +319,11 @@ $('pay').onclick = async () => {
     $('out').innerHTML = '<div class="box"><pre></pre></div>'; $('out').querySelector('pre').textContent = JSON.stringify(j, null, 2);
   } catch (e) { say('Error: ' + (e.message || e), 'warn'); }
   $('pay').disabled = false;
+}
+$('pay').onclick = () => {
+  const net = $('net').value;
+  if (net === 'polygon') return payPolygon();
+  if (net === 'solana') return paySolana();
+  return payBase();
 };
 </script></body></html>

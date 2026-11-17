@@ -393,7 +393,7 @@ export async function recordAudience({ route, statusCode, ua, payer, paidRoute, 
         const c = classifyUA(ua);
         let aud = c.cls;
         const code = Number(statusCode) || 0;
-        const isPaid = !sample && !replay && paidRoute && code >= 200 && code < 300;
+        const isPaid = !sample && !replay && paidRoute && !isPreflightRoute(route) && code >= 200 && code < 300;
         const pid = isPaid && payer ? payerId(payer) : null;
         if (pid) { const o = await trackPayer(day, pid, route); if (o) aud = o; }
         await bump(day, `a|${aud}|req|${route}`);
@@ -472,13 +472,20 @@ function pathOf(routeKey) {
     return sp === -1 ? routeKey : routeKey.slice(sp + 1);
 }
 
+/** True for an OPTIONS route key such as "OPTIONS /api/rails". */
+export function isPreflightRoute(routeKey) {
+    return String(routeKey || '').startsWith('OPTIONS ');
+}
+
 function emptyBucket() {
-    return { quotes: 0, paid: 0, served: 0, notFound: 0, methodNotAllowed: 0, errors: 0, other: 0, requests: 0 };
+    return { quotes: 0, paid: 0, served: 0, notFound: 0, methodNotAllowed: 0, errors: 0, other: 0, preflight: 0, requests: 0 };
 }
 
 function applyField(bucket, routeKey, cls, n) {
     const path = pathOf(routeKey);
     bucket.requests += n;
+    // CORS preflights are never sales; counted apart (also fixes rows stored before this change).
+    if (isPreflightRoute(routeKey)) { bucket.preflight += n; return; }
     if (cls === '402') bucket.quotes += n;
     else if (cls === '2xx') {
         if (PAID_PATHS.has(path)) bucket.paid += n;
@@ -576,6 +583,7 @@ async function buildAudience(list, audFields) {
         }
         const [, aud, metric, route] = p; const b = by[key(aud)]; if (!b) continue;
         const m = metric === 'req' ? 'requests' : metric === '402' ? 'quotes' : metric === 'paid' ? 'paid' : null; if (!m) continue;
+        if (m === 'paid' && isPreflightRoute(route)) continue;
         b[m] += c;
         if (!perRoute.has(route)) perRoute.set(route, { route, bot: seg(), likelyBuyer: seg(), self: seg() });
         perRoute.get(route)[key(aud)][m] += c;

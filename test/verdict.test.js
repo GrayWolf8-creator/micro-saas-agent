@@ -40,7 +40,7 @@ test('discovery text names the searches agents use and stays inside the CDP desc
   const d = withCategory('/api/verdict/base/' + ADDR, VERDICT_BLURB);
   assert.ok(d.length <= MAX_RESOURCE_DESCRIPTION, `description is ${d.length}`);
   assert.equal(d.endsWith('...'), false);
-  for (const phrase of ['honeypot check', 'honeypot', 'rug pull', 'rug check', 'token safety', 'token security', 'scam token', 'contract risk', 'CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN', '$0.01'])
+  for (const phrase of ['honeypot check', 'honeypot', 'rug pull', 'rug check', 'token safety', 'token security', 'scam token', 'contract risk', 'CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN', '$0.005'])
     assert.match(d, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.deepEqual(VERDICT_TAGS, ['honeypot', 'token safety', 'rug-pull', 'scam-token', 'contract-risk']);
   assert.equal(VERDICT_SERVICE_NAME, 'GW8 Token Safety Verdict');
@@ -179,7 +179,7 @@ test('Bazaar name and tags name a token safety verdict and stay inside the facil
   assert.deepEqual(VERDICT_OUTPUT_SCHEMA.required, ['verdict', 'score', 'reasons', 'unknowns', 'sources', 'freshness']);
   assert.deepEqual(VERDICT_OUTPUT_SCHEMA.properties.verdict.enum, ['CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN']);
   assert.equal(VERDICT_EXAMPLE.verdict, 'CLEAR');
-  assert.match(VERDICT_BLURB, /\$0\.01/);
+  assert.match(VERDICT_BLURB, /\$0\.005/);
   assert.match(VERDICT_BLURB, /token safety/);
   assert.doesNotMatch(VERDICT_BLURB, /guaranteed|will rank|search rank|top 12/i);
   assert.doesNotMatch(VERDICT_SERVICE_NAME, /guaranteed|will rank/i);
@@ -198,7 +198,7 @@ test('paid challenge, openapi, llms.txt, agents.md, and discovery advertise the 
   const r = await fetch(base + '/api/verdict/base/' + ADDR);
   assert.equal(r.status, 402);
   const pr = JSON.parse(Buffer.from(r.headers.get('payment-required'), 'base64').toString('utf8'));
-  assert.equal(pr.accepts[0].amount, '10000');
+  assert.equal(pr.accepts[0].amount, '5000');
   assert.equal(pr.accepts[0].scheme, 'exact');
   assert.equal(pr.accepts[0].network, 'eip155:8453');
   assert.equal(pr.accepts[0].asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
@@ -206,7 +206,7 @@ test('paid challenge, openapi, llms.txt, agents.md, and discovery advertise the 
   assert.equal(pr.accepts[0].maxTimeoutSeconds, 300);
   assert.equal(pr.accepts[0].extra.name, 'USD Coin');
   assert.equal(pr.accepts[0].extra.version, '2');
-  assert.equal(r.headers.get('x-402-amount-usdc'), '0.01');
+  assert.equal(r.headers.get('x-402-amount-usdc'), '0.005');
   assert.equal(pr.extensions.bazaar.routeTemplate, '/api/verdict/:chain/:address');
   assert.equal(pr.extensions.bazaar.info.input.queryParams.fresh, '0');
   assert.deepEqual(pr.extensions.bazaar.schema.properties.input.properties.queryParams.properties.fresh.enum, ['0', '1']);
@@ -226,7 +226,7 @@ test('paid challenge, openapi, llms.txt, agents.md, and discovery advertise the 
   const honey = await fetch(base + '/api/honeypot/base/' + ADDR);
   assert.equal(honey.status, 402);
   const hp = JSON.parse(Buffer.from(honey.headers.get('payment-required'), 'base64').toString('utf8'));
-  assert.equal(hp.accepts[0].amount, '10000');
+  assert.equal(hp.accepts[0].amount, '5000');
   assert.deepEqual(hp.accepts[0], pr.accepts[0]);
   assert.equal(hp.resource.url, 'https://micro-saas-agent.onrender.com/api/honeypot/base/' + ADDR);
   assert.equal(hp.extensions.bazaar.routeTemplate, '/api/honeypot/:chain/:address');
@@ -234,12 +234,12 @@ test('paid challenge, openapi, llms.txt, agents.md, and discovery advertise the 
   assert.deepEqual(hp.resource.tags, VERDICT_TAGS);
   assert.match(hp.resource.description, /honeypot check/);
   assert.match(hp.resource.description, /token safety/);
-  assert.equal(honey.headers.get('x-402-amount-usdc'), '0.01');
+  assert.equal(honey.headers.get('x-402-amount-usdc'), '0.005');
   const doc = await (await fetch(base + '/openapi.json')).json();
   const op = doc.paths['/api/verdict/{chain}/{address}'].get;
-  assert.equal(op['x-payment-info'].price.amount, '0.01');
+  assert.equal(op['x-payment-info'].price.amount, '0.005');
   const honeyOp = doc.paths['/api/honeypot/{chain}/{address}'].get;
-  assert.equal(honeyOp['x-payment-info'].price.amount, '0.01');
+  assert.equal(honeyOp['x-payment-info'].price.amount, '0.005');
   assert.ok(op.parameters.some(p => p.name === 'fresh'));
   assert.ok(op.parameters.find(p => p.name === 'chain').schema.enum.includes('solana'));
   assert.match(op.summary, /CLEAR/);
@@ -257,10 +257,10 @@ test('paid challenge, openapi, llms.txt, agents.md, and discovery advertise the 
   assert.doesNotMatch(llms, /guaranteed|will rank|top 12/i);
   assert.doesNotMatch(agents, /guaranteed|will rank|top 12/i);
   const pay = await (await fetch(base + '/pay.html')).text();
-  assert.match(pay, /\/api\/verdict token safety verdict — \$0\.01/);
-  assert.match(pay, /\/api\/honeypot same screen — \$0\.01/);
-  assert.match(pay, /\/api\/verdict-deep deep honeypot check — \$0\.05/);
+  assert.match(pay, /\/api\/verdict token safety verdict — \$0\.005/);
+  assert.match(pay, /\/api\/honeypot same screen — \$0\.005/);
+  assert.match(pay, /\/api\/verdict-deep deep honeypot check — \$0\.03/);
   assert.match(disc.resources[0], /\/api\/pass\/day$/);
   assert.deepEqual(disc.tokenSafety.verdicts, VERDICT_LABELS);
-  assert.equal(disc.tokenSafety.priceUsd, '0.01');
+  assert.equal(disc.tokenSafety.priceUsd, '0.005');
 });

@@ -3,6 +3,8 @@
 // The bottom-watch feed reads public OHLC (Kraken, then Binance) and public funding. No API keys.
 // A field that cannot be read is UNKNOWN. A failed lookup (nothing factual to return) is an error and is not settled.
 import { scoreVerdict, verdictSourceUrls, validVerdictInput, VERDICT_CHAINS, VERDICT_LABELS, VERDICT_TTL_SEC, VERDICT_RULES } from './upgrades.js';
+import { VERDICT_PRICE_USD, DEEP_PRICE_USD } from './prices.js';
+export { DEEP_PRICE_USD };
 
 const r2 = v => Math.round(v * 100) / 100;
 const FETCH_MS = 8000;
@@ -12,11 +14,10 @@ const AVOID_CODES = new Set(['honeypot', 'cannot_sell_all', 'non_transferable', 
 const BLOCKS_CLEAR = new Set(['freeze_authority', 'mint_authority', 'mintable', 'pausable', 'hidden_owner', 'ownership_reclaim', 'owner_change_balance', 'unverified', 'lp_unlocked']);
 const flag = v => v === '1' || v === 1 || v === true;
 
-export const DEEP_PRICE_USD = '0.05';
 export const BRIEF_PRICE_USD = '0.02';
 export const BOTTOM_PRICE_USD = '0.01';
-export const DEEP_BLURB = 'Deep honeypot check for rug pull, token safety, holder concentration, liquidity lock, and scam token. Returns the $0.01 screen plus top-10 holder %, liquidity amount, whether LP is locked or burned, owner/mint/proxy/blacklist privileges, buy/sell tax, and contract age. CLEAR, CAUTION, AVOID, or UNKNOWN. GoPlus, honeypot.is, DexScreener. ?fresh=1 skips the 10-minute cache. $0.05 USDC.';
-export const BRIEF_BLURB = 'Token safety plus price in one token brief and trade check. Returns the $0.01 safety verdict (CLEAR, CAUTION, AVOID, or UNKNOWN) plus a market snapshot: price, 24h change, 24h volume, liquidity, and FDV. GoPlus and DexScreener. ?fresh=1 skips the 10-minute cache. $0.02 USDC.';
+export const DEEP_BLURB = `Deep honeypot check for rug pull, token safety, holder concentration, liquidity lock, and scam token. Returns the $${VERDICT_PRICE_USD} screen plus top-10 holder %, liquidity amount, whether LP is locked or burned, owner/mint/proxy/blacklist privileges, buy/sell tax, and contract age. CLEAR, CAUTION, AVOID, or UNKNOWN. GoPlus, honeypot.is, DexScreener. ?fresh=1 skips the 10-minute cache. $${DEEP_PRICE_USD} USDC.`;
+export const BRIEF_BLURB = `Token safety plus price in one token brief and trade check. Returns the $${VERDICT_PRICE_USD} safety verdict (CLEAR, CAUTION, AVOID, or UNKNOWN) plus a market snapshot: price, 24h change, 24h volume, liquidity, and FDV. GoPlus and DexScreener. ?fresh=1 skips the 10-minute cache. $0.02 USDC.`;
 export const BOTTOM_BLURB = 'Crypto bottom-watch research feed for BTC, ETH, SOL, XRP, AAVE, HYPE, MON, CC, and the same public candle set. Tells: sweep-and-reclaim of the 30-day low, 2x volume, RSI turning up from oversold, 4h higher low, funding or liquidation flush. tells_count and tier NONE, EARLY_TELL at 2 or more, CONFIRMED only when BTC itself has reclaimed. Research data, not financial advice. Cached about 10 minutes. $0.01 USDC.';
 export const DEEP_TAGS = ['deep-honeypot', 'rug-pull', 'token-safety', 'liquidity-lock', 'scam-token'];
 export const BRIEF_TAGS = ['token-brief', 'token-safety', 'trade-check', 'dexscreener', 'goplus'];
@@ -76,7 +77,7 @@ export const DEEP_OUTPUT_SCHEMA = {
 };
 export const BRIEF_OUTPUT_SCHEMA = {
   type: 'object', additionalProperties: true,
-  description: 'Token brief: token safety plus price. verdict is the $0.01 screen. marketSnapshot is price, 24h change, 24h volume, liquidity, and FDV.',
+  description: `Token brief: token safety plus price. verdict is the $${VERDICT_PRICE_USD} screen. marketSnapshot is price, 24h change, 24h volume, liquidity, and FDV.`,
   properties: {
     verdict: { type: 'string', enum: VERDICT_LABELS },
     score: { type: 'number' },

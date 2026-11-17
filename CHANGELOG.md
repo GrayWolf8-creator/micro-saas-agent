@@ -13,7 +13,7 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 \## \[Unreleased]
 
 ### Solana USDC on the same five routes (2026-11-17)
-- After Base and Polygon, `accepts` on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol} can list Solana mainnet USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`). The amount matches that route's Base price. payTo is `HtffQ9mFdLcyCoNnh5nbDnTyaFLEcLQhS8NnWZp3axFg`, set next to the Base payout address. `extra.feePayer` is read from the public facilitator and is not hardcoded. `SOLANA_PAYMENTS` defaults to on; `off` removes the entry.
+- After Base and Polygon, `accepts` on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol} can list Solana mainnet USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`). The amount matches that route's Base price. payTo is `3ZgRNAMaM39WQt7rvwMf7tZjQakZqA5ieULpoQuo4chD`, set next to the Base payout address. `extra.feePayer` is read from the public facilitator and is not hardcoded. `SOLANA_PAYMENTS` defaults to on; `off` removes the entry.
 - Verify and settle go to `https://facilitator.payai.network` with no API key. Docs: https://docs.payai.network/x402/solana-mainnet-express and https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md . If the payTo has no USDC token account, settlement is refused and nothing is submitted. PayAI does not create that account.
 - `/pay.html` can pay the Base, Polygon, or Solana accept when the route's 402 lists it. Base stays the default and still signs Base EIP-3009.
 

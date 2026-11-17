@@ -12,7 +12,7 @@ Row 1 is the token safety screen ($0.005): honeypot, rug check, contract risk. `
 ## How paying works (all paid calls)
 Day pass first: `POST /api/pass/day` ($1.00) is the best value if you call more than N times (N = floor($1.00 / per-call price); $0.002 → more than 500, $0.005 → more than 200, $0.01 → more than 100, $0.02 → more than 50, $0.05 → more than 20).
 Polygon native USDC (`eip155:137`, `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`) is a second `accepts` entry, at the same price and the same payTo, on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol}. `POLYGON_PAYMENTS=off` removes it. Other routes stay Base only.
-Solana USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`, payTo `HtffQ9mFdLcyCoNnh5nbDnTyaFLEcLQhS8NnWZp3axFg`) is a further entry on those same routes, same price. `SOLANA_PAYMENTS=off` removes it. The Solana payTo needs a USDC token account before a payment can settle.
+Solana USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`, payTo `3ZgRNAMaM39WQt7rvwMf7tZjQakZqA5ieULpoQuo4chD`) is a further entry on those same routes, same price. `SOLANA_PAYMENTS=off` removes it. The Solana payTo needs a USDC token account before a payment can settle.
 1. Call the route with no payment. You get **402** and a `PAYMENT-REQUIRED` header (base64 JSON: `accepts[0].amount`, `payTo`, `network`). The JSON body leads with `dayPass`.
 2. Sign it with an x402 client (e.g. `wrapFetchWithPayment` from `@x402/fetch`) and retry with `PAYMENT-SIGNATURE`.
 3. **Bad input never costs money.** Invalid bodies get `400 {error, note:"no payment was taken"}` before any 402.

@@ -11,7 +11,7 @@ import { pathAcceptsPolygon } from './polygon_pay.js';
 
 export const USDC_SOLANA = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 export const SOLANA_NETWORK = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp';
-export const SOLANA_PAYTO = 'HtffQ9mFdLcyCoNnh5nbDnTyaFLEcLQhS8NnWZp3axFg';
+export const SOLANA_PAYTO = '3ZgRNAMaM39WQt7rvwMf7tZjQakZqA5ieULpoQuo4chD';
 export const SOLANA_FACILITATOR_URL = 'https://facilitator.payai.network';
 export const SOLANA_RPC_URL = 'https://api.mainnet-beta.solana.com';
 const FEE_TTL_MS = 60 * 1000;

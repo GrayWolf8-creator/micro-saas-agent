@@ -12,6 +12,12 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Polygon USDC on five paid routes (2026-11-17)
+- The 402 `accepts` list on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol} now has a second entry: Polygon mainnet (`eip155:137`), native USDC `0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359`, the same atomic amount as that route's Base price, and the same payTo as Base. Base USDC stays first and is otherwise unchanged. Other paid routes, prices, OpenAPI prices, and the payout address are unchanged.
+- Those three extra routes are the paid methods with the most 2xx calls in GET /api/stats over 30 Mountain Time days, OPTIONS excluded: regime 9, should-i-pay 6, then a tie at 3 between coin, verdict, and govcontracts. likely-buyer paid calls break the tie (coin 2, verdict 1, govcontracts 1). GET /api/sales could not rank three routes: the on-disk log has two settlements (rails/route and the fuel surcharge).
+- Polygon verify and settle go to the public facilitator `https://x402.polygon.technology` (no new secret). Docs: https://docs.polygon.technology/payment-services/agentic-payments/x402/intro and https://docs.polygon.technology/payment-services/agentic-payments/x402/guides/quickstart-sellers . Base payments still use the CDP facilitator and still require the existing CDP keys.
+- `POLYGON_PAYMENTS` defaults to on. Set it to `off` to drop the Polygon entry from `accepts` without a code change.
+
 ### Token safety verdict name and tags (2026-11-06)
 - `resource.serviceName` on `GET /api/verdict/{chain}/{address}` and the existing same-handler alias `GET /api/honeypot/{chain}/{address}` is `GW8 Token Safety Verdict`. It was `GW8 Honeypot Check`. The MCP tool id stays `get_token_verdict`; its title is `Token safety verdict`.
 - Resource tags are `honeypot`, `token safety`, `rug-pull`, `scam-token`, `contract-risk`. The plain phrase `token safety` takes the slot of the hyphenated `token-safety` tag. Bazaar keeps at most five tags, so the other four prior tags stay and both forms are not published together.

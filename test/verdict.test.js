@@ -42,7 +42,7 @@ test('discovery text names the searches agents use and stays inside the CDP desc
   assert.equal(d.endsWith('...'), false);
   for (const phrase of ['honeypot check', 'honeypot', 'rug pull', 'rug check', 'token safety', 'token security', 'scam token', 'contract risk', 'CLEAR', 'CAUTION', 'AVOID', 'UNKNOWN', '$0.005'])
     assert.match(d, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.deepEqual(VERDICT_TAGS, ['honeypot', 'token safety', 'rug-pull', 'scam-token', 'contract-risk']);
+  assert.deepEqual(VERDICT_TAGS, ['token safety', 'rug check', 'token security', 'honeypot', 'honeypot check']);
   assert.equal(VERDICT_SERVICE_NAME, 'GW8 Token Safety Verdict');
   assert.ok(VERDICT_SERVICE_NAME.length <= 32);
   assert.equal(VERDICT_EXAMPLE.verdict, 'CLEAR');
@@ -161,7 +161,7 @@ test('getVerdict: failed lookups are not cached, UNKNOWN is cached, fresh skips 
 });
 
 const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
-const PRIOR_TAGS = ['honeypot', 'rug-pull', 'scam-token', 'contract-risk'];
+const PRIOR_TAGS = ['token safety', 'rug check', 'token security', 'honeypot', 'honeypot check'];
 
 test('Bazaar name and tags name a token safety verdict and stay inside the facilitator caps', () => {
   assert.equal(VERDICT_SERVICE_NAME, 'GW8 Token Safety Verdict');

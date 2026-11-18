@@ -95,6 +95,7 @@ export const ROUTE_OUTPUT_SCHEMA = {
   properties: {
     recommended: {
       type: 'object',
+      description: 'The one x402 facilitator and chain to use for this payment, and why.',
       required: ['facilitator', 'chain', 'why'],
       properties: {
         facilitator: { type: ['string', 'null'], description: 'Facilitator to use. Null when none lists this chain.' },
@@ -102,7 +103,7 @@ export const ROUTE_OUTPUT_SCHEMA = {
         why: { type: 'string', description: 'Short reason. Chosen by the payment amount and the chain.' }
       }
     },
-    alternatives: { type: 'array', description: 'Other facilitator and chain options. Supporting stats only.', items: { type: 'object' } },
+    alternatives: { type: 'array', description: 'Other facilitator and chain options. Supporting stats only.', items: { type: 'object', description: 'One other facilitator and chain, with its fee and status.' } },
     fee: { type: ['number', 'null'], description: 'USD settlement fee for the recommendation. Flat per settlement, not a percent of the payment. Null when the public source has no fee.' },
     settle_time: { type: ['string', 'null'], description: 'Published chain block time for the recommendation, not a measured facilitator SLA.' },
     status: { type: 'string', enum: ['up', 'down', 'unknown'], description: 'Live flag. up: /supported listed exact on this chain. down: it answered and did not, or nobody lists the chain. unknown: the probe failed.' }

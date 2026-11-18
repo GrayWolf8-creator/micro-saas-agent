@@ -234,16 +234,16 @@ export const FUEL_OUTPUT_SCHEMA = {
   required: ['padd', 'region', 'pricePerGallon', 'weekOverWeek', 'surchargePerMile', 'releaseDate', 'source'],
   properties: {
     padd: { type: 'string', description: 'us or padd1, padd1a, padd1b, padd1c, padd2, padd3, padd4, padd5. Default padd4.' },
-    region: { type: 'string' },
+    region: { type: 'string', description: 'EIA region label for the requested PADD.' },
     pricePerGallon: { type: 'number', description: 'Current weekly U.S. on-highway diesel, dollars per gallon.' },
-    previousPricePerGallon: { type: 'number' },
+    previousPricePerGallon: { type: 'number', description: 'Prior week on-highway diesel, dollars per gallon.' },
     weekOverWeek: { type: 'number', description: 'Current week minus the previous week, dollars per gallon.' },
-    weekEnding: { type: 'string' },
+    weekEnding: { type: 'string', description: 'Week the EIA diesel price covers, YYYY-MM-DD.' },
     releaseDate: { type: 'string', description: 'EIA diesel release date (YYYY-MM-DD).' },
     basePerGallon: { type: 'number', description: 'Caller base diesel price, dollars per gallon.' },
-    mpg: { type: 'number' },
+    mpg: { type: 'number', description: 'Miles per gallon used to turn the diesel gap into a per-mile surcharge.' },
     surchargePerMile: { type: 'number', description: 'max(0, current - base) / mpg, dollars per mile.' },
-    source: { type: 'string', const: DIESEL_SOURCE }
+    source: { type: 'string', const: DIESEL_SOURCE, description: 'Source line. Source: U.S. EIA.' }
   }
 };
 

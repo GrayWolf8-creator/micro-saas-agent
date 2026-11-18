@@ -90,7 +90,11 @@ test('catalog: category keywords + unfeatured routes', () => {
   assert.match(categoryOf('/api/spend/check'), /Spend policy/);
   assert.match(categoryOf('/api/seller/reputation'), /Seller reputation/);
   assert.match(categoryOf('/api/verdict/{chain}/{address}'), /verdict/);
-  assert.match(categoryOf('/api/coin/{symbol}'), /Market data/);
+  assert.match(categoryOf('/api/coin/{symbol}'), /WaveTrend coin/);
+  assert.match(categoryOf('/api/govcontracts'), /Government contracts/);
+  assert.match(categoryOf('/api/brief'), /Daily crypto brief/);
+  assert.match(categoryOf('/api/regime'), /Crypto market regime/);
+  assert.equal(categoryOf('/api/govcontracts').includes('crypto'), false);
   assert.equal(withCategory('/api/rails', 'x'), '[Payment rails: fee + speed comparison] x');
   assert.equal(withCategory('/api/rails', '[already] x'), '[already] x');
   for (const p of ['/api/rules', '/api/rwa', '/api/govcontracts', '/api/govcontracts/status']) assert.equal(isFeatured(p), false);

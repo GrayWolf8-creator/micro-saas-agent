@@ -25,9 +25,9 @@ export const VERDICT_NOTE = 'Factual screen of public GoPlus and DexScreener rec
 export const VERDICT_BLURB = `A honeypot check and token safety screen for token security: honeypot, rug pull, rug check, scam token, and contract risk before a swap, transfer, or approval. Paid signal is CLEAR, CAUTION, AVOID, or UNKNOWN, with score, reasons, unknowns, sources, and freshness for the address you send. Free example of that JSON (not a live screen): GET /api/verdict/example. GoPlus plus DexScreener. $${VERDICT_PRICE_USD} USDC.`;
 // Bazaar resource metadata: serviceName is printable ASCII and at most 32 characters; tags are at most
 // five entries, each printable ASCII and at most 32 characters. Facilitators drop tags past five.
-// "token safety" is the plain phrase in place of the hyphenated token-safety tag. honeypot, rug-pull,
-// scam-token, and contract-risk stay. This wording does not control or promise CDP search rank.
-export const VERDICT_TAGS = ['honeypot', 'token safety', 'rug-pull', 'scam-token', 'contract-risk'];
+// Tags are the exact phrases agents type into CDP Bazaar search. rug pull, scam token, and contract risk
+// stay in the description. This wording does not control or promise CDP search rank.
+export const VERDICT_TAGS = ['token safety', 'rug check', 'token security', 'honeypot', 'honeypot check'];
 export const VERDICT_SERVICE_NAME = 'GW8 Token Safety Verdict';
 const VTTL = VERDICT_TTL_SEC * 1000;
 const AVOID_CODES = new Set(['honeypot', 'cannot_sell_all', 'non_transferable', 'balance_mutable', 'airdrop_scam', 'fake_token']);
@@ -76,9 +76,9 @@ export const VERDICT_OUTPUT_SCHEMA = {
     verdict: { type: 'string', enum: VERDICT_LABELS, description: 'Token safety verdict: CLEAR, CAUTION, AVOID, or UNKNOWN. AVOID includes honeypot, rug pull, and scam token.' },
     score: { type: 'number', description: 'Token security score 0-100. Null when the honeypot check verdict is UNKNOWN.' },
     reasons: { type: 'array', description: 'Honeypot check, rug pull, scam token, and contract risk rules that fired.', items: { type: 'object', required: ['code', 'points', 'detail'], properties: { code: { type: 'string', description: 'Rule id. honeypot means a honeypot or sell-blocking scam token. Other codes cover rug pull and contract risk.' }, points: { type: 'number' }, detail: { type: 'string' } } } },
-    unknowns: { type: 'array', items: { type: 'object', required: ['code', 'detail', 'limitsVerdict'], properties: { code: { type: 'string' }, detail: { type: 'string' }, limitsVerdict: { type: 'boolean' } } } },
-    sources: { type: 'array' },
-    freshness: { type: 'object', properties: { checkedAt: { type: 'string' }, cached: { type: 'boolean' }, cacheTtlSec: { type: 'number' }, ageSec: { type: 'number' } }, required: ['checkedAt', 'cached', 'cacheTtlSec', 'ageSec'] }
+    unknowns: { type: 'array', description: 'Open gaps in the token safety screen. limitsVerdict true blocks a CLEAR honeypot check.', items: { type: 'object', description: 'One unknown on the rug check.', required: ['code', 'detail', 'limitsVerdict'], properties: { code: { type: 'string', description: 'Unknown id.' }, detail: { type: 'string', description: 'What the token security screen could not read.' }, limitsVerdict: { type: 'boolean', description: 'True when this gap blocks a CLEAR verdict.' } } } },
+    sources: { type: 'array', description: 'GoPlus and DexScreener reads behind the token safety and rug check.', items: { type: 'object', description: 'One upstream source for this honeypot check.', properties: { name: { type: 'string', description: 'Source name.' }, status: { type: 'string', description: 'ok, empty, or error.' }, url: { type: 'string', description: 'Source URL used for this token security read.' } } } },
+    freshness: { type: 'object', description: 'When the token safety screen was read and whether the 10-minute cache was used.', properties: { checkedAt: { type: 'string', description: 'ISO time of this honeypot check.' }, cached: { type: 'boolean', description: 'True when the 10-minute cache supplied the screen.' }, cacheTtlSec: { type: 'number', description: 'Cache lifetime in seconds.' }, ageSec: { type: 'number', description: 'Age of the cached token safety screen, in seconds.' } }, required: ['checkedAt', 'cached', 'cacheTtlSec', 'ageSec'] }
   },
   required: ['verdict', 'score', 'reasons', 'unknowns', 'sources', 'freshness']
 };

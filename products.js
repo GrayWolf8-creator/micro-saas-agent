@@ -16,12 +16,12 @@ const flag = v => v === '1' || v === 1 || v === true;
 
 export const BRIEF_PRICE_USD = '0.02';
 export const BOTTOM_PRICE_USD = '0.01';
-export const DEEP_BLURB = `Deep honeypot check for rug pull, token safety, holder concentration, liquidity lock, and scam token. Returns the $${VERDICT_PRICE_USD} screen plus top-10 holder %, liquidity amount, whether LP is locked or burned, owner/mint/proxy/blacklist privileges, buy/sell tax, and contract age. CLEAR, CAUTION, AVOID, or UNKNOWN. GoPlus, honeypot.is, DexScreener. ?fresh=1 skips the 10-minute cache. $${DEEP_PRICE_USD} USDC.`;
-export const BRIEF_BLURB = `Token safety plus price in one token brief and trade check. Returns the $${VERDICT_PRICE_USD} safety verdict (CLEAR, CAUTION, AVOID, or UNKNOWN) plus a market snapshot: price, 24h change, 24h volume, liquidity, and FDV. GoPlus and DexScreener. ?fresh=1 skips the 10-minute cache. $0.02 USDC.`;
+export const DEEP_BLURB = `Deep honeypot check for rug pull, rug check, token safety, token security, holder concentration, liquidity lock, and scam token. Returns the $${VERDICT_PRICE_USD} screen plus top-10 holder %, liquidity amount, whether LP is locked or burned, owner/mint/proxy/blacklist privileges, buy/sell tax, and contract age. CLEAR, CAUTION, AVOID, or UNKNOWN. GoPlus, honeypot.is, DexScreener. ?fresh=1 skips the 10-minute cache. $${DEEP_PRICE_USD} USDC.`;
+export const BRIEF_BLURB = `Token safety plus price in one token brief and trade check. Returns the $${VERDICT_PRICE_USD} safety verdict (CLEAR, CAUTION, AVOID, or UNKNOWN) plus a market snapshot: price, 24h change, 24h volume, liquidity, and FDV. Token security and honeypot context included. GoPlus and DexScreener. ?fresh=1 skips the 10-minute cache. $0.02 USDC.`;
 export const BOTTOM_BLURB = 'Crypto bottom-watch research feed for BTC, ETH, SOL, XRP, AAVE, HYPE, MON, CC, and the same public candle set. Tells: sweep-and-reclaim of the 30-day low, 2x volume, RSI turning up from oversold, 4h higher low, funding or liquidation flush. tells_count and tier NONE, EARLY_TELL at 2 or more, CONFIRMED only when BTC itself has reclaimed. Research data, not financial advice. Cached about 10 minutes. $0.01 USDC.';
-export const DEEP_TAGS = ['deep-honeypot', 'rug-pull', 'token-safety', 'liquidity-lock', 'scam-token'];
-export const BRIEF_TAGS = ['token-brief', 'token-safety', 'trade-check', 'dexscreener', 'goplus'];
-export const BOTTOM_TAGS = ['crypto-bottom', 'research', 'rsi', 'sweep-reclaim', 'x402'];
+export const DEEP_TAGS = ['honeypot', 'rug check', 'token safety', 'token security', 'liquidity lock'];
+export const BRIEF_TAGS = ['token brief', 'token safety', 'trade check', 'token security', 'honeypot'];
+export const BOTTOM_TAGS = ['crypto bottom', 'research data', 'bottom watch', 'rsi', 'sweep reclaim'];
 export const DEEP_SERVICE_NAME = 'GW8 Deep Honeypot';
 export const BRIEF_SERVICE_NAME = 'GW8 Token Brief';
 export const BOTTOM_SERVICE_NAME = 'GW8 Crypto Bottom';
@@ -58,18 +58,19 @@ export const DEEP_OUTPUT_SCHEMA = {
   type: 'object', additionalProperties: true,
   description: 'Deep honeypot check. verdict is CLEAR, CAUTION, AVOID, or UNKNOWN. deep holds holder concentration, liquidity lock, privileges, buy/sell tax, and contract age. Missing reads are UNKNOWN.',
   properties: {
-    verdict: { type: 'string', enum: VERDICT_LABELS },
-    score: { type: 'number' },
-    reasons: { type: 'array', items: { type: 'object' } },
-    unknowns: { type: 'array' },
+    verdict: { type: 'string', enum: VERDICT_LABELS, description: 'Deep honeypot verdict: CLEAR, CAUTION, AVOID, or UNKNOWN.' },
+    score: { type: 'number', description: 'Token safety score from the underlying screen, 0-100.' },
+    reasons: { type: 'array', description: 'Rug check, honeypot, and contract-risk rules that fired.', items: { type: 'object', description: 'One rule that fired, with code, points, and detail.' } },
+    unknowns: { type: 'array', description: 'Deep reads that came back UNKNOWN and did not invent a value.' },
     deep: {
       type: 'object',
+      description: 'Holder concentration, liquidity lock, privileges, buy and sell tax, and contract age.',
       properties: {
-        holderConcentration: fieldSchema,
-        liquidity: fieldSchema,
-        privileges: fieldSchema,
-        tax: fieldSchema,
-        contractAge: fieldSchema
+        holderConcentration: { ...fieldSchema, description: 'Top-10 holder percent for this token security read.' },
+        liquidity: { ...fieldSchema, description: 'Pool liquidity USD and whether LP is locked or burned.' },
+        privileges: { ...fieldSchema, description: 'Owner, mint, proxy, and blacklist privileges.' },
+        tax: { ...fieldSchema, description: 'Buy tax and sell tax percent.' },
+        contractAge: { ...fieldSchema, description: 'Contract or pair age in days.' }
       }
     }
   },
@@ -79,10 +80,10 @@ export const BRIEF_OUTPUT_SCHEMA = {
   type: 'object', additionalProperties: true,
   description: `Token brief: token safety plus price. verdict is the $${VERDICT_PRICE_USD} screen. marketSnapshot is price, 24h change, 24h volume, liquidity, and FDV.`,
   properties: {
-    verdict: { type: 'string', enum: VERDICT_LABELS },
-    score: { type: 'number' },
-    reasons: { type: 'array' },
-    marketSnapshot: { type: 'object', properties: { priceUsd: { type: 'number' }, change24hPct: { type: 'number' }, volume24hUsd: { type: 'number' }, liquidityUsd: { type: 'number' }, fdvUsd: { type: 'number' }, status: { type: 'string', enum: ['ok', 'partial', 'UNKNOWN'] } } }
+    verdict: { type: 'string', enum: VERDICT_LABELS, description: 'Token safety verdict in this token brief: CLEAR, CAUTION, AVOID, or UNKNOWN.' },
+    score: { type: 'number', description: 'Token safety score from 0 to 100.' },
+    reasons: { type: 'array', description: 'Rules behind the token safety verdict.' },
+    marketSnapshot: { type: 'object', description: 'Price, 24h change, 24h volume, liquidity, and FDV for the trade check.', properties: { priceUsd: { type: 'number', description: 'Spot price in USD.' }, change24hPct: { type: 'number', description: 'Price change over 24 hours, in percent.' }, volume24hUsd: { type: 'number', description: '24-hour volume in USD.' }, liquidityUsd: { type: 'number', description: 'Pool liquidity in USD.' }, fdvUsd: { type: 'number', description: 'Fully diluted valuation in USD.' }, status: { type: 'string', enum: ['ok', 'partial', 'UNKNOWN'], description: 'ok, partial, or UNKNOWN when the market snapshot could not be read.' } } }
   },
   required: ['verdict', 'reasons', 'marketSnapshot']
 };
@@ -90,10 +91,10 @@ export const BOTTOM_OUTPUT_SCHEMA = {
   type: 'object', additionalProperties: true,
   description: 'Crypto bottom-watch research data, not financial advice. Each coin has tells_count and tier NONE, EARLY_TELL, or CONFIRMED.',
   properties: {
-    disclaimer: { type: 'string' },
-    tierRule: { type: 'string' },
-    btcReclaimed: { type: 'boolean' },
-    coins: { type: 'array', items: { type: 'object', properties: { symbol: { type: 'string' }, tells_count: { type: 'integer' }, tier: { type: 'string', enum: ['NONE', 'EARLY_TELL', 'CONFIRMED'] } }, required: ['symbol', 'tells_count', 'tier'] } }
+    disclaimer: { type: 'string', description: 'Research data, not financial advice.' },
+    tierRule: { type: 'string', description: 'How tells_count maps to NONE, EARLY_TELL, and CONFIRMED.' },
+    btcReclaimed: { type: 'boolean', description: 'Whether BTC itself has reclaimed its prior 30-day low. CONFIRMED requires this.' },
+    coins: { type: 'array', description: 'Per-coin bottom-watch tells and tier.', items: { type: 'object', description: 'One coin in the crypto bottom watch.', properties: { symbol: { type: 'string', description: 'Coin symbol.' }, tells_count: { type: 'integer', description: 'How many bottom-watch tells are true.' }, tier: { type: 'string', enum: ['NONE', 'EARLY_TELL', 'CONFIRMED'], description: 'NONE, EARLY_TELL, or CONFIRMED.' } }, required: ['symbol', 'tells_count', 'tier'] } }
   },
   required: ['disclaimer', 'btcReclaimed', 'coins']
 };

@@ -20,7 +20,8 @@ export const TRUST_LINE = 'No charge on failure: payment settles only after your
 const ADDS = [
     [/^\/api\/agent/, 'Full regime checks + every WaveTrend band dot across 66 Kraken pairs (teaser: score, counts, top 3 symbols).'],
     [/^\/api\/brief\/weekly/, 'Pushed every Monday to your webhook: regime, top dots, 7d hit rates, RWA, federal contracts.'],
-    [/^\/api\/brief/, 'Top 10 coins by dot strength with values + BTC/ETH/SOL large-print flows (teaser: top 3 symbols only).'],
+    [/^\/api\/daily$/, 'The daily brief and the full Stage 1 regime (raw values and rules) in one call. Separate price is $0.03. The teaser shows today\'s regime and the top 3 coin names.'],
+    [/^\/api\/brief/, 'Top 10 coins by dot strength with values + BTC/ETH/SOL large-print flows (teaser: today\'s regime and the top 3 coin names).'],
     [/^\/api\/dots/, 'Every current band dot with wt1, bar time and close (teaser: top 3 symbols only).'],
     [/^\/api\/regime/, 'Raw values and the rule behind each of the 4 regime checks (teaser: score only).'],
     [/^\/api\/coin\//, 'wt1/wt2, previous values and recent band dots for this coin (cheapest paid call).'],
@@ -41,7 +42,7 @@ const ADDS = [
     [/^\/api\/spend\/check/, 'allow / deny / needs_approval for your proposed payment, which rule fired, and a signed decision receipt (no free teaser; pure rule check).'],
     [/^\/api\/pay\/should-i-pay/, 'one verdict pay / dont_pay / ask_human from your spend policy + the seller reputation, with reasons and one signed receipt (no free teaser).'],
     [/^\/api\/seller\/reputation/, '0-100 seller score, verdict, wash/self-dealing share, buyer count, concentration and wallet age from public Base USDC history, with a signed receipt (no free teaser).'],
-    [/^\/api\/verdict\//, 'Token safety screen: CLEAR, CAUTION, AVOID, or UNKNOWN, with the rule that fired, unknowns, sources, and freshness (free sample is score and verdict only).'],
+    [/^\/api\/verdict\//, 'Token safety screen for the address in the URL: CLEAR, CAUTION, AVOID, or UNKNOWN, with the rule that fired, unknowns, sources, and freshness. Free GET /api/verdict/example shows that JSON shape only, not this token. A live ?sample=1 is score and verdict only.'],
     [/^\/api\/pass\/day/, 'One payment, 24h of every paid data endpoint and MCP tool (fair use 2000 calls).'],
     [/^\/api\/alerts\/subscribe/, 'New green dots pushed to your webhook for 30 days (the teaser is pull-only).'],
 ];

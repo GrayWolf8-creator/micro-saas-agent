@@ -3,7 +3,7 @@
 import crypto from 'crypto';
 import { getDots, getRegime, getCoin, COINS, PAIRS_MAP } from './Signal.js';
 import { getTrack } from './track.js';
-import { VERDICT_PRICE_USD } from './prices.js';
+import { VERDICT_PRICE_USD, DAILY_BUNDLE_PRICE_USD } from './prices.js';
 
 const DISCLAIMER = 'signal only, not financial advice';
 const r2 = v => Math.round(v * 100) / 100;
@@ -22,7 +22,7 @@ export const VERDICT_TTL_SEC = 600;
 export const VERDICT_NOTE = 'Factual screen of public GoPlus and DexScreener records. CLEAR means the score is at least 75, no limiting unknown is open, and no control rule that blocks CLEAR fired. It is not a guarantee that a transfer will succeed.';
 // Kept under the CDP 500-char resource.description cap after the catalog category prefix.
 // Phrases match how paying agents search Bazaar (honeypot check, token safety, rug pull, scam token).
-export const VERDICT_BLURB = `A honeypot check and token safety screen for token security: honeypot, rug pull, rug check, scam token, and contract risk before a swap, transfer, or approval. Returns CLEAR, CAUTION, AVOID, or UNKNOWN with score, reasons, unknowns, sources, and freshness. GoPlus plus DexScreener. $${VERDICT_PRICE_USD} USDC.`;
+export const VERDICT_BLURB = `A honeypot check and token safety screen for token security: honeypot, rug pull, rug check, scam token, and contract risk before a swap, transfer, or approval. Paid signal is CLEAR, CAUTION, AVOID, or UNKNOWN, with score, reasons, unknowns, sources, and freshness for the address you send. Free example of that JSON (not a live screen): GET /api/verdict/example. GoPlus plus DexScreener. $${VERDICT_PRICE_USD} USDC.`;
 // Bazaar resource metadata: serviceName is printable ASCII and at most 32 characters; tags are at most
 // five entries, each printable ASCII and at most 32 characters. Facilitators drop tags past five.
 // "token safety" is the plain phrase in place of the hyphenated token-safety tag. honeypot, rug-pull,
@@ -53,6 +53,19 @@ export const VERDICT_EXAMPLE = {
   ],
   freshness: { checkedAt: '2026-11-05T00:00:00.000Z', cached: false, cacheTtlSec: VERDICT_TTL_SEC, ageSec: 0 }
 };
+/** Free, static shape of a paid screen. Not a lookup of any contract the caller sends. */
+export function verdictExampleBody() {
+  return {
+    free: true,
+    example: true,
+    live: false,
+    note: 'Example of the paid token-safety JSON. This is not a screen of a contract you choose. GET /api/verdict/{chain}/{address} ($' + VERDICT_PRICE_USD + ') screens that address and returns signal.verdict (CLEAR, CAUTION, AVOID, or UNKNOWN), score, reasons, unknowns, sources, and freshness.',
+    paidRoute: '/api/verdict/{chain}/{address}',
+    paidPriceUsd: VERDICT_PRICE_USD,
+    signal: VERDICT_EXAMPLE,
+    disclaimer: 'signal only, not financial advice'
+  };
+}
 export const VERDICT_OUTPUT_SCHEMA = {
   type: 'object',
   description: 'Honeypot check output: token safety and token security screen. verdict is CLEAR, CAUTION, AVOID, or UNKNOWN. AVOID covers a honeypot, rug pull, or scam token. reasons[].code honeypot means the honeypot check failed.',
@@ -328,11 +341,71 @@ export async function getBrief() {
   try { return await briefInflight; } catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
 }
 
+/** Plain word for the 0-4 regime score. The paid regime adds the raw values and the rule text. */
+export function regimeLabel(score) {
+  const n = Number(score);
+  if (!Number.isFinite(n)) return null;
+  if (n >= 3) return 'risk-on';
+  if (n >= 2) return 'mixed';
+  return 'risk-off';
+}
+
+const dotStrength = d => (d.kind === 'green' ? 1 : -1) * Math.abs(d.wt1) * (d.band === 'outer' ? 1.25 : 1) * (d.latest ? 1.1 : 1);
+
+/**
+ * Free teaser split. Shown: today's regime (score, label, check statuses) and the top 3 coins by name,
+ * plus kind and band so the names are readable. Gated: strength, WaveTrend values, closes, coins after
+ * the top 3, and BTC/ETH/SOL flow dollars. Kind and band stay free because a name alone does not say
+ * whether the dot is green or red.
+ */
+export function shapeBriefTeaser({ regime, dots, track, now = new Date() } = {}) {
+  const all = (dots && dots.bandDots) || [];
+  const ranked = [...all].sort((a, b) => Math.abs(dotStrength(b)) - Math.abs(dotStrength(a)))
+    .filter((d, i, a) => a.findIndex(x => x.name === d.name) === i);
+  const top3Dots = ranked.slice(0, 3).map(d => ({ symbol: d.name, kind: d.kind, band: d.band }));
+  const checks = regime && !regime.error ? Object.fromEntries(Object.entries(regime.checks || {}).map(([k, v]) => [k, v && v.status])) : null;
+  const g7 = track?.backtest?.summary?.green_all?.['7d'] || null;
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver' }).format(now);
+  return {
+    free: true,
+    date,
+    asOf: now.toISOString(),
+    timezone: 'America/Denver',
+    regime: !regime || regime.error ? { error: 'unavailable' } : { score: regime.score, outOf: 4, label: regimeLabel(regime.score), checks },
+    top3: top3Dots.map(d => d.symbol),
+    dots: { green: all.filter(d => d.kind === 'green').length, red: all.filter(d => d.kind === 'red').length, asOf: (dots && dots.asOf) || null },
+    top3Dots,
+    gated: {
+      moreCoins: Math.max(0, ranked.length - top3Dots.length),
+      withheld: ['dot strength', 'wt1', 'wt2', 'close', 'coins after the top 3', 'BTC/ETH/SOL flow bias and net USD'],
+      fullBrief: 'GET /api/brief ($0.02)',
+      fullRegime: 'GET /api/regime ($0.01)',
+      bundle: 'GET /api/daily ($' + DAILY_BUNDLE_PRICE_USD + ') returns the brief and the full regime together. Separate price is $0.03.'
+    },
+    backtest7dHeadline: g7 ? {
+      label: 'simulated 90-day backtest (not a live trade log)',
+      signal: 'green_all',
+      horizon: '7d',
+      hitRatePct: g7.hitRatePct,
+      n: g7.n,
+      note: 'Past performance is not indicative of future results.'
+    } : { label: 'simulated backtest', note: 'hit-rate unavailable right now; see free GET /track' },
+    upsell: {
+      fullBrief: 'GET /api/brief — $0.02 USDC: full daily digest (top 10 dots with strength, BTC/ETH/SOL flows)',
+      dailyBundle: 'GET /api/daily — $' + DAILY_BUNDLE_PRICE_USD + ' USDC: that brief plus the full Stage 1 regime (raw values and rules). Separate price is $0.03.',
+      regime: 'GET /api/regime — $0.01 USDC: raw values and the rule behind each of the 4 checks',
+      dots: 'GET /api/dots — $0.01 USDC: every green/red WaveTrend band dot with wt1/wt2 and closes',
+      agent: 'POST /api/agent — $0.02 USDC: full Stage 1 regime + all band dots in one call'
+    },
+    disclaimer: 'signal only, not financial advice'
+  };
+}
 
 // ---------- Free brief teaser (partial live brief; 15-min cache) ----------
 let teaserCache = null, teaserInflight = null;
 const TEASER_TTL = 15 * 60 * 1000;
 export async function getBriefTeaser() {
+  if (process.env.GW8_TEST_HOOKS === '1' && globalThis.__gw8TestTeaserInput) return shapeBriefTeaser(globalThis.__gw8TestTeaserInput);
   if (teaserCache && Date.now() - teaserCache.t < TEASER_TTL) return { ...teaserCache.data, cached: true };
   if (!teaserInflight) teaserInflight = (async () => {
     const [regime, dots, track] = await Promise.all([
@@ -341,40 +414,32 @@ export async function getBriefTeaser() {
       getTrack().catch(() => null)
     ]);
     if (regime.error && (!dots.bandDots || !dots.bandDots.length)) throw new Error('upstream unavailable');
-    const all = dots.bandDots || [];
-    const strength = d => (d.kind === 'green' ? 1 : -1) * Math.abs(d.wt1) * (d.band === 'outer' ? 1.25 : 1) * (d.latest ? 1.1 : 1);
-    const ranked = [...all].sort((a, b) => Math.abs(strength(b)) - Math.abs(strength(a)))
-      .filter((d, i, a) => a.findIndex(x => x.name === d.name) === i);
-    const top3 = ranked.slice(0, 3).map(d => ({ symbol: d.name, kind: d.kind, band: d.band }));
-    const checks = regime.error ? null : Object.fromEntries(Object.entries(regime.checks || {}).map(([k, v]) => [k, v.status]));
-    const g7 = track?.backtest?.summary?.green_all?.['7d'] || null;
-    const data = {
-      free: true,
-      asOf: new Date().toISOString(),
-      timezone: 'America/Denver',
-      regime: regime.error ? { error: 'unavailable' } : { score: regime.score, outOf: 4, checks },
-      dots: { green: all.filter(d => d.kind === 'green').length, red: all.filter(d => d.kind === 'red').length, asOf: dots.asOf || null },
-      top3Dots: top3, // symbol + band/kind only — no exact WaveTrend values
-      backtest7dHeadline: g7 ? {
-        label: 'simulated 90-day backtest (not a live trade log)',
-        signal: 'green_all',
-        horizon: '7d',
-        hitRatePct: g7.hitRatePct,
-        n: g7.n,
-        note: 'Past performance is not indicative of future results.'
-      } : { label: 'simulated backtest', note: 'hit-rate unavailable right now; see free GET /track' },
-      upsell: {
-        fullBrief: 'GET /api/brief — $0.02 USDC: full daily digest (top 10 dots with strength, BTC/ETH/SOL flows)',
-        dots: 'GET /api/dots — $0.01 USDC: every green/red WaveTrend band dot with wt1/wt2 and closes',
-        agent: 'POST /api/agent — $0.02 USDC: full Stage 1 regime + all band dots in one call'
-      },
-      disclaimer: 'signal only, not financial advice'
-    };
+    const data = shapeBriefTeaser({ regime, dots, track });
     teaserCache = { t: Date.now(), data };
     return data;
   })().finally(() => { teaserInflight = null; });
   try { return await teaserInflight; }
   catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+}
+
+/** Brief plus the full regime. One call, cheaper than buying GET /api/brief and GET /api/regime separately. */
+export async function getDailyBundle() {
+  if (process.env.GW8_TEST_HOOKS === '1' && typeof globalThis.__gw8TestDailyBundle === 'function') return globalThis.__gw8TestDailyBundle();
+  const [briefOut, regime] = await Promise.all([
+    getBrief().catch(() => ({ error: 'upstream data unavailable, retry shortly' })),
+    getRegime().catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
+  ]);
+  if (!briefOut || briefOut.error || !regime || regime.error) return { error: 'upstream data unavailable, retry shortly', http: 503 };
+  return {
+    bundle: true,
+    priceUsd: DAILY_BUNDLE_PRICE_USD,
+    includes: { brief: 'GET /api/brief', regime: 'GET /api/regime' },
+    separateUsd: '0.03',
+    brief: briefOut,
+    regime,
+    note: 'One call. Buying GET /api/brief ($0.02) and GET /api/regime ($0.01) separately is $0.03.',
+    disclaimer: 'signal only, not financial advice'
+  };
 }
 
 // ---------- 2. Response signing (Ed25519 over SHA-256 of the exact JSON body) ----------

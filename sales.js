@@ -30,7 +30,8 @@ const SURFACES = ['x402', 'rapidapi', 'apify', 'public'];
 const SAVE_DELAY_MS = 5000;
 
 const defaultFile = path.join(path.dirname(fileURLToPath(import.meta.url)), 'data', 'sales-counts.json');
-let filePath = defaultFile;
+// Tests pass GW8_SALES_FILE so a paid-path check does not write the shared disk file. Unset in production.
+let filePath = process.env.GW8_SALES_FILE || defaultFile;
 let days = new Map(); // UTC day -> Map(route + "\n" + surface -> counts)
 let dropped = 0;
 let dirty = false;

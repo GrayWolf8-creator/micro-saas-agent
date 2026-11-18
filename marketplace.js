@@ -7,7 +7,7 @@
 // marketplace billing happens on the marketplace side. Signal only, not financial advice.
 import crypto from 'crypto';
 import { getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
-import { getVerdict, validVerdictInput, VERDICT_CHAINS, getFlows, getBrief, getBriefTeaser } from './upgrades.js';
+import { getVerdict, validVerdictInput, VERDICT_CHAINS, getFlows, getBrief, getBriefTeaser, getDailyBundle } from './upgrades.js';
 import { getRwa } from './rwa.js';
 import { getKrakenListings } from './kraken.js';
 import { getRules } from './rules.js';
@@ -72,6 +72,7 @@ export function mountMarketplace(app, signResponses) {
   const gated = signResponses ? [marketplaceGate, signResponses] : [marketplaceGate];
   app.get(`${base}/brief/teaser`, gated, (req, res) => serve(res, getBriefTeaser));
   app.get(`${base}/brief`, gated, (req, res) => serve(res, getBrief));
+  app.get(`${base}/daily`, gated, (req, res) => serve(res, getDailyBundle));
   app.get(`${base}/govcontracts`, gated, (req, res) => {
     const f = { ticker: req.query.ticker ? String(req.query.ticker) : undefined, sector: req.query.sector ? String(req.query.sector) : undefined, q: req.query.q ? String(req.query.q) : undefined };
     const bad = validGovFilters(f);

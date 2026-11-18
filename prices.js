@@ -6,6 +6,8 @@ export const VERDICT_PRICE_USD = '0.005';
 export const DEEP_PRICE_USD = '0.03';
 export const RAILS_ROUTE_PRICE_USD = '0.005';
 export const FUEL_SURCHARGE_PRICE_USD = '0.005';
+// Brief ($0.02) plus regime ($0.01) bought separately is $0.03. The bundle is cheaper.
+export const DAILY_BUNDLE_PRICE_USD = '0.025';
 
 export function usdAtomic(usd) {
   const n = Number(usd);

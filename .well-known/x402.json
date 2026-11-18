@@ -1,10 +1,23 @@
 {
-  "note": "Not served. The process generates GET /.well-known/x402 and GET /.well-known/x402.json.",
+  "note": "Not served. The process generates GET /.well-known/x402 and GET /.well-known/x402.json. Lead product on that document is GET /api/brief ($0.02). GET /api/daily ($0.025) is the brief plus the full regime.",
   "discovery": "https://micro-saas-agent.onrender.com/.well-known/x402",
+  "lead": {
+    "method": "GET",
+    "path": "/api/brief",
+    "priceUsd": "0.02",
+    "freeTeaser": "/api/brief/teaser"
+  },
+  "bundle": {
+    "method": "GET",
+    "path": "/api/daily",
+    "priceUsd": "0.025",
+    "note": "brief plus full regime; separate price is $0.03"
+  },
   "tokenSafety": {
     "method": "GET",
     "path": "/api/verdict/{chain}/{address}",
     "priceUsd": "0.005",
+    "freeExample": "/api/verdict/example",
     "searches": ["token safety", "rug check", "honeypot", "contract risk"],
     "verdicts": ["CLEAR", "CAUTION", "AVOID", "UNKNOWN"]
   }

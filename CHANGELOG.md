@@ -12,6 +12,10 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Own wallets tagged as self in /api/stats (2026-11-18)
+- Settled payments from GW8's own public test wallet `0x605885d301e739a78ebceb60f955df392ad6c1f1` now count as `self`, not `likelyBuyer` or grader. The address is a built-in public list in `buyers.js` (`GW8_OWN_WALLET_ADDRESSES`). Optional env `GW8_OWN_WALLETS` (comma-separated public addresses, not a secret) can add more. No Render env change is required for the built-in address.
+- `/api/stats` audience `payers.self` and `settledPaidCalls.self` pick this up at read time for the built-in list; a wallet already stored as a grader is still reported as `self` when it is on the list. Live counts change only after this is deployed.
+
 ### Solana USDC on the same five routes (2026-11-17)
 - After Base and Polygon, `accepts` on GET /api/rails, GET /api/rails/route, GET /api/regime, POST /api/pay/should-i-pay, and GET /api/coin/{symbol} can list Solana mainnet USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`). The amount matches that route's Base price. payTo is `3ZgRNAMaM39WQt7rvwMf7tZjQakZqA5ieULpoQuo4chD`, set next to the Base payout address. `extra.feePayer` is read from the public facilitator and is not hardcoded. `SOLANA_PAYMENTS` defaults to on; `off` removes the entry.
 - Verify and settle go to `https://facilitator.payai.network` with no API key. Docs: https://docs.payai.network/x402/solana-mainnet-express and https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact_svm.md . If the payTo has no USDC token account, settlement is refused and nothing is submitted. PayAI does not create that account.

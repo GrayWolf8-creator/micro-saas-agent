@@ -49,10 +49,22 @@ export function payerId(addr) {
     return crypto.createHash('sha256').update('gw8-payer:' + a).digest('hex').slice(0, 16);
 }
 
-// Optional: GW8's own seeding wallets (public addresses, comma-separated; not a secret) -> counted as "self".
+// GW8's own seeding / test wallets (public addresses, not secrets). Counted as "self" so they
+// are excluded from likelyBuyer and grader buyer counts. GW8_OWN_WALLETS (comma-separated)
+// can add more public addresses without a deploy of this list; it does not remove the built-in ones.
+export const GW8_OWN_WALLET_ADDRESSES = [
+    '0x605885d301e739a78ebceb60f955df392ad6c1f1',
+];
+
 let ownIds = null;
+function ownPayerIds() {
+    const fromConfig = GW8_OWN_WALLET_ADDRESSES;
+    const fromEnv = String(process.env.GW8_OWN_WALLETS || '').split(',');
+    return new Set([...fromConfig, ...fromEnv].map(payerId).filter(Boolean));
+}
+export function resetOwnPayers() { ownIds = null; }
 export function isOwnPayer(pid) {
-    if (!ownIds) ownIds = new Set(String(process.env.GW8_OWN_WALLETS || '').split(',').map(payerId).filter(Boolean));
+    if (!ownIds) ownIds = ownPayerIds();
     return !!pid && ownIds.has(pid);
 }
 

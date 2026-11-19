@@ -317,6 +317,8 @@ export async function getFlows(sym) {
 // is the one whose close is the most recent 4h boundary at or before now.
 export const FOUR_H_MS = 4 * 60 * 60 * 1000;
 export const BRIEF_LAG_TTL_MS = 2 * 60 * 1000;
+// Rebuild this long after each UTC 4h close so Kraken has published the closed bar. Inside the 60-90s window.
+export const BRIEF_REBUILD_DELAY_MS = 75 * 1000;
 export const BRIEF_QUOTE = 'Lead product. Crypto brief refreshed on each closed Kraken 4h bar: regime score, WaveTrend dot counts, top 10 coins by dot strength, and BTC, ETH, and SOL flows. Free teaser GET /api/brief/teaser shows today\'s regime and the top 3 coin names. Daily bundle GET /api/daily ($0.025). $0.02 USDC. Signal only, not financial advice.';
 const BRIEF_FRESHNESS_NOTE = 'Rebuilt for each closed Kraken 4h bar (bars close every 4 hours, on UTC hours 0, 4, 8, 12, 16, and 20). bar is that bar\'s open time, barClose and asOf are when it closed, and builtAt is when this copy was assembled. Reused until the next 4h bar closes.';
 const mtDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver' }).format(now);
@@ -377,31 +379,96 @@ async function buildBrief(barInfo) {
   for (const sym of ['BTC', 'ETH', 'SOL']) { const f = await getFlows(sym); flows.push({ symbol: sym, bias: f.flows?.bias ?? null, largeNetUsd: f.flows?.largePrints?.netUsd ?? null, buyRatio: f.flows?.allPrints?.buyRatio ?? null }); }
   return assembleBrief({ date: mtDate(), bar, regime, dots, top, flows });
 }
-// One build per closed 4h bar. Concurrent callers share that build. A copy whose candle is still
-// the previous bar (Kraken has not published the close yet) is kept only for BRIEF_LAG_TTL_MS.
-export function createBriefCache({ build, now = () => Date.now(), lagTtlMs = BRIEF_LAG_TTL_MS } = {}) {
+// A stored brief may be served while the next bar builds when it is the expected bar or the one
+// just before it. Older than that (more than one full bar behind) is too stale to hand out.
+export function briefIsServableStale(data, expectedBar) {
+  if (!data || data.error || (data.regime && data.regime.error) || typeof data.bar !== 'string') return false;
+  const expected = Date.parse(expectedBar);
+  const have = Date.parse(data.bar);
+  if (!Number.isFinite(expected) || !Number.isFinite(have)) return false;
+  return have >= expected - FOUR_H_MS;
+}
+// One build per closed 4h bar. Concurrent callers share that build. If a previous brief is at most
+// one bar behind, callers get that copy immediately while the new build runs. A failed build does
+// not replace the last good copy. A candle Kraken has not published yet is kept only for BRIEF_LAG_TTL_MS.
+export function createBriefCache({ build, now = () => Date.now(), lagTtlMs = BRIEF_LAG_TTL_MS, log = console.error } = {}) {
   let cached = null, inflight = null, inflightKey = null;
+  const remember = (key, data) => {
+    if (data && !data.error && !data.regime?.error) { cached = { at: now(), key, data }; return; }
+    const why = (data && (data.error || (data.regime && data.regime.error))) || 'unknown';
+    log('[brief] build failed:', why);
+  };
   return async function getCachedBrief() {
     const bar = latestClosed4hBar(now());
     const key = bar.bar;
     if (cached && cached.key === key && cached.data && !cached.data.error && !cached.data.regime?.error) {
       if (cached.data.bar === key || now() - cached.at < lagTtlMs) return cached.data;
     }
+    const previous = cached && cached.data;
+    const stale = previous && previous.bar !== key && briefIsServableStale(previous, key) ? previous : null;
     if (!inflight || inflightKey !== key) {
       const myKey = key;
       inflightKey = myKey;
       const run = Promise.resolve().then(() => build(bar)).then(out => {
         const data = out && typeof out === 'object' ? out : { error: 'upstream data unavailable, retry shortly' };
-        if (inflightKey === myKey && data && !data.error && !data.regime?.error) cached = { at: now(), key: myKey, data };
+        if (inflightKey === myKey) remember(myKey, data);
         return data;
-      }).catch(() => ({ error: 'upstream data unavailable, retry shortly' })).finally(() => { if (inflight === run) inflight = null; });
+      }).catch(e => {
+        log('[brief] build failed:', (e && e.message) || e);
+        return { error: 'upstream data unavailable, retry shortly' };
+      }).finally(() => { if (inflight === run) inflight = null; });
       inflight = run;
     }
+    if (stale) return stale;
     try { return await inflight; } catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
   };
 }
 const briefCache = createBriefCache({ build: buildBrief });
 export async function getBrief() { return briefCache(); }
+
+// Next background rebuild: delayMs after the latest UTC 4h close, or after the following close
+// when that moment has already passed. Closes are UTC hours 0, 4, 8, 12, 16, and 20.
+export function nextBriefRebuildAt(now = Date.now(), delayMs = BRIEF_REBUILD_DELAY_MS) {
+  const t = now instanceof Date ? now.getTime() : Number(now);
+  const closeMs = Math.floor(t / FOUR_H_MS) * FOUR_H_MS;
+  let target = closeMs + delayMs;
+  if (target <= t) target = closeMs + FOUR_H_MS + delayMs;
+  return target;
+}
+export function briefPrewarmEnabled(env = process.env) {
+  if (env && env.NODE_ENV === 'test') return false;
+  const flag = String(env && env.BRIEF_PREWARM || '').trim().toLowerCase();
+  return flag !== 'off' && flag !== '0' && flag !== 'false';
+}
+// Starts the build without awaiting it, then re-arms a timer for the next close. The timer is
+// unref'd so a test process can exit. Disabled when NODE_ENV=test or BRIEF_PREWARM=off.
+export function startBriefPrewarm({
+  now = () => Date.now(),
+  build = () => getBrief(),
+  setTimer = (fn, ms) => setTimeout(fn, ms),
+  clearTimer = clearTimeout,
+  log = console.error,
+  env = process.env,
+  delayMs = BRIEF_REBUILD_DELAY_MS
+} = {}) {
+  if (!briefPrewarmEnabled(env)) return { enabled: false, stop() {} };
+  let timer = null, stopped = false;
+  const safeBuild = () => {
+    Promise.resolve().then(() => build()).then(b => {
+      if (b && b.error) log('[brief] background build failed:', b.error);
+    }).catch(e => log('[brief] background build failed:', (e && e.message) || e));
+  };
+  const arm = () => {
+    if (stopped) return;
+    const wait = Math.max(0, nextBriefRebuildAt(now(), delayMs) - now());
+    const handle = setTimer(() => { safeBuild(); arm(); }, wait);
+    if (handle && typeof handle.unref === 'function') handle.unref();
+    timer = handle;
+  };
+  safeBuild();
+  arm();
+  return { enabled: true, stop() { stopped = true; if (timer != null) clearTimer(timer); timer = null; } };
+}
 
 /** Plain word for the 0-4 regime score. The paid regime adds the raw values and the rule text. */
 export function regimeLabel(score) {
@@ -463,23 +530,64 @@ export function shapeBriefTeaser({ regime, dots, track, now = new Date() } = {})
   };
 }
 
-// ---------- Free brief teaser (partial live brief; 15-min cache) ----------
+// Teaser taken from the cached paid brief, so it does not start its own cold build.
+export function teaserFromBrief(brief, { track, now = new Date() } = {}) {
+  if (!brief || brief.error || !brief.regime || brief.regime.error) return null;
+  const top = Array.isArray(brief.top10ByDotStrength) ? brief.top10ByDotStrength : [];
+  const checks = {};
+  for (const [k, v] of Object.entries(brief.regime.checks || {})) checks[k] = typeof v === 'string' ? { status: v } : v;
+  const bandDots = top.filter(d => d && (d.kind === 'green' || d.kind === 'red')).map(d => ({
+    name: d.name, kind: d.kind, band: d.band, wt1: d.wt1, latest: d.latest
+  }));
+  const shaped = shapeBriefTeaser({
+    regime: { score: brief.regime.score, checks },
+    dots: { asOf: (brief.dots && brief.dots.asOf) || brief.asOf, bandDots },
+    track,
+    now: brief.builtAt ? new Date(brief.builtAt) : now
+  });
+  if (brief.date) shaped.date = brief.date;
+  if (brief.asOf) shaped.asOf = brief.asOf;
+  if (brief.bar) shaped.bar = brief.bar;
+  if (brief.barClose) shaped.barClose = brief.barClose;
+  if (brief.builtAt) shaped.builtAt = brief.builtAt;
+  if (brief.dots && Number.isFinite(brief.dots.green)) shaped.dots.green = brief.dots.green;
+  if (brief.dots && Number.isFinite(brief.dots.red)) shaped.dots.red = brief.dots.red;
+  return shaped;
+}
+
+// ---------- Free brief teaser (from the cached brief; 15-min shape cache) ----------
 let teaserCache = null, teaserInflight = null;
 const TEASER_TTL = 15 * 60 * 1000;
+async function buildTeaserDirect() {
+  const [regime, dots, track] = await Promise.all([
+    getRegime().catch(() => ({ error: true })),
+    getDots().catch(() => ({ error: true, bandDots: [] })),
+    getTrack().catch(() => null)
+  ]);
+  if (regime.error && (!dots.bandDots || !dots.bandDots.length)) throw new Error('upstream unavailable');
+  return shapeBriefTeaser({ regime, dots, track });
+}
 export async function getBriefTeaser() {
   if (process.env.GW8_TEST_HOOKS === '1' && globalThis.__gw8TestTeaserInput) return shapeBriefTeaser(globalThis.__gw8TestTeaserInput);
+  const brief = await getBrief().catch(() => null);
+  if (brief && !brief.error && brief.regime && !brief.regime.error) {
+    if (teaserCache && teaserCache.bar === brief.bar && Date.now() - teaserCache.t < TEASER_TTL) return { ...teaserCache.data, cached: true };
+    if (!teaserInflight || teaserInflight.bar !== brief.bar) {
+      const bar = brief.bar;
+      const run = (async () => {
+        const track = await getTrack().catch(() => null);
+        const data = teaserFromBrief(brief, { track });
+        teaserCache = { t: Date.now(), bar, data };
+        return data;
+      })().finally(() => { if (teaserInflight === run) teaserInflight = null; });
+      run.bar = bar;
+      teaserInflight = run;
+    }
+    try { return await teaserInflight; }
+    catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+  }
   if (teaserCache && Date.now() - teaserCache.t < TEASER_TTL) return { ...teaserCache.data, cached: true };
-  if (!teaserInflight) teaserInflight = (async () => {
-    const [regime, dots, track] = await Promise.all([
-      getRegime().catch(() => ({ error: true })),
-      getDots().catch(() => ({ error: true, bandDots: [] })),
-      getTrack().catch(() => null)
-    ]);
-    if (regime.error && (!dots.bandDots || !dots.bandDots.length)) throw new Error('upstream unavailable');
-    const data = shapeBriefTeaser({ regime, dots, track });
-    teaserCache = { t: Date.now(), data };
-    return data;
-  })().finally(() => { teaserInflight = null; });
+  if (!teaserInflight) teaserInflight = buildTeaserDirect().then(data => { teaserCache = { t: Date.now(), bar: data && data.bar, data }; return data; }).finally(() => { teaserInflight = null; });
   try { return await teaserInflight; }
   catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
 }

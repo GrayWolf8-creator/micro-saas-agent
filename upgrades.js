@@ -319,6 +319,9 @@ export const FOUR_H_MS = 4 * 60 * 60 * 1000;
 export const BRIEF_LAG_TTL_MS = 2 * 60 * 1000;
 // Rebuild this long after each UTC 4h close so Kraken has published the closed bar. Inside the 60-90s window.
 export const BRIEF_REBUILD_DELAY_MS = 75 * 1000;
+export const BRIEF_READY_CAP_MS = 60 * 1000;
+export const TEASER_COLD_WAIT_MS = 3 * 1000;
+const WARMING = Object.freeze({ error: 'brief is still warming up, retry shortly', http: 503, retryAfter: 5, notReady: true });
 export const BRIEF_QUOTE = 'Lead product. Crypto brief refreshed on each closed Kraken 4h bar: regime score, WaveTrend dot counts, top 10 coins by dot strength, and BTC, ETH, and SOL flows. Free teaser GET /api/brief/teaser shows today\'s regime and the top 3 coin names. Daily bundle GET /api/daily ($0.025). $0.02 USDC. Signal only, not financial advice.';
 const BRIEF_FRESHNESS_NOTE = 'Rebuilt for each closed Kraken 4h bar (bars close every 4 hours, on UTC hours 0, 4, 8, 12, 16, and 20). bar is that bar\'s open time, barClose and asOf are when it closed, and builtAt is when this copy was assembled. Reused until the next 4h bar closes.';
 const mtDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver' }).format(now);
@@ -391,14 +394,21 @@ export function briefIsServableStale(data, expectedBar) {
 // One build per closed 4h bar. Concurrent callers share that build. If a previous brief is at most
 // one bar behind, callers get that copy immediately while the new build runs. A failed build does
 // not replace the last good copy. A candle Kraken has not published yet is kept only for BRIEF_LAG_TTL_MS.
-export function createBriefCache({ build, now = () => Date.now(), lagTtlMs = BRIEF_LAG_TTL_MS, log = console.error } = {}) {
+function defaultSleep(ms) {
+  return new Promise(resolve => {
+    const t = setTimeout(resolve, ms);
+    if (t.unref) t.unref();
+  });
+}
+export function createBriefCache({ build, now = () => Date.now(), lagTtlMs = BRIEF_LAG_TTL_MS, log = console.error, sleep = defaultSleep } = {}) {
   let cached = null, inflight = null, inflightKey = null;
   const remember = (key, data) => {
     if (data && !data.error && !data.regime?.error) { cached = { at: now(), key, data }; return; }
     const why = (data && (data.error || (data.regime && data.regime.error))) || 'unknown';
     log('[brief] build failed:', why);
   };
-  return async function getCachedBrief() {
+  return async function getCachedBrief(opts = {}) {
+    const maxWaitMs = opts && Number.isFinite(opts.maxWaitMs) ? opts.maxWaitMs : Infinity;
     const bar = latestClosed4hBar(now());
     const key = bar.bar;
     if (cached && cached.key === key && cached.data && !cached.data.error && !cached.data.regime?.error) {
@@ -410,21 +420,47 @@ export function createBriefCache({ build, now = () => Date.now(), lagTtlMs = BRI
       const myKey = key;
       inflightKey = myKey;
       const run = Promise.resolve().then(() => build(bar)).then(out => {
-        const data = out && typeof out === 'object' ? out : { error: 'upstream data unavailable, retry shortly' };
+        const data = out && typeof out === 'object' ? out : { error: 'upstream data unavailable, retry shortly', http: 503, retryAfter: 5 };
         if (inflightKey === myKey) remember(myKey, data);
         return data;
       }).catch(e => {
         log('[brief] build failed:', (e && e.message) || e);
-        return { error: 'upstream data unavailable, retry shortly' };
+        return { error: 'upstream data unavailable, retry shortly', http: 503, retryAfter: 5 };
       }).finally(() => { if (inflight === run) inflight = null; });
       inflight = run;
     }
     if (stale) return stale;
-    try { return await inflight; } catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+    if (maxWaitMs <= 0) return { ...WARMING };
+    if (maxWaitMs < Infinity) {
+      let timedOut = false;
+      const timeout = sleep(maxWaitMs).then(() => { timedOut = true; });
+      const data = await Promise.race([inflight, timeout]);
+      if (timedOut) return { ...WARMING };
+      return data;
+    }
+    try { return await inflight; } catch (e) { return { error: 'upstream data unavailable, retry shortly', http: 503, retryAfter: 5 }; }
   };
 }
 const briefCache = createBriefCache({ build: buildBrief });
-export async function getBrief() { return briefCache(); }
+export async function getBrief(opts) {
+  if (process.env.GW8_TEST_HOOKS === '1' && typeof globalThis.__gw8TestBrief === 'function') return globalThis.__gw8TestBrief(opts);
+  return briefCache(opts || {});
+}
+const bootAt = Date.now();
+let prewarmSettled = !briefPrewarmEnabled();
+let prewarmOk = prewarmSettled;
+export function markBriefPrewarmSettled(ok) {
+  prewarmSettled = true;
+  prewarmOk = !!ok;
+}
+// 200 once the first prewarm attempt has finished, prewarm is off, or boot is older than the cap.
+// Otherwise 503 so a platform health check can hold traffic.
+export function briefReadyStatus({ now = Date.now(), capMs = BRIEF_READY_CAP_MS, enabled = briefPrewarmEnabled(), settled = prewarmSettled, ok = prewarmOk, boot = bootAt } = {}) {
+  if (!enabled) return { ready: true, http: 200, reason: 'prewarm off' };
+  if (settled) return { ready: true, http: 200, reason: ok ? 'ready' : 'prewarm failed' };
+  if (now - boot >= capMs) return { ready: true, http: 200, reason: 'boot cap' };
+  return { ready: false, http: 503, reason: 'warming', retryAfter: 5 };
+}
 
 // Next background rebuild: delayMs after the latest UTC 4h close, or after the following close
 // when that moment has already passed. Closes are UTC hours 0, 4, 8, 12, 16, and 20.
@@ -442,21 +478,33 @@ export function briefPrewarmEnabled(env = process.env) {
 }
 // Starts the build without awaiting it, then re-arms a timer for the next close. The timer is
 // unref'd so a test process can exit. Disabled when NODE_ENV=test or BRIEF_PREWARM=off.
-export function startBriefPrewarm({
-  now = () => Date.now(),
-  build = () => getBrief(),
-  setTimer = (fn, ms) => setTimeout(fn, ms),
-  clearTimer = clearTimeout,
-  log = console.error,
-  env = process.env,
-  delayMs = BRIEF_REBUILD_DELAY_MS
-} = {}) {
-  if (!briefPrewarmEnabled(env)) return { enabled: false, stop() {} };
-  let timer = null, stopped = false;
+export function startBriefPrewarm(opts = {}) {
+  const now = opts.now || (() => Date.now());
+  const build = opts.build || (() => getBrief());
+  const setTimer = opts.setTimer || ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = opts.clearTimer || clearTimeout;
+  const log = opts.log || console.error;
+  const env = Object.prototype.hasOwnProperty.call(opts, 'env') ? opts.env : process.env;
+  const delayMs = opts.delayMs == null ? BRIEF_REBUILD_DELAY_MS : opts.delayMs;
+  // Only the process startup call (no injected env) moves the readiness flag.
+  const track = opts.track !== false && !Object.prototype.hasOwnProperty.call(opts, 'env');
+  if (!briefPrewarmEnabled(env)) {
+    if (track) markBriefPrewarmSettled(true);
+    return { enabled: false, stop() {} };
+  }
+  let timer = null, stopped = false, first = true;
   const safeBuild = () => {
-    Promise.resolve().then(() => build()).then(b => {
+    const isFirst = first;
+    first = false;
+    const run = Promise.resolve().then(() => build()).then(b => {
       if (b && b.error) log('[brief] background build failed:', b.error);
-    }).catch(e => log('[brief] background build failed:', (e && e.message) || e));
+      return b;
+    }).catch(e => {
+      log('[brief] background build failed:', (e && e.message) || e);
+      return { error: (e && e.message) || 'background build failed' };
+    });
+    if (isFirst && track) run.then(b => markBriefPrewarmSettled(!(b && b.error))).catch(() => markBriefPrewarmSettled(false));
+    return run;
   };
   const arm = () => {
     if (stopped) return;
@@ -558,45 +606,34 @@ export function teaserFromBrief(brief, { track, now = new Date() } = {}) {
 // ---------- Free brief teaser (from the cached brief; 15-min shape cache) ----------
 let teaserCache = null, teaserInflight = null;
 const TEASER_TTL = 15 * 60 * 1000;
-async function buildTeaserDirect() {
-  const [regime, dots, track] = await Promise.all([
-    getRegime().catch(() => ({ error: true })),
-    getDots().catch(() => ({ error: true, bandDots: [] })),
-    getTrack().catch(() => null)
-  ]);
-  if (regime.error && (!dots.bandDots || !dots.bandDots.length)) throw new Error('upstream unavailable');
-  return shapeBriefTeaser({ regime, dots, track });
-}
 export async function getBriefTeaser() {
   if (process.env.GW8_TEST_HOOKS === '1' && globalThis.__gw8TestTeaserInput) return shapeBriefTeaser(globalThis.__gw8TestTeaserInput);
-  const brief = await getBrief().catch(() => null);
-  if (brief && !brief.error && brief.regime && !brief.regime.error) {
-    if (teaserCache && teaserCache.bar === brief.bar && Date.now() - teaserCache.t < TEASER_TTL) return { ...teaserCache.data, cached: true };
-    if (!teaserInflight || teaserInflight.bar !== brief.bar) {
-      const bar = brief.bar;
-      const run = (async () => {
-        const track = await getTrack().catch(() => null);
-        const data = teaserFromBrief(brief, { track });
-        teaserCache = { t: Date.now(), bar, data };
-        return data;
-      })().finally(() => { if (teaserInflight === run) teaserInflight = null; });
-      run.bar = bar;
-      teaserInflight = run;
-    }
-    try { return await teaserInflight; }
-    catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+  const brief = await getBrief({ maxWaitMs: TEASER_COLD_WAIT_MS }).catch(() => null);
+  if (!brief || brief.notReady || brief.error || !brief.regime || brief.regime.error) {
+    return { error: (brief && brief.error) || WARMING.error, http: 503, retryAfter: (brief && brief.retryAfter) || 5 };
   }
-  if (teaserCache && Date.now() - teaserCache.t < TEASER_TTL) return { ...teaserCache.data, cached: true };
-  if (!teaserInflight) teaserInflight = buildTeaserDirect().then(data => { teaserCache = { t: Date.now(), bar: data && data.bar, data }; return data; }).finally(() => { teaserInflight = null; });
+  if (teaserCache && teaserCache.bar === brief.bar && Date.now() - teaserCache.t < TEASER_TTL) return { ...teaserCache.data, cached: true };
+  if (!teaserInflight || teaserInflight.bar !== brief.bar) {
+    const bar = brief.bar;
+    const run = (async () => {
+      const track = await getTrack().catch(() => null);
+      const data = teaserFromBrief(brief, { track });
+      if (!data) throw new Error('upstream unavailable');
+      teaserCache = { t: Date.now(), bar, data };
+      return data;
+    })().finally(() => { if (teaserInflight === run) teaserInflight = null; });
+    run.bar = bar;
+    teaserInflight = run;
+  }
   try { return await teaserInflight; }
-  catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+  catch (e) { return { error: 'upstream data unavailable, retry shortly', http: 503, retryAfter: 5 }; }
 }
 
 /** Brief plus the full regime. One call, cheaper than buying GET /api/brief and GET /api/regime separately. */
 export async function getDailyBundle() {
   if (process.env.GW8_TEST_HOOKS === '1' && typeof globalThis.__gw8TestDailyBundle === 'function') return globalThis.__gw8TestDailyBundle();
   const [briefOut, regime] = await Promise.all([
-    getBrief().catch(() => ({ error: 'upstream data unavailable, retry shortly' })),
+    getBrief({ maxWaitMs: TEASER_COLD_WAIT_MS }).catch(() => ({ error: 'upstream data unavailable, retry shortly' })),
     getRegime().catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
   ]);
   if (!briefOut || briefOut.error || !regime || regime.error) return { error: 'upstream data unavailable, retry shortly', http: 503 };

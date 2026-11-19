@@ -12,6 +12,11 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Render waits for the brief before sending traffic (2026-11-19)
+- `GET /api/ready` is free and not counted in stats. It returns 503 while the first brief prewarm is still running, and 200 when that attempt finishes (success or failure), when prewarm is off, or 60 seconds after boot. `GET /` is unchanged.
+- A cold `GET /api/brief/teaser` waits at most 3 seconds, then returns 503 with `Retry-After: 5`. A paid `GET /api/brief` does the same before payment verification, so a not-ready brief is not settled.
+- There is no `render.yaml` in this repo. The Render dashboard health check path has to be set to `/api/ready` by hand.
+
 ### Paid brief is pre-warmed so a request does not pay for a cold build (2026-11-19)
 - On process start, the brief build runs in the background. The server listens immediately and does not wait for it.
 - A timer rebuilds the brief 75 seconds after each Kraken 4h close (UTC hours 0, 4, 8, 12, 16, and 20) and then re-arms itself. The timer is unref'd. `NODE_ENV=test` or `BRIEF_PREWARM=off` turns it off. No new secret and no price change.

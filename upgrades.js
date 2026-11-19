@@ -312,14 +312,62 @@ export async function getFlows(sym) {
   return data;
 }
 
-// ---------- 3. Daily brief (built once per America/Denver date) ----------
-let brief = null, briefInflight = null;
-const mtDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver' }).format(new Date());
-async function buildBrief(date) {
-  const [regime, dots] = await Promise.all([getRegime(), getDots()]);
+// ---------- 3. Paid brief (rebuilt for each closed Kraken 4h bar) ----------
+// Kraken 4h candles are UTC-aligned. A bar that opens at T closes at T+4h. The latest closed bar
+// is the one whose close is the most recent 4h boundary at or before now.
+export const FOUR_H_MS = 4 * 60 * 60 * 1000;
+export const BRIEF_LAG_TTL_MS = 2 * 60 * 1000;
+export const BRIEF_QUOTE = 'Lead product. Crypto brief refreshed on each closed Kraken 4h bar: regime score, WaveTrend dot counts, top 10 coins by dot strength, and BTC, ETH, and SOL flows. Free teaser GET /api/brief/teaser shows today\'s regime and the top 3 coin names. Daily bundle GET /api/daily ($0.025). $0.02 USDC. Signal only, not financial advice.';
+const BRIEF_FRESHNESS_NOTE = 'Rebuilt for each closed Kraken 4h bar (bars close every 4 hours, on UTC hours 0, 4, 8, 12, 16, and 20). bar is that bar\'s open time, barClose and asOf are when it closed, and builtAt is when this copy was assembled. Reused until the next 4h bar closes.';
+const mtDate = (now = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver' }).format(now);
+export function latestClosed4hBar(now = Date.now()) {
+  const t = now instanceof Date ? now.getTime() : Number(now);
+  const closeMs = Math.floor(t / FOUR_H_MS) * FOUR_H_MS;
+  return { bar: new Date(closeMs - FOUR_H_MS).toISOString(), barClose: new Date(closeMs).toISOString() };
+}
+export function barWindowFromOpen(openIso) {
+  const openMs = Date.parse(openIso);
+  return { bar: new Date(openMs).toISOString(), barClose: new Date(openMs + FOUR_H_MS).toISOString() };
+}
+// Plain sentence for buyers when the ETF check could not be scored. Null when the check returned pass or fail.
+export function etfUnavailableNote(check) {
+  if (!check || check.status !== 'unknown') return null;
+  const why = typeof check.detail === 'string' && check.detail.trim()
+    ? check.detail.trim()
+    : (typeof check.why === 'string' && check.why.trim() ? check.why.trim() : '');
+  if (why && /unavailable/i.test(why) && /not counted/i.test(why)) return why;
+  const reason = why || 'The daily US spot BTC ETF flow table could not be read.';
+  return `The BTC ETF flow check was unavailable, so it is marked unknown and was not counted as a pass or a fail. ${reason}`;
+}
+export function assembleBrief({ date, bar, regime, dots, top, flows, now = new Date() } = {}) {
+  const builtAt = (now instanceof Date ? now : new Date(now)).toISOString();
+  const all = (dots && dots.bandDots) || [];
+  const regimeOut = !regime || regime.error
+    ? (regime && regime.error ? regime : { error: 'upstream data unavailable, retry shortly' })
+    : { score: regime.score, outOf: 4, checks: Object.fromEntries(Object.entries(regime.checks || {}).map(([k, v]) => [k, v && v.status])) };
+  const etfCheckNote = etfUnavailableNote(regime && regime.checks && regime.checks.etfInflows);
+  const notes = [
+    BRIEF_FRESHNESS_NOTE,
+    'Coins without a recent band dot are filled in by |wt1| (closest to a band) and marked kind=none; strength for those is wt1-based and half-weighted.',
+    'Dot strength = |wt1| x 1.25 if outer band x 1.1 if on latest bar; sign = green(+)/red(-).',
+    'In our 90-day backtest green dots led (outer green ~64% higher after 3d); red dots were near coin-flip.',
+    'Flows are Kraken-only taker prints, not on-chain whale data.'
+  ];
+  if (etfCheckNote) notes.push(etfCheckNote);
+  return {
+    date, timezone: 'America/Denver', builtAt, asOf: bar.barClose, bar: bar.bar, barClose: bar.barClose,
+    regime: regimeOut,
+    dots: { asOf: dots && dots.asOf, green: all.filter(d => d.kind === 'green').length, red: all.filter(d => d.kind === 'red').length },
+    top10ByDotStrength: top, flowsSummary: flows, etfCheckNote, notes,
+    disclaimer: 'signal only, past performance is not indicative of future results, not financial advice'
+  };
+}
+async function buildBrief(barInfo) {
+  const [regime, dots] = await Promise.all([getRegime(), getDots({ minBar: barInfo.bar })]);
+  const bar = dots && typeof dots.latestBar === 'string' && dots.latestBar < barInfo.bar ? barWindowFromOpen(dots.latestBar) : barInfo;
   const strength = d => (d.kind === 'green' ? 1 : -1) * Math.abs(d.wt1) * (d.band === 'outer' ? 1.25 : 1) * (d.latest ? 1.1 : 1);
-  const all = (dots.bandDots || []).map(d => ({ ...d, strength: r2(strength(d)) }));
-  const top = [...all].sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength)).filter((d, i, a) => a.findIndex(x => x.name === d.name) === i).slice(0, 10);
+  const ranked = ((dots && dots.bandDots) || []).map(d => ({ ...d, strength: r2(strength(d)) }));
+  const top = [...ranked].sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength)).filter((d, i, a) => a.findIndex(x => x.name === d.name) === i).slice(0, 10);
   if (top.length < 10) { // fill with coins nearest the bands (no dot yet), clearly labeled
     const rest = [];
     for (const sym of COINS) { if (top.some(d => d.name === sym)) continue; const c = await getCoin(sym).catch(() => null); if (c && typeof c.wt1 === 'number') rest.push({ name: sym, kind: 'none', note: c.wt1 < 0 ? 'nearest oversold band, no dot' : 'nearest overbought band, no dot', wt1: c.wt1, wt2: c.wt2, strength: r2(Math.abs(c.wt1) * 0.5) }); }
@@ -327,19 +375,33 @@ async function buildBrief(date) {
   }
   const flows = [];
   for (const sym of ['BTC', 'ETH', 'SOL']) { const f = await getFlows(sym); flows.push({ symbol: sym, bias: f.flows?.bias ?? null, largeNetUsd: f.flows?.largePrints?.netUsd ?? null, buyRatio: f.flows?.allPrints?.buyRatio ?? null }); }
-  return { date, timezone: 'America/Denver', builtAt: new Date().toISOString(),
-    regime: regime.error ? regime : { score: regime.score, outOf: 4, checks: Object.fromEntries(Object.entries(regime.checks || {}).map(([k, v]) => [k, v.status])) },
-    dots: { asOf: dots.asOf, green: all.filter(d => d.kind === 'green').length, red: all.filter(d => d.kind === 'red').length },
-    top10ByDotStrength: top, flowsSummary: flows,
-    notes: ['Built once per Mountain Time day; intraday data may have changed since builtAt.', 'Coins without a recent band dot are filled in by |wt1| (closest to a band) and marked kind=none; strength for those is wt1-based and half-weighted.', 'Dot strength = |wt1| x 1.25 if outer band x 1.1 if on latest bar; sign = green(+)/red(-).', 'In our 90-day backtest green dots led (outer green ~64% higher after 3d); red dots were near coin-flip.', 'Flows are Kraken-only taker prints, not on-chain whale data.'],
-    disclaimer: 'signal only, past performance is not indicative of future results, not financial advice' };
+  return assembleBrief({ date: mtDate(), bar, regime, dots, top, flows });
 }
-export async function getBrief() {
-  const d = mtDate();
-  if (brief && brief.date === d && !brief.regime?.error) return brief;
-  if (!briefInflight) briefInflight = buildBrief(d).then(b => (brief = b)).finally(() => { briefInflight = null; });
-  try { return await briefInflight; } catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+// One build per closed 4h bar. Concurrent callers share that build. A copy whose candle is still
+// the previous bar (Kraken has not published the close yet) is kept only for BRIEF_LAG_TTL_MS.
+export function createBriefCache({ build, now = () => Date.now(), lagTtlMs = BRIEF_LAG_TTL_MS } = {}) {
+  let cached = null, inflight = null, inflightKey = null;
+  return async function getCachedBrief() {
+    const bar = latestClosed4hBar(now());
+    const key = bar.bar;
+    if (cached && cached.key === key && cached.data && !cached.data.error && !cached.data.regime?.error) {
+      if (cached.data.bar === key || now() - cached.at < lagTtlMs) return cached.data;
+    }
+    if (!inflight || inflightKey !== key) {
+      const myKey = key;
+      inflightKey = myKey;
+      const run = Promise.resolve().then(() => build(bar)).then(out => {
+        const data = out && typeof out === 'object' ? out : { error: 'upstream data unavailable, retry shortly' };
+        if (inflightKey === myKey && data && !data.error && !data.regime?.error) cached = { at: now(), key: myKey, data };
+        return data;
+      }).catch(() => ({ error: 'upstream data unavailable, retry shortly' })).finally(() => { if (inflight === run) inflight = null; });
+      inflight = run;
+    }
+    try { return await inflight; } catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
+  };
 }
+const briefCache = createBriefCache({ build: buildBrief });
+export async function getBrief() { return briefCache(); }
 
 /** Plain word for the 0-4 regime score. The paid regime adds the raw values and the rule text. */
 export function regimeLabel(score) {

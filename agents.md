@@ -27,7 +27,7 @@ Every paid response carries a signed receipt (`receipt` in the body, plus `X-GW8
 - `query.requestSha256` = sha256 of the canonical JSON (sorted keys, no spaces) of what you sent. It proves which request the decision was for.
 
 ## Featured: daily crypto brief
-- **GET /api/brief · $0.02 · MCP `get_daily_brief`.** Start here. Once per Mountain Time day: regime score, WaveTrend dot counts, top 10 coins by dot strength, and BTC/ETH/SOL Kraken large-print flows. Free teaser `GET /api/brief/teaser` shows today's regime (score, risk-on/mixed/risk-off, check statuses) and the top 3 coins by name, plus kind and band. Strength, WaveTrend values, coins after the top 3, and the flow dollars stay on this paid call.
+- **GET /api/brief · $0.02 · MCP `get_daily_brief`.** Start here. Refreshed on each closed Kraken 4h bar (bars close every 4 hours, UTC-aligned): regime score, WaveTrend dot counts, top 10 coins by dot strength, and BTC/ETH/SOL Kraken large-print flows. The payload includes `builtAt`, `asOf`, `bar` (bar open), and `barClose`. If the BTC ETF flow check cannot be read, `etfCheckNote` says so in plain words and that check stays `unknown`. Free teaser `GET /api/brief/teaser` shows today's regime (score, risk-on/mixed/risk-off, check statuses) and the top 3 coins by name, plus kind and band. Strength, WaveTrend values, coins after the top 3, and the flow dollars stay on this paid call.
 - **GET /api/daily · $0.025 · MCP `get_daily_bundle`.** The brief plus the full Stage 1 regime (raw values and the rule behind each check) in one call. Buying `GET /api/brief` ($0.02) and `GET /api/regime` ($0.01) separately is $0.03. Same Base USDC payTo as the brief.
 
 ## Featured: token safety (rug check, honeypot, contract risk)

@@ -12,6 +12,11 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Paid brief refreshes each closed 4h bar; ETF check names a blocked source (2026-11-19)
+- `GET /api/brief` ($0.02) is rebuilt when a new Kraken 4h bar closes, and concurrent buyers share that one build. The payload adds `builtAt`, `asOf`, `bar`, and `barClose`. Price, route, and payment are unchanged.
+- The BTC ETF regime check still scores the last 3 daily net totals the same way (sum > 0 is pass). Farside is read first, with a browser-like request and one retry. If that page is blocked, the check uses CoinBoss's public no-key US spot BTC ETF totals. If both fail, the check stays `unknown` and `etfCheckNote` says why in plain words.
+- 402 text, OpenAPI, MCP `get_daily_brief`, `/agents.md`, and `/llms.txt` say the brief refreshes on each closed 4h bar.
+
 ### Own wallets tagged as self in /api/stats (2026-11-18)
 - Settled payments from GW8's own public test wallet `0x605885d301e739a78ebceb60f955df392ad6c1f1` now count as `self`, not `likelyBuyer` or grader. The address is a built-in public list in `buyers.js` (`GW8_OWN_WALLET_ADDRESSES`). Optional env `GW8_OWN_WALLETS` (comma-separated public addresses, not a secret) can add more. No Render env change is required for the built-in address.
 - `/api/stats` audience `payers.self` and `settledPaidCalls.self` pick this up at read time for the built-in list; a wallet already stored as a grader is still reported as `self` when it is on the list. Live counts change only after this is deployed.

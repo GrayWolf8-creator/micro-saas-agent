@@ -21,7 +21,7 @@ const ADDS = [
     [/^\/api\/agent/, 'Full regime checks + every WaveTrend band dot across 66 Kraken pairs (teaser: score, counts, top 3 symbols).'],
     [/^\/api\/brief\/weekly/, 'Pushed every Monday to your webhook: regime, top dots, 7d hit rates, RWA, federal contracts.'],
     [/^\/api\/daily$/, 'The daily brief and the full Stage 1 regime (raw values and rules) in one call. Separate price is $0.03. The teaser shows today\'s regime and the top 3 coin names.'],
-    [/^\/api\/brief/, 'Top 10 coins by dot strength with values + BTC/ETH/SOL large-print flows (teaser: today\'s regime and the top 3 coin names).'],
+    [/^\/api\/brief/, 'Top 10 coins by dot strength with values + BTC/ETH/SOL large-print flows, refreshed on each closed 4h bar (teaser: today\'s regime and the top 3 coin names).'],
     [/^\/api\/dots/, 'Every current band dot with wt1, bar time and close (teaser: top 3 symbols only).'],
     [/^\/api\/regime/, 'Raw values and the rule behind each of the 4 regime checks (teaser: score only).'],
     [/^\/api\/coin\//, 'wt1/wt2, previous values and recent band dots for this coin (cheapest paid call).'],

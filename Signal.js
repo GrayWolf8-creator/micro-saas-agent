@@ -56,10 +56,34 @@ async function run() {
 }
 const refreshHooks = [];
 export function onWaveTrendRefresh(f) { refreshHooks.push(f); }
-export async function getWaveTrend() {
-  if (cache && Date.now() - cache.t < CACHE_MS) return cache.data;
+function newestBarOpen(data) {
+  let newest = '';
+  for (const row of [...(data && data.core || []), ...(data && data.others || [])]) {
+    if (row && typeof row.barOpen === 'string' && row.barOpen > newest) newest = row.barOpen;
+  }
+  return newest || null;
+}
+// True when no bar is required, or the scan already includes that closed 4h bar (barOpen is the candle open, UTC).
+export function cacheCoversBar(data, minBar) {
+  if (!minBar) return true;
+  const newest = newestBarOpen(data);
+  return !!newest && newest >= minBar;
+}
+function startWaveTrend() {
   if (!inflight) inflight = run().then(d => { cache = { t: Date.now(), data: d }; for (const f of refreshHooks) Promise.resolve().then(() => f(d)).catch(() => {}); return d; }).finally(() => { inflight = null; });
-  return cache ? cache.data : inflight; // serve stale while refreshing
+  return inflight;
+}
+export async function getWaveTrend(opts = {}) {
+  const minBar = opts && opts.minBar || '';
+  if (cache && Date.now() - cache.t < CACHE_MS && cacheCoversBar(cache.data, minBar)) return cache.data;
+  const pending = startWaveTrend();
+  if (cache && cacheCoversBar(cache.data, minBar)) return cache.data; // stale while refreshing, only if it already has the bar
+  const data = await pending;
+  if (minBar && !cacheCoversBar(data, minBar)) {
+    if (cache && cacheCoversBar(cache.data, minBar)) return cache.data;
+    return startWaveTrend(); // the scan in flight started before this bar closed
+  }
+  return data;
 }
 
 // ---------- Stage 1 regime check: 4 checks, public data only. Unknown is never faked. ----------
@@ -67,24 +91,113 @@ let s1cache = null;
 const pct = (a, b) => (a / b - 1) * 100;
 const median = a => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2; };
 
-// (a) BTC spot ETF flows: sum of last 3 daily "Total" values on Farside must be > 0.
-async function etfFlows() {
-  try {
-    const r = await fetch('https://farside.co.uk/btc/', { headers: { 'User-Agent': 'Mozilla/5.0' }, signal: AbortSignal.timeout(15000) });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const html = await r.text(), rows = [];
-    for (const tr of html.split(/<tr/i).slice(1)) {
-      const cells = [...tr.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim());
-      if (cells.length > 3 && /^\d{1,2} \w{3} \d{4}$/.test(cells[0])) {
-        const t = cells[cells.length - 1].replace(/,/g, ''), neg = /^\(.*\)$/.test(t), v = parseFloat(t.replace(/[()]/g, ''));
-        if (!isNaN(v)) rows.push({ date: cells[0], totalMusd: neg ? -v : v });
-      }
+// (a) BTC spot ETF flows: sum of the last 3 daily totals must be > 0. Same rule as before.
+// Farside is read first. A datacenter IP often gets a Cloudflare block, so a failed read falls
+// through to CoinBoss's public no-key US spot BTC ETF totals (million USD, TOTAL column).
+const ETF_RULE = '3-day net BTC ETF flow > 0 (Farside)';
+const ETF_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9'
+};
+const COINBOSS_ETF_URL = 'https://www.coinboss.com/api/etf/detail?asset=BTC&days=14';
+const looksBlocked = html => /just a moment|cf-browser-verification|cloudflare|attention required|enable javascript/i.test(String(html || '').slice(0, 2500));
+export function parseFarsideBtcHtml(html) {
+  const text = String(html || ''), rows = [];
+  for (const tr of text.split(/<tr/i).slice(1)) {
+    const cells = [...tr.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').replace(/&nbsp;|&#160;/g, ' ').trim());
+    if (cells.length > 3 && /^\d{1,2} \w{3} \d{4}$/.test(cells[0])) {
+      const t = cells[cells.length - 1].replace(/,/g, '').trim();
+      if (!t || t === '-' || t === '—' || /^n\/?a$/i.test(t)) continue;
+      const neg = /^\(.*\)$/.test(t), v = parseFloat(t.replace(/[()]/g, ''));
+      if (!isNaN(v)) rows.push({ date: cells[0], totalMusd: neg ? -v : v });
     }
-    if (rows.length < 3) throw new Error('table not parsed');
-    const last3 = rows.slice(-3), sum = last3.reduce((s, x) => s + x.totalMusd, 0);
-    return { status: sum > 0 ? 'pass' : 'fail', detail: { last3, sum3Musd: Math.round(sum * 10) / 10 }, rule: '3-day net BTC ETF flow > 0 (Farside)' };
-  } catch (e) { return { status: 'unknown', detail: String(e.message || e), rule: '3-day net BTC ETF flow > 0 (Farside)' }; }
+  }
+  if (rows.length < 3) {
+    const err = new Error(looksBlocked(text) ? 'Farside returned a block page instead of the flow table' : 'Farside table not parsed');
+    err.code = 'parse';
+    err.blocked = looksBlocked(text);
+    throw err;
+  }
+  return rows;
 }
+export function parseCoinBossEtf(json) {
+  if (!json || typeof json !== 'object' || json.success === false) throw new Error('CoinBoss ETF flow response was not successful');
+  const unit = json.unit ? String(json.unit).toLowerCase().replace(/[\s-]+/g, '_') : '';
+  if (unit && unit !== 'million_usd' && unit !== 'usd_million' && unit !== 'musd') throw new Error('CoinBoss unit was not million USD');
+  const dates = Array.isArray(json.dates) ? json.dates : [];
+  const data = json.data || {};
+  const rows = [];
+  for (const date of dates) {
+    const total = data[date] && data[date].TOTAL;
+    if (typeof total === 'number' && Number.isFinite(total)) rows.push({ date: String(date), totalMusd: total });
+  }
+  rows.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  if (rows.length < 3) throw new Error('CoinBoss ETF totals missing');
+  return rows;
+}
+function scoreEtfRows(rows, source) {
+  const last3 = rows.slice(-3), sum = last3.reduce((s, x) => s + x.totalMusd, 0);
+  return { status: sum > 0 ? 'pass' : 'fail', detail: { last3, sum3Musd: Math.round(sum * 10) / 10, source }, rule: ETF_RULE };
+}
+function retryableStatus(e) {
+  if (!e || e.code === 'parse') return false;
+  const status = Number(e.status) || 0;
+  if (!status) return true;
+  return status === 408 || status === 429 || status >= 500;
+}
+async function attempt(fn, { tries, sleepImpl }) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try { return await fn(); }
+    catch (e) {
+      last = e;
+      if (i === tries - 1 || !retryableStatus(e)) break;
+      await sleepImpl(300 * (i + 1));
+    }
+  }
+  throw last;
+}
+async function fetchText(url, headers, fetchImpl) {
+  const r = await fetchImpl(url, { headers, redirect: 'follow', signal: AbortSignal.timeout(12000) });
+  const text = await r.text();
+  if (!r.ok) {
+    const err = new Error('HTTP ' + r.status);
+    err.status = r.status;
+    err.body = text.slice(0, 400);
+    throw err;
+  }
+  return text;
+}
+function farsideReason(e) {
+  const status = e && e.status;
+  const msg = String(e && e.message || '');
+  const body = String(e && e.body || '');
+  const blocked = status === 401 || status === 403 || status === 451 || !!(e && e.blocked) || /just a moment|cloudflare|attention required|block page/i.test(body + ' ' + msg);
+  if (blocked) return `Farside's BTC ETF page was blocked before the daily flow table loaded${status ? ` (HTTP ${status})` : ''}.`;
+  if (/not parsed|table/i.test(msg)) return "Farside's page loaded but the daily US spot BTC ETF total column could not be read.";
+  if (status) return `Farside's BTC ETF page did not load (HTTP ${status}).`;
+  return "Farside's BTC ETF page could not be reached.";
+}
+function coinBossReason(e) {
+  const status = e && e.status;
+  if (status) return `The free public fallback for US spot BTC ETF daily net flows did not load (HTTP ${status}).`;
+  return 'The free public fallback for US spot BTC ETF daily net flows did not return three daily totals.';
+}
+export async function readEtfFlows({ fetchImpl = fetch, sleepImpl = ms => new Promise(r => setTimeout(r, ms)) } = {}) {
+  const reasons = [];
+  try {
+    const html = await attempt(() => fetchText('https://farside.co.uk/btc/', { ...ETF_HEADERS, Referer: 'https://farside.co.uk/' }, fetchImpl), { tries: 2, sleepImpl });
+    return scoreEtfRows(parseFarsideBtcHtml(html), 'farside');
+  } catch (e) { reasons.push(farsideReason(e)); }
+  try {
+    const text = await attempt(() => fetchText(COINBOSS_ETF_URL, { Accept: 'application/json', 'User-Agent': ETF_HEADERS['User-Agent'] }, fetchImpl), { tries: 2, sleepImpl });
+    return scoreEtfRows(parseCoinBossEtf(JSON.parse(text)), 'coinboss');
+  } catch (e) { reasons.push(coinBossReason(e)); }
+  const detail = `The BTC ETF flow check was unavailable. ${reasons.join(' ')} It was not counted as a pass or a fail.`;
+  return { status: 'unknown', detail, why: detail, rule: ETF_RULE };
+}
+async function etfFlows() { return readEtfFlows(); }
 
 // (b) BTC quiet support: last close within 5% above 20-day low, and last 3 daily ranges avg < 4%.
 function btcQuiet(d) {
@@ -157,12 +270,12 @@ export async function getRegime() {
   try { const s = await getStage1(); return { ...s, disclaimer: 'signal only, not financial advice' }; }
   catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
 }
-export async function getDots() {
-  try { const wt = await getWaveTrend(); return { asOf: wt.asOf, bandDots: wt.bandDots, disclaimer: 'signal only, not financial advice' }; }
+export async function getDots(opts) {
+  try { const wt = await getWaveTrend(opts); return { asOf: wt.asOf, latestBar: newestBarOpen(wt), bandDots: wt.bandDots, disclaimer: 'signal only, not financial advice' }; }
   catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
 }
-export async function getCoin(sym) {
-  try { const wt = await getWaveTrend(); const r = [...wt.core, ...wt.others].find(x => x.name === sym); return { asOf: wt.asOf, ...r, disclaimer: 'signal only, not financial advice' }; }
+export async function getCoin(sym, opts) {
+  try { const wt = await getWaveTrend(opts); const r = [...wt.core, ...wt.others].find(x => x.name === sym); return { asOf: wt.asOf, ...r, disclaimer: 'signal only, not financial advice' }; }
   catch (e) { return { error: 'upstream data unavailable, retry shortly' }; }
 }
 const DISCLAIMER = 'signal only, not financial advice';

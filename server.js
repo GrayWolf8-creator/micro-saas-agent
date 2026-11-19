@@ -12,7 +12,7 @@ import { ALERT_PLAN, validateSubscribe, createSubscription, getStatus, onRefresh
 import { onWaveTrendRefresh, getWaveTrend } from './Signal.js';
 import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
 import { initMcpPayments, paidWrapper, mcpPayMode } from './mcp_pay.js';
-import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_BLURB, VERDICT_TAGS, VERDICT_EXAMPLE, VERDICT_OUTPUT_SCHEMA, VERDICT_PATH_SCHEMA, VERDICT_SERVICE_NAME, verdictExampleBody, getFlows, getBrief, getBriefTeaser, getDailyBundle, signResponses, publicKeyInfo, BRIEF_QUOTE } from './upgrades.js';
+import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_BLURB, VERDICT_TAGS, VERDICT_EXAMPLE, VERDICT_OUTPUT_SCHEMA, VERDICT_PATH_SCHEMA, VERDICT_SERVICE_NAME, verdictExampleBody, getFlows, getBrief, getBriefTeaser, getDailyBundle, signResponses, publicKeyInfo, BRIEF_QUOTE, startBriefPrewarm } from './upgrades.js';
 import { getDeepVerdict, getTokenBrief, getCryptoBottoms, DEEP_BLURB, BRIEF_BLURB, BOTTOM_BLURB, DEEP_TAGS, BRIEF_TAGS, BOTTOM_TAGS, DEEP_SERVICE_NAME, BRIEF_SERVICE_NAME, BOTTOM_SERVICE_NAME, DEEP_EXAMPLE, BRIEF_EXAMPLE, BOTTOM_EXAMPLE, DEEP_OUTPUT_SCHEMA, BRIEF_OUTPUT_SCHEMA, BOTTOM_OUTPUT_SCHEMA, DEEP_PATH_SCHEMA, BRIEF_PATH_SCHEMA, BOTTOM_DISCLAIMER } from './products.js';
 import { getRwa } from './rwa.js';
 import { mintPass, usePass, refundPass, revokePass, PASS_PLAN, tail } from './pass.js';
@@ -1604,6 +1604,8 @@ app.get('/api/growth', (req, res) => {
 initMcpPayments({ facilitatorUrl: CDP_FACILITATOR_URL, payTo: VAULT_ADDRESS, asset: USDC_BASE_ADDRESS, makeJwt: generateCdpJwt, onPaid: (tool, payer) => { recordMcpPaid(tool, payer); recordMcpSale(tool); } })
     .then(st => console.log('[mcp-pay] mode:', st.mode, st.reason ? `(${st.reason})` : ''))
     .catch(() => console.log('[mcp-pay] mode: pointer (init error)'));
+// Background only. Listen is not waiting on this build. NODE_ENV=test and BRIEF_PREWARM=off skip it.
+startBriefPrewarm();
 app.listen(PORT, () => {
     console.log(`GW8 Capital x402 v2 Gateway online on port ${PORT}`);
 });

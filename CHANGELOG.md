@@ -12,6 +12,11 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Paid brief is pre-warmed so a request does not pay for a cold build (2026-11-19)
+- On process start, the brief build runs in the background. The server listens immediately and does not wait for it.
+- A timer rebuilds the brief 75 seconds after each Kraken 4h close (UTC hours 0, 4, 8, 12, 16, and 20) and then re-arms itself. The timer is unref'd. `NODE_ENV=test` or `BRIEF_PREWARM=off` turns it off. No new secret and no price change.
+- While that rebuild is running, a request gets the previous brief immediately when it is at most one bar old. `bar`, `barClose`, and `asOf` stay the older bar. A copy older than that waits for the new build. A failed background build is logged and the last good brief is kept. The free teaser is read from that same cached brief.
+
 ### Paid brief refreshes each closed 4h bar; ETF check names a blocked source (2026-11-19)
 - `GET /api/brief` ($0.02) is rebuilt when a new Kraken 4h bar closes, and concurrent buyers share that one build. The payload adds `builtAt`, `asOf`, `bar`, and `barClose`. Price, route, and payment are unchanged.
 - The BTC ETF regime check still scores the last 3 daily net totals the same way (sum > 0 is pass). Farside is read first, with a browser-like request and one retry. If that page is blocked, the check uses CoinBoss's public no-key US spot BTC ETF totals. If both fail, the check stays `unknown` and `etfCheckNote` says why in plain words.

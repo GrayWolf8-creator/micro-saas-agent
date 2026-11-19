@@ -83,11 +83,15 @@ test('brief cache is reused inside a 4h bar, rebuilt on the next close, and one 
   assert.equal(calls, 1);
   assert.equal(again, first[0]);
   now = Date.parse('2026-11-19T04:00:00.000Z');
-  const next = await get();
+  const during = await get();
+  assert.equal(during, first[0]);
+  assert.equal(during.bar, '2026-11-18T20:00:00.000Z');
+  await new Promise(r => setImmediate(r));
   assert.equal(calls, 2);
+  const next = await get();
   assert.equal(next.bar, '2026-11-19T00:00:00.000Z');
   assert.equal(next.barClose, '2026-11-19T04:00:00.000Z');
-  assert.notEqual(next, first[0]);
+  assert.equal(calls, 2);
 });
 
 test('a failed brief build is not cached, and a lagging candle is reused only for the short lag window', async () => {
@@ -114,7 +118,9 @@ test('a failed brief build is not cached, and a lagging candle is reused only fo
   assert.equal(await lagging(), held);
   assert.equal(lagCalls, 1);
   now += 1000;
-  await lagging();
+  const during = await lagging();
+  assert.equal(during, held);
+  await new Promise(r => setImmediate(r));
   assert.equal(lagCalls, 2);
 });
 

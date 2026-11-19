@@ -12,7 +12,7 @@ import { ALERT_PLAN, validateSubscribe, createSubscription, getStatus, onRefresh
 import { onWaveTrendRefresh, getWaveTrend } from './Signal.js';
 import { safeSignal, buildSample, getCoin, getDots, getHistory, getRegime, COINS } from './Signal.js';
 import { initMcpPayments, paidWrapper, mcpPayMode } from './mcp_pay.js';
-import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_BLURB, VERDICT_TAGS, VERDICT_EXAMPLE, VERDICT_OUTPUT_SCHEMA, VERDICT_PATH_SCHEMA, VERDICT_SERVICE_NAME, verdictExampleBody, getFlows, getBrief, getBriefTeaser, getDailyBundle, signResponses, publicKeyInfo, BRIEF_QUOTE, startBriefPrewarm } from './upgrades.js';
+import { getVerdict, validVerdictInput, VERDICT_CHAINS, VERDICT_BLURB, VERDICT_TAGS, VERDICT_EXAMPLE, VERDICT_OUTPUT_SCHEMA, VERDICT_PATH_SCHEMA, VERDICT_SERVICE_NAME, verdictExampleBody, getFlows, getBrief, getBriefTeaser, getDailyBundle, signResponses, publicKeyInfo, BRIEF_QUOTE, startBriefPrewarm, briefReadyStatus, TEASER_COLD_WAIT_MS } from './upgrades.js';
 import { getDeepVerdict, getTokenBrief, getCryptoBottoms, DEEP_BLURB, BRIEF_BLURB, BOTTOM_BLURB, DEEP_TAGS, BRIEF_TAGS, BOTTOM_TAGS, DEEP_SERVICE_NAME, BRIEF_SERVICE_NAME, BOTTOM_SERVICE_NAME, DEEP_EXAMPLE, BRIEF_EXAMPLE, BOTTOM_EXAMPLE, DEEP_OUTPUT_SCHEMA, BRIEF_OUTPUT_SCHEMA, BOTTOM_OUTPUT_SCHEMA, DEEP_PATH_SCHEMA, BRIEF_PATH_SCHEMA, BOTTOM_DISCLAIMER } from './products.js';
 import { getRwa } from './rwa.js';
 import { mintPass, usePass, refundPass, revokePass, PASS_PLAN, tail } from './pass.js';
@@ -586,7 +586,8 @@ function openApiDoc() {
     paths['/api/growth/status'] = { get: { operationId: 'growth_status', summary: 'Free: growth-lane coverage, thresholds, last scan and source health. No named rows.', security: [], responses: { '200': { description: 'Status JSON' } } } };
     paths['/api/track'] = { get: { operationId: 'track', summary: 'Free: honest track record of band-dot signals (backtest simulated vs live-logged, hit rates 1d/7d/30d incl. misses). HTML at /track', security: [], responses: { '200': { description: 'Track JSON' } } } };
     paths['/api/sample'] = { get: { operationId: 'sample', summary: 'Free live sample (regime statuses + core WaveTrend values)', security: [], responses: { '200': { description: 'Sample JSON' } } } };
-    paths['/api/brief/teaser'] = { get: { operationId: 'brief_teaser', summary: 'Free: today\'s regime (score, label, check statuses) and the top 3 coins by name, plus kind and band. Strength, WaveTrend values, coins after the top 3, and BTC/ETH/SOL flows stay on the paid brief. Upsells /api/brief ($0.02), /api/daily ($0.025), /api/regime, /api/dots, /api/agent', security: [], responses: { '200': { description: 'Teaser JSON' } } } };
+    paths['/api/brief/teaser'] = { get: { operationId: 'brief_teaser', summary: 'Free: today\'s regime (score, label, check statuses) and the top 3 coins by name, plus kind and band. Strength, WaveTrend values, coins after the top 3, and BTC/ETH/SOL flows stay on the paid brief. Upsells /api/brief ($0.02), /api/daily ($0.025), /api/regime, /api/dots, /api/agent', security: [], responses: { '200': { description: 'Teaser JSON' }, '503': { description: 'Brief is still warming. Retry-After: 5' } } } };
+    paths['/api/ready'] = { get: { operationId: 'ready', summary: 'Free readiness for the platform health check. 200 after the first brief prewarm attempt finishes, immediately when prewarm is off, or 60s after boot. 503 while the first build is still in flight. Not a paid route.', security: [], responses: { '200': { description: 'Ready for traffic' }, '503': { description: 'Still warming' } } } };
     paths['/api/verdict/example'] = { get: { operationId: 'verdict_example', summary: 'Free example of a paid token-safety screen (CLEAR / CAUTION / AVOID / UNKNOWN). Not a live lookup of a contract you choose. The paid route is GET /api/verdict/{chain}/{address} ($0.005).', security: [], responses: { '200': { description: 'Example JSON' } } } };
     paths['/api/stats'] = { get: { operationId: 'stats', summary: 'Free: per-endpoint request tallies (402 quotes, paid 2xx, 404, 5xx) for the last 1-30 Mountain Time days, plus audience split (known bots vs likely buyers, unique/returning payers by anonymized id). No IPs or PII. HTML at /stats.html; ?format=md for markdown', security: [], parameters: [
         { name: 'days', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 30, default: 1 } },
@@ -999,9 +1000,18 @@ app.get('/api/sample', async (req, res) => {
 app.get('/api/brief/teaser', async (req, res) => {
     try {
         const t = await getBriefTeaser();
-        if (t && t.error) return res.status(503).json(t);
+        if (t && t.error) {
+            const retry = t.retryAfter || 5;
+            return res.status(503).set('Retry-After', String(retry)).json({ error: t.error, retryAfter: retry });
+        }
         res.json(t);
-    } catch (e) { res.status(503).json({ error: 'upstream data unavailable, retry shortly' }); }
+    } catch (e) { res.status(503).set('Retry-After', '5').json({ error: 'upstream data unavailable, retry shortly', retryAfter: 5 }); }
+});
+// Platform readiness. Free, not x402, and not counted in stats. Does not replace GET /.
+app.get('/api/ready', (req, res) => {
+    const s = briefReadyStatus();
+    if (!s.ready) res.set('Retry-After', String(s.retryAfter || 5));
+    res.status(s.http).json({ ready: s.ready, reason: s.reason });
 });
 
 // Free per-endpoint request stats (not x402-paid, not listed on Bazaar). No PII.
@@ -1274,14 +1284,28 @@ app.get('/api/flows/:symbol', (req, res) => {
         deliver: () => getFlows(sym).catch(() => ({ error: 'upstream data unavailable, retry shortly' }))
     });
 });
-app.get('/api/brief', (req, res) => handleX402Agent(req, res, {
-    url: `${BASE_URL}/api/brief`, amount: "20000", name: "GW8 Daily Crypto Brief",
-    description: BRIEF_QUOTE,
-    tags: ["daily crypto brief", "crypto brief", "crypto market regime", "daily bundle", "wavetrend"],
-    serviceName: "GW8 Daily Crypto Brief",
-    example: { date: "2026-10-17", builtAt: "2026-10-17T20:05:00.000Z", asOf: "2026-10-17T20:00:00.000Z", bar: "2026-10-17T16:00:00.000Z", barClose: "2026-10-17T20:00:00.000Z", regime: { score: 3, outOf: 4 }, dots: { green: 5, red: 2 }, top10ByDotStrength: [{ name: "LINK", kind: "green", strength: 68.5 }], flowsSummary: [{ symbol: "BTC", bias: "balanced" }] },
-    deliver: getBrief
-}));
+app.get('/api/brief', async (req, res) => {
+    const paying = req.headers['payment-signature'] || req.headers['x-payment'] || req.headers['x-gw8-pass'];
+    if (paying) {
+        const brief = await getBrief({ maxWaitMs: TEASER_COLD_WAIT_MS });
+        if (!brief || brief.error || brief.notReady || !brief.regime || brief.regime.error) {
+            const retry = (brief && brief.retryAfter) || 5;
+            return res.status(503).set('Retry-After', String(retry)).json({
+                error: (brief && brief.error) || 'brief is still warming up, retry shortly',
+                retryAfter: retry,
+                note: 'no payment was taken'
+            });
+        }
+    }
+    return handleX402Agent(req, res, {
+        url: `${BASE_URL}/api/brief`, amount: "20000", name: "GW8 Daily Crypto Brief",
+        description: BRIEF_QUOTE,
+        tags: ["daily crypto brief", "crypto brief", "crypto market regime", "daily bundle", "wavetrend"],
+        serviceName: "GW8 Daily Crypto Brief",
+        example: { date: "2026-10-17", builtAt: "2026-10-17T20:05:00.000Z", asOf: "2026-10-17T20:00:00.000Z", bar: "2026-10-17T16:00:00.000Z", barClose: "2026-10-17T20:00:00.000Z", regime: { score: 3, outOf: 4 }, dots: { green: 5, red: 2 }, top10ByDotStrength: [{ name: "LINK", kind: "green", strength: 68.5 }], flowsSummary: [{ symbol: "BTC", bias: "balanced" }] },
+        deliver: () => getBrief()
+    });
+});
 app.get('/api/daily', (req, res) => handleX402Agent(req, res, {
     url: `${BASE_URL}/api/daily`, amount: usdAtomic(DAILY_BUNDLE_PRICE_USD), name: "GW8 Daily Bundle",
     serviceName: "GW8 Daily Bundle",

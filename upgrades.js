@@ -319,7 +319,7 @@ export const FOUR_H_MS = 4 * 60 * 60 * 1000;
 export const BRIEF_LAG_TTL_MS = 2 * 60 * 1000;
 // Rebuild this long after each UTC 4h close so Kraken has published the closed bar. Inside the 60-90s window.
 export const BRIEF_REBUILD_DELAY_MS = 75 * 1000;
-export const BRIEF_READY_CAP_MS = 60 * 1000;
+export const BRIEF_READY_CAP_MS = 120 * 1000;
 export const TEASER_COLD_WAIT_MS = 3 * 1000;
 const WARMING = Object.freeze({ error: 'brief is still warming up, retry shortly', http: 503, retryAfter: 5, notReady: true });
 export const BRIEF_QUOTE = 'Lead product. Crypto brief refreshed on each closed Kraken 4h bar: regime score, WaveTrend dot counts, top 10 coins by dot strength, and BTC, ETH, and SOL flows. Free teaser GET /api/brief/teaser shows today\'s regime and the top 3 coin names. Daily bundle GET /api/daily ($0.025). $0.02 USDC. Signal only, not financial advice.';

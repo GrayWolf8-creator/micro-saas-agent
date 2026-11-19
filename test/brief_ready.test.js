@@ -10,8 +10,8 @@ import { normalizeRoute, normalizeTrafficRoute } from '../stats.js';
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const flush = () => new Promise(r => setImmediate(r));
 
-test('ready is 503 until the first prewarm attempt settles, 200 when prewarm is off, and 200 at the 60s cap', () => {
-  assert.equal(BRIEF_READY_CAP_MS, 60_000);
+test('ready is 503 until the first prewarm attempt settles, 200 when prewarm is off, and 200 at the 120s cap', () => {
+  assert.equal(BRIEF_READY_CAP_MS, 120_000);
   assert.equal(TEASER_COLD_WAIT_MS, 3_000);
   const boot = 1_000_000;
   const cold = briefReadyStatus({ now: boot + 1000, boot, capMs: BRIEF_READY_CAP_MS, enabled: true, settled: false });

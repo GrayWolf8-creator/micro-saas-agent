@@ -1,5 +1,5 @@
 # GW8 Signal API (x402): daily crypto brief + agent payment tools
-> Pay-per-call tools for AI agents. Lead product: the daily crypto brief at GET /api/brief ($0.02): regime, WaveTrend dots, top coins, and BTC/ETH/SOL flows. Free look: GET /api/brief/teaser (today's regime and the top 3 coin names). Daily bundle GET /api/daily ($0.025) is that brief plus the full regime (separate price $0.03). Also token safety at GET /api/verdict/{chain}/{address} ($0.005): CLEAR, CAUTION, AVOID, or UNKNOWN. Free example of that JSON: GET /api/verdict/example. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
+> Pay-per-call tools for AI agents. Lead product: the daily crypto brief at GET /api/brief ($0.02), refreshed on each closed 4h bar: regime, WaveTrend dots, top coins, and BTC/ETH/SOL flows. Free look: GET /api/brief/teaser (today's regime and the top 3 coin names). Daily bundle GET /api/daily ($0.025) is that brief plus the full regime (separate price $0.03). Also token safety at GET /api/verdict/{chain}/{address} ($0.005): CLEAR, CAUTION, AVOID, or UNKNOWN. Free example of that JSON: GET /api/verdict/example. USDC on Base via x402 v2. Signal only, no trading, not financial advice.
 > Agent guide with "use this when", examples, idempotency and receipt verification: GET /agents.md
 > A2A agent card (daily brief first): GET /.well-known/agent.json (same card at /.well-known/agent-card.json)
 
@@ -90,7 +90,7 @@ POST /api/pass/day ($1.00) = 24h of every paid data endpoint via X-GW8-Pass (fai
 - GET /api/dots ($0.01): every green/red WaveTrend band dot (inner/outer) with wt1/wt2 and closes.
 - GET /api/coin/:symbol ($0.002): WaveTrend 4h for one coin (cheapest).
 - GET /api/history ($0.05): **simulated** 90-day hit-rate backtest (+4h/+24h/+3d). Not a live trade log.
-- GET /api/brief ($0.02): lead product. Once-per-day MT digest — regime, top 10 dots with strength, BTC/ETH/SOL flows. Free teaser: /api/brief/teaser (today's regime and the top 3 coin names; strength and flows stay paid).
+- GET /api/brief ($0.02): lead product. Refreshed on each closed Kraken 4h bar — regime, top 10 dots with strength, BTC/ETH/SOL flows. `builtAt`, `asOf`, `bar`, and `barClose` say when the copy was built and which 4h bar it reflects. If the BTC ETF check cannot be read, `etfCheckNote` explains that in plain words. Free teaser: /api/brief/teaser (today's regime and the top 3 coin names; strength and flows stay paid).
 - GET /api/daily ($0.025): the brief plus the full Stage 1 regime (raw values and rules) in one call. Buying GET /api/brief ($0.02) and GET /api/regime ($0.01) separately is $0.03. Same payTo and Base USDC accept as /api/brief.
 - GET /api/flows/:symbol ($0.02): Kraken large-print flows + WaveTrend (single venue). Example: `GET /api/flows/BTC`.
 - GET /api/kraken/listings ($0.02): new Kraken USD pairs (30d) + WaveTrend state.

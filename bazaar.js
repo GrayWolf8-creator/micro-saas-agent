@@ -87,13 +87,18 @@ const RULES = [
         }
     }],
     [/^\/api\/brief\/?$/, {
-        description: 'Daily crypto brief: crypto market regime, WaveTrend dots, top coins, and BTC/ETH/SOL flows.',
+        description: 'Crypto brief refreshed on each closed Kraken 4h bar: regime, WaveTrend dots, top coins, and BTC/ETH/SOL flows.',
         fields: {
-            date: 'Mountain Time date this daily crypto brief covers.',
-            regime: 'Crypto market regime score included in the daily brief.',
-            dots: 'Green and red WaveTrend band-dot counts for the day.',
-            top10ByDotStrength: 'Top coins by WaveTrend dot strength in this daily crypto brief.',
-            flowsSummary: 'BTC, ETH, and SOL Kraken large-print flow bias for the day.'
+            date: 'Mountain Time calendar date when this brief was assembled.',
+            builtAt: 'When this brief copy was assembled, as an ISO time.',
+            asOf: 'Close time of the Kraken 4h bar this brief reflects.',
+            bar: 'Open time of that closed 4h bar (ISO, UTC).',
+            barClose: 'When that 4h bar closed (ISO, UTC). The brief is rebuilt after the next close.',
+            etfCheckNote: 'Plain-language note when the BTC ETF flow check was unavailable. Null when that check returned pass or fail.',
+            regime: 'Crypto market regime score included in the brief.',
+            dots: 'Green and red WaveTrend band-dot counts on the closed 4h bars in this brief.',
+            top10ByDotStrength: 'Top coins by WaveTrend dot strength in this brief.',
+            flowsSummary: 'BTC, ETH, and SOL Kraken large-print flow bias.'
         }
     }],
     [/^\/api\/regime/, {

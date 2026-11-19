@@ -8,7 +8,7 @@ Signal-only market and public-sector data for agents and analysts, billed per re
 |---|---|---|
 | `govcontracts` | Federal contract awards (last 14 days, USAspending) to AI, drone, nuclear, robotics, space, quantum and defense-tech companies: ticker, amount, agency, date, award link. Filters: ticker, sector, keyword. DoD awards appear ~90 days late on USAspending. | $0.02 |
 | `flows` | Kraken large-print buy vs sell summary (last 1,000 public trades, single venue) + WaveTrend 4h state, per symbol | $0.03 |
-| `brief` | Daily crypto brief: regime score, band-dot counts, top 10 by dot strength, BTC/ETH/SOL flows | $0.03 |
+| `brief` | Crypto brief refreshed on each closed Kraken 4h bar: regime score, band-dot counts, top 10 by dot strength, BTC/ETH/SOL flows | $0.03 |
 | `regime` | Stage 1 crypto regime score 0–4 with raw values (ETF flows, BTC support, alt breadth, Fear & Greed) | $0.02 |
 | `dots` | WaveTrend oversold/overbought band dots on 66 Kraken 4h USD pairs | $0.02 |
 | `coin` | WaveTrend 4h snapshot for one symbol | $0.01 |

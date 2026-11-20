@@ -6,6 +6,7 @@ import { Actor, log } from 'apify';
 import { extractSite } from './crawl.js';
 import { normalizeInput } from './input.js';
 import { CHARGE_EVENTS, publishPage } from './publish.js';
+import { persistRunStats, statusMessageFor } from './telemetry.js';
 
 await Actor.init();
 
@@ -20,11 +21,13 @@ try {
     statusMessage = 'Run budget is below the actor-start price. Nothing was fetched.';
     log.warning(statusMessage);
   } else {
-    const { results } = await extractSite(input, {
+    const envMemory = Actor.getEnv()?.memoryMbytes;
+    const { results, stats } = await extractSite(input, {
       onPage: (record) => publishPage(Actor, record),
+      memoryMbytes: envMemory,
     });
-    const ok = results.filter((record) => record.status === 'ok').length;
-    statusMessage = `Extracted ${ok} page(s); wrote ${results.length} dataset row(s).`;
+    await persistRunStats(Actor, stats);
+    statusMessage = statusMessageFor(results, stats);
     log.info(statusMessage);
   }
 } catch (error) {

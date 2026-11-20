@@ -5,7 +5,7 @@
     "overview": {
       "title": "Overview",
       "transformation": {
-        "fields": ["url", "title", "description", "status", "wordCount", "tokenEstimate", "fetchedAt"]
+        "fields": ["url", "title", "description", "status", "note", "wordCount", "tokenEstimate", "fetchedAt"]
       },
       "display": {
         "component": "table",
@@ -14,6 +14,7 @@
           "title": { "label": "Title", "format": "text" },
           "description": { "label": "Description", "format": "text" },
           "status": { "label": "Status", "format": "text" },
+          "note": { "label": "Note", "format": "text" },
           "wordCount": { "label": "Words", "format": "number" },
           "tokenEstimate": { "label": "Token estimate", "format": "number" },
           "fetchedAt": { "label": "Fetched", "format": "date" }

@@ -1,0 +1,234 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { playwrightUtils } from 'crawlee';
+
+process.env.AGENT_PAGE_EXTRACT_CHROME_PATH = process.env.AGENT_PAGE_EXTRACT_CHROME_PATH || '/usr/local/bin/google-chrome';
+import { extractSite, EXTRA_BLOCKED_ASSETS, prepareBrowserNavigation } from '../src/crawl.js';
+import { normalizeInput } from '../src/input.js';
+import { CHARGE_EVENTS, publishPage } from '../src/publish.js';
+import { persistRunStats, statusMessageFor } from '../src/telemetry.js';
+import { startFixtureServer } from './server.js';
+
+function article(href) {
+  const sentence = 'The rendered article has enough words for the reader to keep. ';
+  const link = href ? `<p><a href="${href}">Next shell</a></p>` : '';
+  return `<!doctype html><html><head><title>Rendered</title></head><body><article><h1>Rendered</h1><p>${sentence.repeat(12)}</p>${link}</article></body></html>`;
+}
+
+function chargingActor(events) {
+  return {
+    async charge({ eventName }) {
+      events.push(eventName);
+      return { chargedCount: 1, eventChargeLimitReached: false };
+    },
+    async pushData() {},
+  };
+}
+
+async function withServer(fn) {
+  const server = await startFixtureServer();
+  try {
+    return await fn(server);
+  } finally {
+    await server.close();
+  }
+}
+
+test('maxBrowserPages caps Playwright and leaves the rest uncharged empty', async () => {
+  await withServer(async (server) => {
+    const seen = [];
+    const events = [];
+    const startUrls = [1, 2, 3, 4, 5].map((n) => `${server.origin}/js/${n}`);
+    const { results, stats } = await extractSite(normalizeInput({
+      startUrls,
+      maxBrowserPages: 2,
+      respectRobotsTxt: false,
+    }), {
+      maxConcurrency: 1,
+      memoryMbytes: 1024,
+      async runBrowser(batch, _input, handle) {
+        for (const job of batch) {
+          seen.push(new URL(job.url).pathname);
+          await handle({
+            url: job.url,
+            requestedUrl: job.url,
+            html: article(),
+            depth: job.depth,
+          });
+        }
+      },
+      onPage: (record) => publishPage(chargingActor(events), record),
+    });
+
+    assert.deepEqual(seen, ['/js/1', '/js/2']);
+    assert.equal(stats.browserPages, 2);
+    assert.equal(stats.cheerioPages, 5);
+    const skipped = results.filter((record) => record.note === 'browser budget reached');
+    assert.equal(skipped.length, 3);
+    assert.ok(skipped.every((record) => record.status === 'empty'));
+    assert.equal(results.filter((record) => record.status === 'ok').length, 2);
+    assert.deepEqual(events, [CHARGE_EVENTS.page, CHARGE_EVENTS.page]);
+  });
+});
+
+test('maxBrowserPages 0 stays on Cheerio', async () => {
+  await withServer(async (server) => {
+    const { results, stats } = await extractSite(normalizeInput({
+      startUrls: [`${server.origin}/js/1`],
+      maxBrowserPages: 0,
+      useBrowserFallback: true,
+      respectRobotsTxt: false,
+    }), {
+      memoryMbytes: 2048,
+      async runBrowser() {
+        throw new Error('Playwright fallback should not have run');
+      },
+    });
+    assert.equal(results.length, 1);
+    assert.equal(results[0].status, 'empty');
+    assert.equal(results[0].note, 'browser budget reached');
+    assert.equal(stats.browserPages, 0);
+    assert.equal(stats.cheerioPages, 1);
+    assert.equal((server.hits.get('/js/1') || 0) >= 1, true);
+  });
+});
+
+test('browser time budget and low memory skip further Playwright work', async () => {
+  await withServer(async (server) => {
+    let clock = 0;
+    const calls = [];
+    const events = [];
+    const timed = await extractSite(normalizeInput({
+      startUrls: [`${server.origin}/js/1`],
+      crawlDepth: 1,
+      maxPages: 5,
+      maxBrowserPages: 5,
+      respectRobotsTxt: false,
+    }), {
+      maxConcurrency: 1,
+      memoryMbytes: 1024,
+      now: () => clock,
+      async runBrowser(batch, _input, handle) {
+        calls.push(batch.map((job) => new URL(job.url).pathname));
+        clock += 90_000;
+        const job = batch[0];
+        await handle({
+          url: job.url,
+          requestedUrl: job.url,
+          html: article('/js/2'),
+          depth: job.depth,
+        });
+      },
+      onPage: (record) => publishPage(chargingActor(events), record),
+    });
+
+    assert.deepEqual(calls, [['/js/1']]);
+    assert.equal(timed.stats.browserPages, 1);
+    assert.equal(timed.stats.browserMs, 90_000);
+    assert.equal(timed.stats.cheerioPages, 2);
+    const delayed = timed.results.find((record) => new URL(record.url).pathname === '/js/2');
+    assert.equal(delayed.status, 'empty');
+    assert.equal(delayed.note, 'browser time budget reached');
+    assert.deepEqual(events, [CHARGE_EVENTS.page]);
+
+    const lowEvents = [];
+    const low = await extractSite(normalizeInput({
+      startUrls: [`${server.origin}/js/3`],
+      maxBrowserPages: 3,
+      respectRobotsTxt: false,
+    }), {
+      memoryMbytes: 512,
+      async runBrowser() {
+        throw new Error('Playwright fallback should not have run');
+      },
+      onPage: (record) => publishPage(chargingActor(lowEvents), record),
+    });
+    assert.equal(low.results[0].status, 'empty');
+    assert.equal(low.results[0].note, 'memory below 1024MB');
+    assert.equal(low.stats.browserPages, 0);
+    assert.equal(low.stats.memoryMbytes, 512);
+    assert.deepEqual(lowEvents, []);
+    const stored = [];
+    const record = await persistRunStats({
+      async setValue(key, value) {
+        stored.push([key, value]);
+      },
+    }, low.stats);
+    assert.deepEqual(stored, [['RUN_STATS', record]]);
+    assert.deepEqual(record, {
+      cheerioPages: 1,
+      browserPages: 0,
+      browserMs: 0,
+      memoryMbytes: 512,
+    });
+    assert.match(statusMessageFor(low.results, low.stats), /browser pages 0/);
+  });
+});
+
+test('1024MB still allows Playwright and a null memory reading does not block it', async () => {
+  await withServer(async (server) => {
+    for (const memoryMbytes of [1024, null]) {
+      let opened = 0;
+      const { stats } = await extractSite(normalizeInput({
+        startUrls: [`${server.origin}/app`],
+        respectRobotsTxt: false,
+      }), {
+        memoryMbytes,
+        async runBrowser(batch, _input, handle) {
+          opened += batch.length;
+          const job = batch[0];
+          await handle({
+            url: job.url,
+            requestedUrl: job.url,
+            html: article(),
+            depth: job.depth,
+          });
+        },
+      });
+      assert.equal(opened, 1);
+      assert.equal(stats.browserPages, 1);
+      assert.equal(stats.memoryMbytes, memoryMbytes === null ? null : 1024);
+    }
+  });
+});
+
+test('a browser batch stops scheduling once its wall clock is spent', { timeout: 60_000 }, async () => {
+  await withServer(async (server) => {
+    const events = [];
+    const { results, stats } = await extractSite(normalizeInput({
+      startUrls: [`${server.origin}/js/1`, `${server.origin}/js/2`],
+      maxBrowserPages: 5,
+      respectRobotsTxt: false,
+    }), {
+      maxConcurrency: 1,
+      memoryMbytes: 1024,
+      pageBrowserBudgetMs: 0,
+      onPage: (record) => publishPage(chargingActor(events), record),
+    });
+    const first = results.find((record) => new URL(record.url).pathname === '/js/1');
+    const second = results.find((record) => new URL(record.url).pathname === '/js/2');
+    assert.equal(first.status, 'ok');
+    assert.match(first.markdown, /RENDERED-PHRASE/);
+    assert.equal(second.status, 'empty');
+    assert.equal(second.note, 'browser time budget reached');
+    assert.equal(stats.browserPages, 1);
+    assert.equal(server.hits.get('/js/2'), 1);
+    assert.deepEqual(events, [CHARGE_EVENTS.page]);
+  });
+});
+
+test('Playwright navigation waits for domcontentloaded and blocks images, fonts, and media', async () => {
+  const gotoOptions = {};
+  const calls = [];
+  await prepareBrowserNavigation({
+    async blockRequests(options) {
+      calls.push(options);
+    },
+  }, gotoOptions);
+  assert.equal(gotoOptions.waitUntil, 'domcontentloaded');
+  assert.equal(typeof playwrightUtils.blockRequests, 'function');
+  for (const pattern of ['.webp', '.woff2', '.ttf', '.otf', '.eot', '.mp4', '.webm', '.mp3']) {
+    assert.ok(EXTRA_BLOCKED_ASSETS.includes(pattern), pattern);
+    assert.ok(calls[0].extraUrlPatterns.includes(pattern), pattern);
+  }
+});

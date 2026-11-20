@@ -21,7 +21,7 @@ export function startFixtureServer() {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url || '/', 'http://127.0.0.1');
     hits.set(url.pathname, (hits.get(url.pathname) || 0) + 1);
-    const route = routes[url.pathname];
+    const route = url.pathname.startsWith('/js/') ? ['text/html', 'shell.html'] : routes[url.pathname];
     if (!route) {
       response.writeHead(404, { 'content-type': 'text/html; charset=utf-8' });
       response.end('<!doctype html><html><head><title>Not found</title></head><body><p>Missing page.</p></body></html>');

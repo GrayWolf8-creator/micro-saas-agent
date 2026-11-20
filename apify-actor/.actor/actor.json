@@ -1,12 +1,13 @@
 {
   "actorSpecification": 1,
   "name": "gw8-signal-api",
-  "title": "GW8 Signal API: Federal Contracts, Crypto Flows & Regime",
+  "title": "GW8 Signal API",
   "description": "Signal-only data: federal contract awards, crypto market regime, WaveTrend, token verdicts, value-capture scores and growth-lane screens. Not financial advice.",
   "version": "0.1",
   "buildTag": "latest",
   "minMemoryMbytes": 128,
   "maxMemoryMbytes": 256,
+  "defaultMemoryMbytes": 256,
   "input": "./input_schema.json",
   "dockerfile": "../Dockerfile",
   "storages": {

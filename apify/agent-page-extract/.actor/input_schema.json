@@ -58,6 +58,15 @@
       "editor": "checkbox",
       "default": true
     },
+    "maxBrowserPages": {
+      "title": "Maximum browser pages",
+      "type": "integer",
+      "description": "How many pages may open in Playwright during this run. 0 keeps the run on Cheerio. Default 3. Maximum 20. Pages past the cap are stored as empty and are not charged.",
+      "editor": "number",
+      "minimum": 0,
+      "maximum": 20,
+      "default": 3
+    },
     "respectRobotsTxt": {
       "title": "Respect robots.txt",
       "type": "boolean",

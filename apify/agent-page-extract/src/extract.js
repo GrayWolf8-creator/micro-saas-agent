@@ -262,6 +262,7 @@ export function toDatasetRecord(extracted, options) {
   if (options.includeLinks) record.links = extracted.links || [];
   record.fetchedAt = options.fetchedAt || new Date().toISOString();
   record.status = options.status;
+  if (options.note) record.note = options.note;
   return record;
 }
 

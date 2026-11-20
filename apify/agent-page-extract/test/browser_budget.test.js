@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { playwrightUtils } from 'crawlee';
-
-process.env.AGENT_PAGE_EXTRACT_CHROME_PATH = process.env.AGENT_PAGE_EXTRACT_CHROME_PATH || '/usr/local/bin/google-chrome';
-import { extractSite, EXTRA_BLOCKED_ASSETS, prepareBrowserNavigation } from '../src/crawl.js';
+import { extractSite, prepareBrowserNavigation } from '../src/crawl.js';
 import { normalizeInput } from '../src/input.js';
 import { CHARGE_EVENTS, publishPage } from '../src/publish.js';
 import { persistRunStats, statusMessageFor } from '../src/telemetry.js';
 import { startFixtureServer } from './server.js';
+
+process.env.AGENT_PAGE_EXTRACT_CHROME_PATH = process.env.AGENT_PAGE_EXTRACT_CHROME_PATH || '/usr/local/bin/google-chrome';
 
 function article(href) {
   const sentence = 'The rendered article has enough words for the reader to keep. ';
@@ -219,16 +218,33 @@ test('a browser batch stops scheduling once its wall clock is spent', { timeout:
 
 test('Playwright navigation waits for domcontentloaded and blocks images, fonts, and media', async () => {
   const gotoOptions = {};
-  const calls = [];
+  const routes = [];
   await prepareBrowserNavigation({
-    async blockRequests(options) {
-      calls.push(options);
+    page: {
+      async route(pattern, handler) {
+        routes.push({ pattern, handler });
+      },
     },
   }, gotoOptions);
   assert.equal(gotoOptions.waitUntil, 'domcontentloaded');
-  assert.equal(typeof playwrightUtils.blockRequests, 'function');
-  for (const pattern of ['.webp', '.woff2', '.ttf', '.otf', '.eot', '.mp4', '.webm', '.mp3']) {
-    assert.ok(EXTRA_BLOCKED_ASSETS.includes(pattern), pattern);
-    assert.ok(calls[0].extraUrlPatterns.includes(pattern), pattern);
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].pattern, '**/*');
+
+  const decisions = [];
+  const fakeRoute = (type) => ({
+    request: () => ({ resourceType: () => type }),
+    abort: () => { decisions.push(`abort:${type}`); },
+    continue: () => { decisions.push(`continue:${type}`); },
+  });
+  for (const type of ['image', 'font', 'media', 'document', 'script', 'stylesheet']) {
+    await routes[0].handler(fakeRoute(type));
   }
+  assert.deepEqual(decisions, [
+    'abort:image',
+    'abort:font',
+    'abort:media',
+    'continue:document',
+    'continue:script',
+    'continue:stylesheet',
+  ]);
 });

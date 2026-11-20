@@ -1,4 +1,4 @@
-import { CheerioCrawler, Configuration, PlaywrightCrawler, RequestQueue, playwrightUtils } from 'crawlee';
+import { CheerioCrawler, Configuration, PlaywrightCrawler, RequestQueue } from 'crawlee';
 import {
   discoverLinks,
   emptyExtraction,
@@ -14,13 +14,9 @@ let queueSeq = 0;
 export const BROWSER_TIME_BUDGET_MS = 90_000;
 const LOW_MEMORY_MBYTES = 1024;
 
-// Crawlee 3.18 blockRequests already blocks .css .jpg .jpeg .png .svg .gif .woff .pdf .zip.
-// These extras cover the other images, fonts, and media that default list misses.
-export const EXTRA_BLOCKED_ASSETS = [
-  '.webp', '.avif', '.ico', '.bmp',
-  '.woff2', '.ttf', '.otf', '.eot',
-  '.mp4', '.webm', '.mp3', '.ogg', '.wav', '.m4a', '.m4v',
-];
+// Crawlee 3.18 blockRequests matches URL fragments, not Playwright resource types.
+// page.route aborts image, font, and media even when the URL has no file extension.
+const BLOCKED_RESOURCE_TYPES = new Set(['image', 'font', 'media']);
 
 export function partitionBrowserJobs(jobs, state) {
   const run = [];
@@ -53,14 +49,13 @@ export function partitionBrowserJobs(jobs, state) {
 
 export async function prepareBrowserNavigation(context, gotoOptions) {
   if (gotoOptions) gotoOptions.waitUntil = 'domcontentloaded';
-  const blockOptions = { extraUrlPatterns: EXTRA_BLOCKED_ASSETS };
-  if (typeof context?.blockRequests === 'function') {
-    await context.blockRequests(blockOptions);
-    return;
-  }
-  if (context?.page && typeof playwrightUtils?.blockRequests === 'function') {
-    await playwrightUtils.blockRequests(context.page, blockOptions);
-  }
+  const page = context?.page;
+  if (!page || typeof page.route !== 'function') return;
+  await page.route('**/*', (route) => {
+    const type = route.request().resourceType();
+    if (BLOCKED_RESOURCE_TYPES.has(type)) return route.abort();
+    return route.continue();
+  });
 }
 
 async function containerMemoryMbytes(options) {

@@ -116,7 +116,7 @@ Cheerio runs first on every URL. Playwright runs only for pages that came back e
 
 A page that misses that budget is `status: "empty"` with `note` set to `browser budget reached`, `browser time budget reached`, or `memory below 1024MB`. Those rows are not charged. A normal article never opens Chrome. A short static note does not either. A bot-check page is not sent to the browser.
 
-The browser waits for `domcontentloaded`, uses a 15 second navigation timeout and a 20 second handler timeout, and blocks images, fonts, and media. Each run writes a `RUN_STATS` key-value record: `cheerioPages`, `browserPages`, `browserMs`, and `memoryMbytes`. The final status message includes the browser page count.
+The browser waits for `domcontentloaded`, uses a 15 second navigation timeout and a 20 second handler timeout, and aborts Playwright resource types `image`, `font`, and `media` (including assets whose URLs have no file extension). Each run writes a `RUN_STATS` key-value record: `cheerioPages`, `browserPages`, `browserMs`, and `memoryMbytes`. The final status message includes the browser page count.
 
 The crawler sends `User-Agent: Mozilla/5.0 (compatible; AgentPageExtract/1.0; +https://apify.com)` and, unless you turn it off, checks `robots.txt` for that agent (and for `*`).
 

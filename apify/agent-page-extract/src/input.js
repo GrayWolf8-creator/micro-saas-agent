@@ -1,6 +1,7 @@
 const OUTPUT_FORMATS = new Set(['markdown', 'text', 'both']);
 const MAX_PAGES_CAP = 200;
 const MAX_CRAWL_DEPTH = 2;
+const MAX_BROWSER_PAGES = 20;
 
 export function normalizeStartUrls(value) {
   if (!Array.isArray(value)) return [];
@@ -41,6 +42,10 @@ export function normalizeInput(raw = {}) {
   if (maxPages < 1) maxPages = 1;
   if (maxPages > MAX_PAGES_CAP) maxPages = MAX_PAGES_CAP;
 
+  let maxBrowserPages = Number.isFinite(raw.maxBrowserPages) ? Math.trunc(raw.maxBrowserPages) : 3;
+  if (maxBrowserPages < 0) maxBrowserPages = 0;
+  if (maxBrowserPages > MAX_BROWSER_PAGES) maxBrowserPages = MAX_BROWSER_PAGES;
+
   const outputFormat = OUTPUT_FORMATS.has(raw.outputFormat) ? raw.outputFormat : 'markdown';
   const removeSelectors = Array.isArray(raw.removeSelectors)
     ? raw.removeSelectors.filter((selector) => typeof selector === 'string' && selector.trim()).map((selector) => selector.trim())
@@ -54,6 +59,7 @@ export function normalizeInput(raw = {}) {
     outputFormat,
     removeSelectors,
     useBrowserFallback: raw.useBrowserFallback === undefined ? true : Boolean(raw.useBrowserFallback),
+    maxBrowserPages,
     respectRobotsTxt: raw.respectRobotsTxt === undefined ? true : Boolean(raw.respectRobotsTxt),
   };
 }

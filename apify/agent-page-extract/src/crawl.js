@@ -11,6 +11,84 @@ import { loadRobots, robotsAllow, USER_AGENT } from './robots.js';
 
 let queueSeq = 0;
 
+export const BROWSER_TIME_BUDGET_MS = 90_000;
+const LOW_MEMORY_MBYTES = 1024;
+const CHARGE_LIMIT_NOTE = 'charge limit reached';
+
+// One run shares this budget. A lower explicit override wins, and later batches
+// only receive whatever time the earlier batches have not already used.
+export function browserBatchBudgetMs(spentMs, override) {
+  const spent = Number.isFinite(spentMs) ? Math.max(0, spentMs) : 0;
+  const remaining = Math.max(0, BROWSER_TIME_BUDGET_MS - spent);
+  if (Number.isFinite(override)) return Math.min(Math.max(0, override), remaining);
+  return remaining;
+}
+
+// Crawlee 3.18 blockRequests matches URL fragments, not Playwright resource types.
+// page.route aborts image, font, and media even when the URL has no file extension.
+const BLOCKED_RESOURCE_TYPES = new Set(['image', 'font', 'media']);
+
+export function partitionBrowserJobs(jobs, state) {
+  const run = [];
+  const skipped = [];
+  const lowMemory = typeof state.memoryMbytes === 'number'
+    && Number.isFinite(state.memoryMbytes)
+    && state.memoryMbytes < LOW_MEMORY_MBYTES;
+  const maxBrowserPages = state.maxBrowserPages;
+  const budgetMs = Number.isFinite(state.browserBudgetMs) ? state.browserBudgetMs : BROWSER_TIME_BUDGET_MS;
+  let reserved = state.browserPages || 0;
+  const spent = state.browserMs || 0;
+  for (const job of jobs) {
+    if (lowMemory) {
+      skipped.push({ job, note: 'memory below 1024MB' });
+      continue;
+    }
+    if (reserved >= maxBrowserPages) {
+      skipped.push({ job, note: 'browser budget reached' });
+      continue;
+    }
+    if (spent >= budgetMs) {
+      skipped.push({ job, note: 'browser time budget reached' });
+      continue;
+    }
+    run.push(job);
+    reserved += 1;
+  }
+  return { run, skipped };
+}
+
+export async function prepareBrowserNavigation(context, gotoOptions) {
+  if (gotoOptions) gotoOptions.waitUntil = 'domcontentloaded';
+  const page = context?.page;
+  if (!page || typeof page.route !== 'function') return;
+  await page.route('**/*', (route) => {
+    const settle = async () => {
+      try {
+        const type = route.request().resourceType();
+        if (BLOCKED_RESOURCE_TYPES.has(type)) await route.abort();
+        else await route.continue();
+      } catch {
+        // The page can close while the request is still in flight.
+      }
+    };
+    return settle();
+  });
+}
+
+async function containerMemoryMbytes(options) {
+  if (options && Object.prototype.hasOwnProperty.call(options, 'memoryMbytes')) {
+    const value = options.memoryMbytes;
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  }
+  try {
+    const { Actor } = await import('apify');
+    const value = Actor.getEnv()?.memoryMbytes;
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function memoryConfig() {
   return new Configuration({ persistStorage: false, purgeOnStart: true });
 }
@@ -51,13 +129,14 @@ function childLinks(html, pageUrl, depth, input) {
   return discoverLinks(html, pageUrl).map((link) => ({ url: link.url, depth: depth + 1 }));
 }
 
-function recordFrom(url, extracted, status, input) {
+function recordFrom(url, extracted, status, input, note) {
   return toDatasetRecord(extracted, {
     url,
     status,
     outputFormat: input.outputFormat,
     includeLinks: input.includeLinks,
     fetchedAt: new Date().toISOString(),
+    note,
   });
 }
 
@@ -134,16 +213,34 @@ async function runCheerio(batch, input, handle, options) {
   })));
 }
 
-async function runPlaywright(batch, input, handle) {
+async function runPlaywright(batch, input, handle, options = {}) {
   const config = memoryConfig();
   const requestQueue = await RequestQueue.open(nextQueueName('browser'), { config });
-  const crawler = new PlaywrightCrawler({
+  const handled = new Set();
+  const budgetMs = Number.isFinite(options.browserBudgetMs) ? options.browserBudgetMs : BROWSER_TIME_BUDGET_MS;
+  const now = typeof options.now === 'function' ? options.now : () => Date.now();
+  const started = now();
+  let crawler;
+  const markHandled = (request) => {
+    handled.add(request.uniqueKey || request.url);
+    handled.add(request.url);
+  };
+  const stopIfOverBudget = async () => {
+    if (now() - started < budgetMs) return;
+    try { await crawler?.stop('browser time budget reached'); } catch { /* already stopping */ }
+  };
+  crawler = new PlaywrightCrawler({
     requestQueue,
     maxRequestsPerCrawl: batch.length,
     maxConcurrency: 1,
     maxRequestRetries: 0,
-    requestHandlerTimeoutSecs: 45,
-    navigationTimeoutSecs: 25,
+    requestHandlerTimeoutSecs: 20,
+    navigationTimeoutSecs: 15,
+    preNavigationHooks: [
+      async (context, gotoOptions) => {
+        await prepareBrowserNavigation(context, gotoOptions);
+      },
+    ],
     useSessionPool: false,
     persistCookiesPerSession: false,
     retryOnBlocked: false,
@@ -159,6 +256,8 @@ async function runPlaywright(batch, input, handle) {
           error: `HTTP ${statusCode}`,
           depth: request.userData?.depth || 0,
         });
+        markHandled(request);
+        await stopIfOverBudget();
         return;
       }
       await page.waitForFunction(
@@ -173,8 +272,13 @@ async function runPlaywright(batch, input, handle) {
         html: await page.content(),
         depth: request.userData?.depth || 0,
       });
+      markHandled(request);
+      await stopIfOverBudget();
     },
     async failedRequestHandler({ request }) {
+      const key = request.uniqueKey || request.url;
+      if (handled.has(key) || handled.has(request.url)) return;
+      markHandled(request);
       await handle({
         url: request.url,
         requestedUrl: request.url,
@@ -184,22 +288,38 @@ async function runPlaywright(batch, input, handle) {
       });
     },
   }, config);
+  options.bindCrawler?.(crawler);
   await crawler.run(batch.map((item) => ({
     url: item.url,
     uniqueKey: item.url,
     userData: { depth: item.depth },
   })));
+  for (const item of batch) {
+    if (handled.has(item.url)) continue;
+    await handle({
+      url: item.url,
+      requestedUrl: item.url,
+      html: '',
+      skippedBudget: true,
+      depth: item.depth || 0,
+    });
+  }
 }
 
 export async function extractSite(input, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   const onPage = options.onPage || (async () => {});
+  const now = typeof options.now === 'function' ? options.now : () => Date.now();
+  const memoryMbytes = await containerMemoryMbytes(options);
   const robotsCache = new Map();
   const visited = new Set();
   const finished = new Set();
   const results = [];
   let stop = false;
   let processed = 0;
+  let cheerioPages = 0;
+  let browserPages = 0;
+  let browserMs = 0;
   let activeCrawler = null;
   let frontier = input.startUrls.map((url) => ({ url, depth: 0 }));
 
@@ -270,6 +390,7 @@ export async function extractSite(input, options = {}) {
     const browserJobs = [];
     if (batch.length && !stop) {
       await runCheerio(batch, input, async (page) => {
+        cheerioPages += 1;
         if (stop) return;
         if (!page.error && !page.skippedRobots && page.html) {
           let extracted;
@@ -293,11 +414,37 @@ export async function extractSite(input, options = {}) {
 
     if (browserJobs.length && !stop && processed < input.maxPages) {
       const jobs = browserJobs.slice(0, input.maxPages - processed);
-      const runBrowser = options.runBrowser || runPlaywright;
-      activeCrawler = null;
-      await runBrowser(jobs, input, async (page) => {
-        await acceptPage(page, discovered);
+      const { run, skipped } = partitionBrowserJobs(jobs, {
+        memoryMbytes,
+        maxBrowserPages: input.maxBrowserPages,
+        browserPages,
+        browserMs,
+        browserBudgetMs: options.browserBudgetMs,
       });
+      for (const item of skipped) {
+        if (stop) break;
+        await remember(recordFrom(item.job.url, emptyExtraction(), 'empty', input, item.note));
+      }
+      if (run.length && !stop) {
+        const batchBudgetMs = browserBatchBudgetMs(browserMs, options.pageBrowserBudgetMs);
+        const runBrowser = options.runBrowser || ((batchToRun, siteInput, pageHandle, runOptions) => runPlaywright(batchToRun, siteInput, pageHandle, {
+          bindCrawler(crawler) { activeCrawler = crawler; },
+          browserBudgetMs: runOptions.browserBudgetMs,
+          now: options.now,
+        }));
+        activeCrawler = null;
+        const started = now();
+        await runBrowser(run, input, async (page) => {
+          if (page.skippedBudget) {
+            const note = stop ? CHARGE_LIMIT_NOTE : 'browser time budget reached';
+            await remember(recordFrom(page.requestedUrl || page.url, emptyExtraction(), 'empty', input, note));
+            return;
+          }
+          browserPages += 1;
+          await acceptPage(page, discovered);
+        }, { browserBudgetMs: batchBudgetMs });
+        browserMs += Math.max(0, now() - started);
+      }
     }
 
     const next = [];
@@ -310,5 +457,13 @@ export async function extractSite(input, options = {}) {
     frontier = next;
   }
 
-  return { results };
+  return {
+    results,
+    stats: {
+      cheerioPages,
+      browserPages,
+      browserMs,
+      memoryMbytes: typeof memoryMbytes === 'number' ? memoryMbytes : null,
+    },
+  };
 }

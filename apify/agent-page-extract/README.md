@@ -2,6 +2,8 @@
 
 Give **Agent Page Extract** a URL. It returns the page as clean, LLM-ready Markdown (or plain text) with the navigation, footer, ads, and cookie banner removed. Use it as a webpage to markdown step in a RAG pipeline, as an AI agent web reader, or as an html to markdown converter that stays cheap on static pages and only opens a browser when the page is actually JavaScript-rendered.
 
+Market and public-sector signals are a different Actor: [GW8 Signal API](https://apify.com/gw8cap/gw8-signal-api).
+
 One dataset row per page: URL, title, description, markdown, optional text, word count, token estimate, optional links, fetch time, and status.
 
 ## What it does
@@ -33,15 +35,18 @@ Pay per event. Copy these two events into the Actor's monetization settings (the
 | `actor-start` | Once, when the run starts | **$0.005** |
 | `page-extracted` | Once per page with `status: "ok"` | **$0.002** |
 
-Empty pages, robots.txt skips, bot-check interstitials, and fetch errors are stored with a status and are **not** charged as `page-extracted`. The start event is still charged if the run begins.
+Empty pages, robots.txt skips, bot-check interstitials, fetch errors, and pages skipped by the browser budget are stored with a status and are **not** charged as `page-extracted`. The start event is still charged if the run begins.
+
+**1 page = $0.007 including the $0.005 start fee; best value at 5+ pages.** Five successful pages cost $0.015, so the start fee is a third of that bill. One successful page is $0.007, and most of that is the start fee.
 
 | Successful pages | What you pay |
 | --- | --- |
 | 1 | $0.007 |
+| 5 | $0.015 |
 | 10 (the default cap) | $0.025 |
 | 200 (the hard cap) | $0.405 |
 
-Formula: `$0.005 + $0.002 × successful pages`. Set the run's maximum charge at least to `$0.007` so one start plus one page fits. Browser fallback uses more compute than Cheerio; give the run **2048 MB** of memory when fallback is on.
+Formula: `$0.005 + $0.002 × successful pages`. Set the run's maximum charge at least to `$0.007` so one start plus one page fits. Browser fallback needs **1024 MB**. Below that the Actor stays on Cheerio and records `memory below 1024MB`. The manifest allows 512–4096 MB and defaults to 1024 MB.
 
 ## Input
 
@@ -54,6 +59,7 @@ Formula: `$0.005 + $0.002 × successful pages`. Set the run's maximum charge at 
 | `outputFormat` | `markdown` | `markdown`, `text`, or `both`. |
 | `removeSelectors` | none | Extra CSS selectors removed before extraction. |
 | `useBrowserFallback` | `true` | Render in Chrome only when the cheap fetch is empty or a JS shell. |
+| `maxBrowserPages` | `3` | Playwright pages per run. `0` stays on Cheerio. Maximum `20`. |
 | `respectRobotsTxt` | `true` | Obey `robots.txt`. Disallowed URLs are `blocked` and not fetched. |
 
 ```json
@@ -65,6 +71,7 @@ Formula: `$0.005 + $0.002 × successful pages`. Set the run's maximum charge at 
   "outputFormat": "both",
   "removeSelectors": [".newsletter", "#chat-widget"],
   "useBrowserFallback": true,
+  "maxBrowserPages": 3,
   "respectRobotsTxt": true
 }
 ```
@@ -95,13 +102,21 @@ Each page is one item in the default dataset. The **Overview** view shows URL, t
 | `status` | Meaning | `page-extracted` charge |
 | --- | --- | --- |
 | `ok` | Main content extracted | Yes |
-| `empty` | Fetched, but no article text | No |
+| `empty` | Fetched, but no article text, or the browser budget skipped it | No |
 | `blocked` | robots.txt, or a bot-check interstitial | No |
 | `error` | The fetch failed | No |
 
 ## How the fetch stays cheap
 
-Cheerio runs first on every URL. Playwright runs only for pages that came back empty or as a JavaScript shell (`<div id="root">`, "enable JavaScript", and similar) while `useBrowserFallback` is true. A normal article never opens Chrome. A short static note does not either. A bot-check page is not sent to the browser.
+Cheerio runs first on every URL. Playwright runs only for pages that came back empty or as a JavaScript shell (`<div id="root">`, "enable JavaScript", and similar) while `useBrowserFallback` is true, and only while the run is still inside its browser budget:
+
+- at most `maxBrowserPages` browser pages (default 3, hard max 20)
+- at most 90 seconds of browser time for the whole run, including later crawl depths. Each batch only gets the time still left
+- no browser at all when the container memory is known and below 1024 MB
+
+A page that misses that budget is `status: "empty"` with `note` set to `browser budget reached`, `browser time budget reached`, or `memory below 1024MB`. Those rows are not charged. A normal article never opens Chrome. A short static note does not either. A bot-check page is not sent to the browser.
+
+The browser waits for `domcontentloaded`, uses a 15 second navigation timeout and a 20 second handler timeout, and aborts Playwright resource types `image`, `font`, and `media` (including assets whose URLs have no file extension). Each run writes a `RUN_STATS` key-value record: `cheerioPages`, `browserPages`, `browserMs`, and `memoryMbytes`. The final status message includes the browser page count.
 
 The crawler sends `User-Agent: Mozilla/5.0 (compatible; AgentPageExtract/1.0; +https://apify.com)` and, unless you turn it off, checks `robots.txt` for that agent (and for `*`).
 
@@ -129,7 +144,10 @@ Only `status: "ok"` fires `page-extracted`. Empty, blocked, and error rows are s
 No. It reads public HTML. A "verify you are human" page is stored as `blocked` and is not rendered in the fallback browser.
 
 **How much memory should a run use?**  
-2048 MB when browser fallback is enabled. The Docker image is `apify/actor-node-playwright-chrome`.
+1024 MB is the default and the minimum that enables Playwright. 512 MB runs Cheerio only. The maximum is 4096 MB. The Docker image is `apify/actor-node-playwright-chrome`.
+
+**How is this different from Apify's Website Content Crawler?**  
+[Website Content Crawler](https://apify.com/apify/website-content-crawler) is the full-site tool: sitemaps, large crawls, and a browser-first fetch. Agent Page Extract is the small reader. Cheerio fetches every URL first, Playwright is capped (default 3 pages, 90 seconds), depth stops at 2, and a successful page is $0.002 plus the $0.005 start. Use this Actor for a handful of URLs. Use Website Content Crawler when the job is a large site.
 
 ## Local tests
 

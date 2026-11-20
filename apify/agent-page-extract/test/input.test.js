@@ -10,6 +10,7 @@ test('applies product defaults and caps', () => {
   assert.equal(input.includeLinks, false);
   assert.equal(input.outputFormat, 'markdown');
   assert.equal(input.useBrowserFallback, true);
+  assert.equal(input.maxBrowserPages, 3);
   assert.equal(input.respectRobotsTxt, true);
   assert.deepEqual(input.removeSelectors, []);
 });
@@ -46,4 +47,15 @@ test('raises a zero or negative page cap to one and a negative depth to zero', (
   assert.equal(input.maxPages, 1);
   assert.equal(input.crawlDepth, 0);
   assert.equal(input.outputFormat, 'markdown');
+});
+
+test('clamps maxBrowserPages to 0..20 and keeps zero as Cheerio-only', () => {
+  const high = normalizeInput({ startUrls: ['https://example.com'], maxBrowserPages: 21.9 });
+  const low = normalizeInput({ startUrls: ['https://example.com'], maxBrowserPages: -4 });
+  const zero = normalizeInput({ startUrls: ['https://example.com'], maxBrowserPages: 0 });
+  const exact = normalizeInput({ startUrls: ['https://example.com'], maxBrowserPages: 2 });
+  assert.equal(high.maxBrowserPages, 20);
+  assert.equal(low.maxBrowserPages, 0);
+  assert.equal(zero.maxBrowserPages, 0);
+  assert.equal(exact.maxBrowserPages, 2);
 });

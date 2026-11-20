@@ -10,7 +10,8 @@
       "editor": "select",
       "enum": ["govcontracts", "flows", "brief", "regime", "dots", "coin", "verdict", "rwa", "kraken-listings", "rules", "history", "value", "value-batch", "value-history", "growth-chain", "growth", "growth-history"],
       "enumTitles": ["Federal contract awards (14 days)", "Kraken large-print flows + WaveTrend (per symbol)", "Daily crypto brief", "Crypto market regime score", "WaveTrend band dots (66 pairs)", "WaveTrend 4h snapshot (per symbol)", "Token safety verdict", "Tokenized RWA flows", "Kraken new USD listings", "CFTC + SEC crypto rule changes", "90-day dot hit-rate backtest", "Value-capture score (per symbol, default BNB)", "Value-capture screen", "Value-capture weekly history", "Growth-lane one chain or app", "Growth-lane screen", "Growth-lane weekly history"],
-      "default": "govcontracts"
+      "default": "govcontracts",
+      "prefill": "govcontracts"
     },
     "symbols": {
       "title": "Symbols (flows / coin)",

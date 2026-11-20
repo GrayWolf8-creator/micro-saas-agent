@@ -5,12 +5,14 @@
 import { Actor, log } from 'apify';
 
 const BASE = process.env.GW8_API_BASE || 'https://micro-saas-agent.onrender.com/mkt/apify';
+// Live Store PPE events only. value/growth feeds reuse these four names at the matching x402 price.
 const EVENTS = {
-  coin: 'lite-result', regime: 'standard-result', dots: 'standard-result', verdict: 'standard-result', govcontracts: 'standard-result',
+  coin: 'lite-result',
+  regime: 'standard-result', dots: 'standard-result', verdict: 'standard-result', govcontracts: 'standard-result',
+  value: 'standard-result', 'growth-chain': 'standard-result',
   brief: 'premium-result', flows: 'premium-result', rwa: 'premium-result', 'kraken-listings': 'premium-result', rules: 'premium-result',
-  history: 'history-result',
-  value: 'value-standard', 'value-batch': 'value-premium', 'value-history': 'value-history',
-  'growth-chain': 'growth-standard', growth: 'growth-premium', 'growth-history': 'growth-history'
+  'value-batch': 'premium-result', growth: 'premium-result',
+  history: 'history-result', 'value-history': 'history-result', 'growth-history': 'history-result'
 };
 const MAX_SYMBOLS = 10;
 

@@ -24,6 +24,9 @@ const EXACT = new Set([
     '/favicon.svg',
     '/track',
     '/pay.html',
+    '/pay',
+    '/robots.txt',
+    '/sitemap.xml',
     '/mcp',
     '/mcp.json',
     '/.well-known/x402',
@@ -126,7 +129,7 @@ const PAID_PATHS = new Set([
 ]);
 
 /** Skip recording entirely (self + HTML views). The traffic report and the sales ledger must not count themselves. */
-const SKIP = new Set(['/api/stats', '/stats.html', '/stats', '/api/traffic', '/traffic.html', '/traffic', '/api/sales', '/api/ready']);
+const SKIP = new Set(['/api/stats', '/stats.html', '/stats', '/api/traffic', '/traffic.html', '/traffic', '/api/sales', '/api/ready', '/health']);
 
 /** Home keep-warm: counted under meta, not route totals. */
 const HOME = '/';
@@ -548,7 +551,7 @@ export async function getStats(days = 1) {
         audience,
         meta: {
             homeKeepWarm: home,
-            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats, /stats.html, /api/traffic, /traffic.html, /api/sales and /api/ready are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0). Route x HTTP status (UTC) and unmatched probes: /api/traffic and /traffic.html. Which routes sold (x402 settlement vs RapidAPI/Apify, counts only, no payer ids): /api/sales. When Redis is configured, counter writes are summed in memory and flushed about every 5 minutes (and on shutdown); this report includes counts not yet flushed. A hard crash can drop up to about 5 minutes of counts.',
+            note: 'GET / (keep-warm) is under meta.homeKeepWarm, not route totals. /api/stats, /stats.html, /api/traffic, /traffic.html, /api/sales, /api/ready and /health are not recorded. No IPs or raw headers stored; user-agents are reduced to a known-bot name, payer wallets to truncated SHA-256 ids. audience = bot vs likely-buyer split (started with this release, so earlier days show 0). Route x HTTP status (UTC) and unmatched probes: /api/traffic and /traffic.html. Which routes sold (x402 settlement vs RapidAPI/Apify, counts only, no payer ids): /api/sales. When Redis is configured, counter writes are summed in memory and flushed about every 5 minutes (and on shutdown); this report includes counts not yet flushed. A hard crash can drop up to about 5 minutes of counts.',
         },
     };
 }
@@ -1145,7 +1148,7 @@ export async function getTrafficReport(days = 7) {
                 ? 'Per-UTC-day rollups are in Upstash Redis (UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN), key prefix gw8:traffic:v1: plus gw8:traffic:v1:buf: for counts flushed from memory, kept about 35 days. Writes flush about every 5 minutes and on shutdown. This report includes counts not yet flushed. A hard crash can drop up to about 5 minutes. They survive a restart. sinceBoot does not, so a day total can be higher than sinceBoot after a restart.'
                 : 'Upstash Redis is not configured, so daily rollups are in-memory and clear on restart, same as sinceBoot.',
         },
-        note: 'Counts are normalized route templates (ids collapsed, query strings dropped) by HTTP status and UTC day. Surfaces: x402 = paid /api routes, rapidapi = /mkt/rapidapi, public = free pages, free /api routes, MCP, and /mkt/apify, unmatched = no template (scanner probes). GET / is included and picks up platform keep-warm pings (the audience report still parks those under meta.homeKeepWarm). Unmatched paths are truncated and sanitized; once 50 distinct paths are stored, further new paths increment probeOverflow without the raw path. /api/traffic, /traffic.html, /api/stats, /stats.html and /api/ready are not counted. No IPs, headers, bodies, or payment payloads are stored.',
+        note: 'Counts are normalized route templates (ids collapsed, query strings dropped) by HTTP status and UTC day. Surfaces: x402 = paid /api routes, rapidapi = /mkt/rapidapi, public = free pages, free /api routes, MCP, and /mkt/apify, unmatched = no template (scanner probes). GET / is included and picks up platform keep-warm pings (the audience report still parks those under meta.homeKeepWarm). Unmatched paths are truncated and sanitized; once 50 distinct paths are stored, further new paths increment probeOverflow without the raw path. /api/traffic, /traffic.html, /api/stats, /stats.html, /api/ready and /health are not counted. No IPs, headers, bodies, or payment payloads are stored.',
     };
 }
 

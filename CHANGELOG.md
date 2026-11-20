@@ -12,6 +12,12 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Discovery copy is 1.2.1, and free crawler aliases (2026-11-20)
+- OpenAPI, the A2A agent card, the MCP server card, and `GET /` say version `1.2.1`. The npm `package.json` version stays `1.0.0`. Static `mcp.json` matches `GET /mcp.json` (Base-only payment copy; `mcpInBand` is filled in at request time).
+- HTTP discovery (`/openapi.json`, `/.well-known/agent.json`, `/llms.txt`, `/`, `README.md`) names the five paid HTTP routes that accept Base, Polygon, and Solana: `GET /api/rails`, `GET /api/rails/route`, `GET /api/regime`, `POST /api/pay/should-i-pay`, and `GET /api/coin/{symbol}`. Other paid HTTP routes stay Base-only. MCP copy does not claim Polygon or Solana.
+- `README.md` documents the live `$1.00` day pass (`POST /api/pass/day`, 24h, `X-GW8-Pass`, fair use 2000/day and 60/min). No price or wallet change.
+- Free aliases: `GET /health` (same body as `GET /api/ready`, not counted in stats), `GET /pay` (redirect to `/pay.html`), `GET /robots.txt`, and `GET /sitemap.xml`.
+
 ### Render waits for the brief before sending traffic (2026-11-19)
 - `GET /api/ready` is free and not counted in stats. It returns 503 while the first brief prewarm is still running, and 200 when that attempt finishes (success or failure), when prewarm is off, or 60 seconds after boot. `GET /` is unchanged.
 - A cold `GET /api/brief/teaser` waits at most 3 seconds, then returns 503 with `Retry-After: 5`. A paid `GET /api/brief` does the same before payment verification, so a not-ready brief is not settled.

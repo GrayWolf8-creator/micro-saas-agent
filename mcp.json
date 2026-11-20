@@ -1,7 +1,63 @@
 {
   "name": "gw8-crypto-signal",
-  "description": "Crypto market signals for AI agents (Stage 1 regime + WaveTrend band dots, 66 Kraken 4h pairs). Free sample; paid endpoints via x402, USDC on Base. Signal only.",
-  "transport": { "type": "streamable-http", "url": "https://micro-saas-agent.onrender.com/mcp" },
-  "manifest": "https://micro-saas-agent.onrender.com/.well-known/mcp.json",
-  "openapi": "https://micro-saas-agent.onrender.com/openapi.json"
+  "title": "GW8 Crypto Regime + WaveTrend Signal",
+  "version": "1.2.1",
+  "description": "Lead tool: the daily crypto brief (regime, WaveTrend dots, top coins, BTC/ETH/SOL flows, refreshed on each closed 4h bar) and a $0.025 bundle of that brief plus the full regime. Also agent payment risk checks, token safety verdicts (rug check, honeypot, contract risk), and payment-rail costs. Free teaser; paid tools via x402 (USDC on Base). Signed receipts. Signal only, no trading.",
+  "transport": {
+    "type": "streamable-http",
+    "url": "https://micro-saas-agent.onrender.com/mcp"
+  },
+  "tools": [
+    "get_sample",
+    "get_brief_teaser",
+    "list_paid_endpoints",
+    "get_full_signal",
+    "get_band_dots",
+    "get_regime",
+    "get_coin",
+    "get_history",
+    "subscribe_green_dot_alerts",
+    "get_token_verdict",
+    "get_flows",
+    "get_daily_brief",
+    "get_daily_bundle",
+    "get_value_score",
+    "get_value_screen",
+    "get_value_history",
+    "get_growth_setup",
+    "get_growth_screen",
+    "get_growth_history",
+    "get_rwa_feed",
+    "get_gov_contracts",
+    "get_kraken_listings",
+    "get_crypto_rules",
+    "get_relative_strength",
+    "get_payment_rails",
+    "get_facilitator_route",
+    "get_fuel_surcharge",
+    "should_i_pay",
+    "check_spend_policy",
+    "check_seller_reputation",
+    "buy_day_pass",
+    "get_signing_pubkey"
+  ],
+  "dayPass": {
+    "endpoint": "https://micro-saas-agent.onrender.com/api/pass/day",
+    "mcpTool": "buy_day_pass",
+    "priceUsd": "1.00",
+    "hours": 24,
+    "dailyCap": 2000,
+    "perMinute": 60,
+    "header": "X-GW8-Pass",
+    "mcpArg": "pass"
+  },
+  "payment": {
+    "protocol": "x402",
+    "version": 2,
+    "network": "eip155:8453",
+    "asset": "USDC",
+    "openapi": "https://micro-saas-agent.onrender.com/openapi.json",
+    "mcpInBand": false,
+    "mcpMetaKey": "x402/payment"
+  }
 }

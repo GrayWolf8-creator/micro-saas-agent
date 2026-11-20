@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { extractSite, prepareBrowserNavigation } from '../src/crawl.js';
+import { browserBatchBudgetMs, BROWSER_TIME_BUDGET_MS, extractSite, prepareBrowserNavigation } from '../src/crawl.js';
 import { normalizeInput } from '../src/input.js';
 import { CHARGE_EVENTS, publishPage } from '../src/publish.js';
 import { persistRunStats, statusMessageFor } from '../src/telemetry.js';
@@ -191,6 +191,93 @@ test('1024MB still allows Playwright and a null memory reading does not block it
   });
 });
 
+test('the 90s browser budget carries across depth batches', async () => {
+  await withServer(async (server) => {
+    let clock = 0;
+    const budgets = [];
+    const calls = [];
+    const { results, stats } = await extractSite(normalizeInput({
+      startUrls: [`${server.origin}/js/1`],
+      crawlDepth: 2,
+      maxPages: 10,
+      maxBrowserPages: 10,
+      respectRobotsTxt: false,
+    }), {
+      maxConcurrency: 1,
+      memoryMbytes: 1024,
+      now: () => clock,
+      async runBrowser(batch, _input, handle, runOptions) {
+        budgets.push(runOptions.browserBudgetMs);
+        calls.push(batch.map((job) => new URL(job.url).pathname));
+        clock += 60_000;
+        const job = batch[0];
+        const next = job.url.endsWith('/1') ? '/js/2' : '/js/3';
+        await handle({
+          url: job.url,
+          requestedUrl: job.url,
+          html: article(next),
+          depth: job.depth,
+        });
+      },
+    });
+
+    assert.equal(browserBatchBudgetMs(0), BROWSER_TIME_BUDGET_MS);
+    assert.equal(browserBatchBudgetMs(60_000), 30_000);
+    assert.equal(browserBatchBudgetMs(90_000), 0);
+    assert.equal(browserBatchBudgetMs(0, 0), 0);
+    assert.equal(browserBatchBudgetMs(60_000, 120_000), 30_000);
+    assert.deepEqual(budgets, [BROWSER_TIME_BUDGET_MS, 30_000]);
+    assert.deepEqual(calls, [['/js/1'], ['/js/2']]);
+    const third = results.find((record) => new URL(record.url).pathname === '/js/3');
+    assert.equal(third.status, 'empty');
+    assert.equal(third.note, 'browser time budget reached');
+    assert.equal(stats.browserPages, 2);
+    assert.equal(stats.browserMs, 120_000);
+  });
+});
+
+test('pages left after the charge limit are not labeled as a time-budget skip', async () => {
+  await withServer(async (server) => {
+    const events = [];
+    const { results } = await extractSite(normalizeInput({
+      startUrls: [`${server.origin}/js/1`, `${server.origin}/js/2`],
+      maxBrowserPages: 5,
+      respectRobotsTxt: false,
+    }), {
+      maxConcurrency: 1,
+      memoryMbytes: 1024,
+      async runBrowser(batch, _input, handle) {
+        const first = batch[0];
+        await handle({
+          url: first.url,
+          requestedUrl: first.url,
+          html: article(),
+          depth: first.depth,
+        });
+        const rest = batch[1];
+        await handle({
+          url: rest.url,
+          requestedUrl: rest.url,
+          html: '',
+          skippedBudget: true,
+          depth: rest.depth,
+        });
+      },
+      onPage(record) {
+        if (record.status !== 'ok') return { stop: false, pushed: true };
+        events.push(record.status);
+        return { stop: true, pushed: true };
+      },
+    });
+    const kept = results.find((record) => new URL(record.url).pathname === '/js/1');
+    const dropped = results.find((record) => new URL(record.url).pathname === '/js/2');
+    assert.equal(kept.status, 'ok');
+    assert.equal(dropped.status, 'empty');
+    assert.equal(dropped.note, 'charge limit reached');
+    assert.deepEqual(events, ['ok']);
+  });
+});
+
 test('a browser batch stops scheduling once its wall clock is spent', { timeout: 60_000 }, async () => {
   await withServer(async (server) => {
     const events = [];
@@ -247,4 +334,12 @@ test('Playwright navigation waits for domcontentloaded and blocks images, fonts,
     'continue:script',
     'continue:stylesheet',
   ]);
+
+  const closed = (type) => ({
+    request: () => ({ resourceType: () => type }),
+    abort: () => Promise.reject(new Error('page closed')),
+    continue: () => { throw new Error('page closed'); },
+  });
+  await assert.doesNotReject(() => routes[0].handler(closed('image')));
+  await assert.doesNotReject(() => routes[0].handler(closed('document')));
 });

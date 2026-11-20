@@ -111,7 +111,7 @@ Each page is one item in the default dataset. The **Overview** view shows URL, t
 Cheerio runs first on every URL. Playwright runs only for pages that came back empty or as a JavaScript shell (`<div id="root">`, "enable JavaScript", and similar) while `useBrowserFallback` is true, and only while the run is still inside its browser budget:
 
 - at most `maxBrowserPages` browser pages (default 3, hard max 20)
-- at most 90 seconds of browser time, checked before the next browser page is scheduled
+- at most 90 seconds of browser time for the whole run, including later crawl depths. Each batch only gets the time still left
 - no browser at all when the container memory is known and below 1024 MB
 
 A page that misses that budget is `status: "empty"` with `note` set to `browser budget reached`, `browser time budget reached`, or `memory below 1024MB`. Those rows are not charged. A normal article never opens Chrome. A short static note does not either. A bot-check page is not sent to the browser.

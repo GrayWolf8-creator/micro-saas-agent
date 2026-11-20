@@ -12,6 +12,13 @@ await Actor.init();
 
 let exitCode = 0;
 let statusMessage;
+const envMemory = Actor.getEnv()?.memoryMbytes;
+let stats = {
+  cheerioPages: 0,
+  browserPages: 0,
+  browserMs: 0,
+  memoryMbytes: typeof envMemory === 'number' ? envMemory : null,
+};
 try {
   const input = normalizeInput((await Actor.getInput()) ?? {});
   log.info(`Agent Page Extract: ${input.startUrls.length} start URL(s), depth ${input.crawlDepth}, max ${input.maxPages} page(s).`);
@@ -21,19 +28,24 @@ try {
     statusMessage = 'Run budget is below the actor-start price. Nothing was fetched.';
     log.warning(statusMessage);
   } else {
-    const envMemory = Actor.getEnv()?.memoryMbytes;
-    const { results, stats } = await extractSite(input, {
+    const extracted = await extractSite(input, {
       onPage: (record) => publishPage(Actor, record),
       memoryMbytes: envMemory,
     });
-    await persistRunStats(Actor, stats);
-    statusMessage = statusMessageFor(results, stats);
+    stats = extracted.stats;
+    statusMessage = statusMessageFor(extracted.results, stats);
     log.info(statusMessage);
   }
 } catch (error) {
   exitCode = 1;
   statusMessage = error instanceof Error ? error.message : String(error);
   log.exception(error, 'Agent Page Extract failed');
+} finally {
+  try {
+    await persistRunStats(Actor, stats);
+  } catch (error) {
+    log.warning(`RUN_STATS was not saved: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 await Actor.exit({ exitCode, statusMessage });

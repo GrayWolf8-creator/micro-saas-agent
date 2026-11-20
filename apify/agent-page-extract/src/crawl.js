@@ -13,6 +13,16 @@ let queueSeq = 0;
 
 export const BROWSER_TIME_BUDGET_MS = 90_000;
 const LOW_MEMORY_MBYTES = 1024;
+const CHARGE_LIMIT_NOTE = 'charge limit reached';
+
+// One run shares this budget. A lower explicit override wins, and later batches
+// only receive whatever time the earlier batches have not already used.
+export function browserBatchBudgetMs(spentMs, override) {
+  const spent = Number.isFinite(spentMs) ? Math.max(0, spentMs) : 0;
+  const remaining = Math.max(0, BROWSER_TIME_BUDGET_MS - spent);
+  if (Number.isFinite(override)) return Math.min(Math.max(0, override), remaining);
+  return remaining;
+}
 
 // Crawlee 3.18 blockRequests matches URL fragments, not Playwright resource types.
 // page.route aborts image, font, and media even when the URL has no file extension.
@@ -52,9 +62,16 @@ export async function prepareBrowserNavigation(context, gotoOptions) {
   const page = context?.page;
   if (!page || typeof page.route !== 'function') return;
   await page.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    if (BLOCKED_RESOURCE_TYPES.has(type)) return route.abort();
-    return route.continue();
+    const settle = async () => {
+      try {
+        const type = route.request().resourceType();
+        if (BLOCKED_RESOURCE_TYPES.has(type)) await route.abort();
+        else await route.continue();
+      } catch {
+        // The page can close while the request is still in flight.
+      }
+    };
+    return settle();
   });
 }
 
@@ -409,21 +426,23 @@ export async function extractSite(input, options = {}) {
         await remember(recordFrom(item.job.url, emptyExtraction(), 'empty', input, item.note));
       }
       if (run.length && !stop) {
-        const runBrowser = options.runBrowser || ((batchToRun, siteInput, pageHandle) => runPlaywright(batchToRun, siteInput, pageHandle, {
+        const batchBudgetMs = browserBatchBudgetMs(browserMs, options.pageBrowserBudgetMs);
+        const runBrowser = options.runBrowser || ((batchToRun, siteInput, pageHandle, runOptions) => runPlaywright(batchToRun, siteInput, pageHandle, {
           bindCrawler(crawler) { activeCrawler = crawler; },
-          browserBudgetMs: options.pageBrowserBudgetMs,
+          browserBudgetMs: runOptions.browserBudgetMs,
           now: options.now,
         }));
         activeCrawler = null;
         const started = now();
         await runBrowser(run, input, async (page) => {
           if (page.skippedBudget) {
-            await remember(recordFrom(page.requestedUrl || page.url, emptyExtraction(), 'empty', input, 'browser time budget reached'));
+            const note = stop ? CHARGE_LIMIT_NOTE : 'browser time budget reached';
+            await remember(recordFrom(page.requestedUrl || page.url, emptyExtraction(), 'empty', input, note));
             return;
           }
           browserPages += 1;
           await acceptPage(page, discovered);
-        });
+        }, { browserBudgetMs: batchBudgetMs });
         browserMs += Math.max(0, now() - started);
       }
     }

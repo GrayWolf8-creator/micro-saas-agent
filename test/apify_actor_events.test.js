@@ -67,7 +67,10 @@ test('signal actor manifest prefills govcontracts and defaults to 256 MB', () =>
   assert.equal(input.properties.endpoint.prefill, 'govcontracts');
   assert.equal(input.properties.endpoint.default, 'govcontracts');
   assert.deepEqual(input.required, ['endpoint']);
+  const events = eventMap(read('apify-actor/src/main.js'));
   for (const endpoint of input.properties.endpoint.enum) {
-    assert.equal(EXPECTED[endpoint], eventMap(read('apify-actor/src/main.js'))[endpoint]);
+    assert.equal(Object.prototype.hasOwnProperty.call(EXPECTED, endpoint), true, endpoint);
+    assert.equal(Object.prototype.hasOwnProperty.call(events, endpoint), true, endpoint);
+    assert.equal(events[endpoint], EXPECTED[endpoint]);
   }
 });

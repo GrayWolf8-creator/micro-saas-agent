@@ -273,7 +273,7 @@ const RULES = [
             reasons: 'Which spend-policy or seller-reputation rule produced the verdict.',
             spend: 'Spend-policy sub-result. allow, deny, or needs_approval.',
             seller: 'Seller-reputation sub-result: verdict and 0-100 score.',
-            decisionReceipt: 'Signed receipt bound to this should-I-pay verdict.'
+            decisionReceipt: 'Receipt bound to this should-I-pay verdict (signature present when signing is enabled).'
         }
     }],
     [/^\/api\/spend\/check/, {
@@ -284,7 +284,7 @@ const RULES = [
             reasons: 'Rules that fired on this proposed payment.',
             checks: 'Every spend-policy check and whether it passed.',
             remaining: 'Per-transaction and rolling-cap room after this payment.',
-            decisionReceipt: 'Signed receipt bound to this spend-policy decision.'
+            decisionReceipt: 'Receipt bound to this spend-policy decision (signature present when signing is enabled).'
         }
     }],
     [/^\/api\/seller\/reputation/, {
@@ -295,7 +295,7 @@ const RULES = [
             score: 'Seller reputation score from 0 to 100.',
             components: 'Distinct buyers, wash share, wallet age, top-payer concentration, and 30-day volume.',
             reasons: 'Plain-language reasons for the seller-reputation verdict.',
-            reputationReceipt: 'Signed receipt bound to this seller-reputation result.'
+            reputationReceipt: 'Receipt bound to this seller-reputation result (signature present when signing is enabled).'
         }
     }],
     [/^\/api\/pass\/day/, {

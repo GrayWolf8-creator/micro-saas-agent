@@ -2,7 +2,7 @@
   "name": "gw8-crypto-signal",
   "title": "GW8 Crypto Regime + WaveTrend Signal",
   "version": "1.2.1",
-  "description": "Lead tool: the daily crypto brief (regime, WaveTrend dots, top coins, BTC/ETH/SOL flows, refreshed on each closed 4h bar) and a $0.025 bundle of that brief plus the full regime. Also agent payment risk checks, token safety verdicts (rug check, honeypot, contract risk), and payment-rail costs. Free teaser; paid tools via x402 (USDC on Base). Signed receipts. Signal only, no trading.",
+  "description": "Lead tool: the daily crypto brief (regime, WaveTrend dots, top coins, BTC/ETH/SOL flows, refreshed on each closed 4h bar) and a $0.025 bundle of that brief plus the full regime. Also agent payment risk checks, token safety verdicts (rug check, honeypot, contract risk), and payment-rail costs. Free teaser; paid tools via x402 (USDC on Base). Receipt (Ed25519-signed when signing is enabled; see /.well-known/gw8-receipt-key). Signal only, no trading.",
   "transport": {
     "type": "streamable-http",
     "url": "https://micro-saas-agent.onrender.com/mcp"

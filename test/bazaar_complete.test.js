@@ -117,4 +117,9 @@ test('every paid 402 has a complete Bazaar description, tags, and input/output s
   assert.equal(railsBody.resource.description, RAILS_DESCRIPTION);
   assert.deepEqual(railsBody.resource.tags, RAILS_TAGS);
   assert.equal(railsBody.accepts[0].amount, '2000');
+  const railsOut = railsBody.extensions.bazaar.schema.properties.output.properties.example;
+  for (const key of ['recommended', 'sourceStatus', 'asOf']) {
+    assert.equal(typeof railsOut.properties[key].description, 'string', key);
+    assert.ok(railsOut.properties[key].description.trim(), key);
+  }
 });

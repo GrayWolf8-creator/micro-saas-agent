@@ -21,7 +21,7 @@ Solana USDC (`solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`, mint `EPjFWdd5AufqSSqeM2
 6. Many calls? `POST /api/pass/day` ($1.00) gives 24h of every paid data call via the `X-GW8-Pass` header (fair use 2000/day, 60/min). Bad input or upstream failures do not use up pass calls.
 
 ## Verify a receipt
-Every paid response carries a signed receipt (`receipt` in the body, plus `X-GW8-Receipt` + `X-GW8-Receipt-Signature` headers). The decision endpoints also return their own `decisionReceipt` / `reputationReceipt`.
+Every paid response carries a receipt (Ed25519-signed when signing is enabled; see /.well-known/gw8-receipt-key `enabled`) (`receipt` in the body, plus `X-GW8-Receipt` + `X-GW8-Receipt-Signature` headers). The decision endpoints also return their own `decisionReceipt` / `reputationReceipt`.
 - Free check: `POST /api/receipt/verify` with `{"payload": "<receipt.payload>", "signature": "<receipt.signature>", "data": <the result object without its receipt>}` → `{valid, dataMatches}`.
 - Offline: Ed25519-verify `utf8(payload)` against `base64(signature)` with the key from `GET /api/proof/pubkey`. `response_sha256` = sha256 of `JSON.stringify(data)`.
 - `query.requestSha256` = sha256 of the canonical JSON (sorted keys, no spaces) of what you sent. It proves which request the decision was for.
@@ -43,9 +43,11 @@ Every paid response carries a signed receipt (`receipt` in the body, plus `X-GW8
 
 ## Featured: agent payments (risk checks before paying)
 
+Built for agent spending limits and approved-seller allowlists.
+
 ### POST /api/pay/should-i-pay · $0.02 · MCP `should_i_pay`
 **Use this when** your agent is about to pay an invoice, merchant or x402 seller and you want one answer: **pay / dont_pay / ask_human**.
-It runs the spend-policy check and the seller reputation check together. You pay once and get one signed receipt.
+It runs the spend-policy check and the seller reputation check together. You pay once and get one receipt (Ed25519-signed when signing is enabled; see /.well-known/gw8-receipt-key `enabled`).
 ```json
 {"payment": {"amount": "0.05", "currency": "USDC", "chain": "base", "recipientId": "0x1111111111111111111111111111111111111111", "merchantCategory": "data-api", "timestamp": "2026-10-21T15:30:00Z"},
  "policy": {"currency": "USDC", "perTxLimit": "1", "rollingCap": {"limit": "10", "spentSoFar": "2.40"}, "allowedChains": ["base"], "requireApprovalAbove": "0.50"},

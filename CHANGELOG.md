@@ -12,6 +12,9 @@ All notable changes, architectural updates, and deployment milestones for the Sc
 
 \## \[Unreleased]
 
+### Receipt copy follows the signing flag, and /api/rails has an output schema (2026-11-22)
+- Docs and discovery say a paid response carries a receipt (Ed25519-signed when signing is enabled; see `/.well-known/gw8-receipt-key` `enabled`). `GET /api/rails` publishes an output schema for the JSON `buildRails` already returns, including `recommended`, `sourceStatus`, and `asOf`. Docs and schema only. No price, route, wallet, network, handler, or signing-logic change.
+
 ### Discovery copy is 1.2.1, and free crawler aliases (2026-11-20)
 - OpenAPI, the A2A agent card, the MCP server card, and `GET /` say version `1.2.1`. The npm `package.json` version stays `1.0.0`. Static `mcp.json` matches `GET /mcp.json` (Base-only payment copy; `mcpInBand` is filled in at request time).
 - HTTP discovery (`/openapi.json`, `/.well-known/agent.json`, `/llms.txt`, `/`, `README.md`) names the five paid HTTP routes that accept Base, Polygon, and Solana: `GET /api/rails`, `GET /api/rails/route`, `GET /api/regime`, `POST /api/pay/should-i-pay`, and `GET /api/coin/{symbol}`. Other paid HTTP routes stay Base-only. MCP copy does not claim Polygon or Solana.

@@ -22,12 +22,12 @@ Base and Polygon `payTo` is `0xB4527dccaC81eB73d4988A51a4cb1FBBF2C3CaBd`. Solana
 claude mcp add --scope user --transport http gw8-signal-api-mcp https://micro-saas-agent.onrender.com/mcp
 ```
 
-**Agent payment tools** (x402, also MCP tools). Agent guide: [`/agents.md`](https://micro-saas-agent.onrender.com/agents.md).
-- `POST /api/pay/should-i-pay` (`should_i_pay`, $0.02): spend policy + seller reputation in one call -> pay / dont_pay / ask_human, one signed receipt.
+**Agent payment tools** (x402, also MCP tools). Built for agent spending limits and approved-seller allowlists. Agent guide: [`/agents.md`](https://micro-saas-agent.onrender.com/agents.md).
+- `POST /api/pay/should-i-pay` (`should_i_pay`, $0.02): spend policy + seller reputation in one call -> pay / dont_pay / ask_human, one receipt (Ed25519-signed when signing is enabled; see /.well-known/gw8-receipt-key `enabled`).
 - `POST /api/spend/check` (`check_spend_policy`, $0.02): allow / deny / needs_approval for a proposed payment against your policy.
 - `POST /api/seller/reputation` (`check_seller_reputation`, $0.01): 0-100 score and trusted / caution / avoid / unknown for an x402 seller wallet or endpoint, from public Base USDC history (buyers, wash share, age, concentration, 30d volume). Free data-source check: `GET /api/seller/reputation/status`.
   Data source: Alchemy Transfers API when the server has `ALCHEMY_API_KEY` set (free plan is enough), else keyless Blockscout. `GET /api/seller/reputation/status` shows which source is active.
 
-All three return Ed25519-signed receipts (free check: `POST /api/receipt/verify`). Value-capture and growth-lane screens are on `/api/value` and `/api/growth` (free `/status` on each). Day pass first for repeated calls: `POST /api/pass/day` ($1.00, 24h, header `X-GW8-Pass`). Full list: [`/llms.txt`](https://micro-saas-agent.onrender.com/llms.txt).
+All three return a receipt (Ed25519-signed when signing is enabled; see /.well-known/gw8-receipt-key `enabled`) (free check: `POST /api/receipt/verify`). Value-capture and growth-lane screens are on `/api/value` and `/api/growth` (free `/status` on each). Day pass first for repeated calls: `POST /api/pass/day` ($1.00, 24h, header `X-GW8-Pass`). Full list: [`/llms.txt`](https://micro-saas-agent.onrender.com/llms.txt).
 
 **Which routes sold:** [`GET /api/sales`](https://micro-saas-agent.onrender.com/api/sales) (add `?days=30` for a longer window). Free, no payment. Counts by route template, surface (`x402`, `rapidapi`, `apify`), and UTC day: `paid` (a new x402 settlement or a marketplace 2xx), `pass` (served with a day pass), `quotes` (HTTP 402), `sample`, and `free`. No buyer addresses or request data. The on-chain USDC transfer still shows only the amount; this is the route name that goes with it.

@@ -14,7 +14,8 @@ export const PASS_PATH = '/api/pass/day';
 export const RECEIPT_KEY_PATH = '/.well-known/gw8-receipt-key';
 export const PUBKEY_PATH = '/api/proof/pubkey';
 export const VERIFY_PATH = '/api/receipt/verify';
-export const TRUST_LINE = 'No charge on failure: payment settles only after your data is ready. Every paid call returns a signed receipt your agent can keep as an audit trail.';
+export const RECEIPT_PHRASE = 'receipt (Ed25519-signed when signing is enabled; see /.well-known/gw8-receipt-key `enabled`)';
+export const TRUST_LINE = `No charge on failure. Settles after data is ready. Every paid call returns a ${RECEIPT_PHRASE}.`;
 
 // One line per route: what the paid call adds over the free teaser.
 const ADDS = [
@@ -39,9 +40,9 @@ const ADDS = [
     [/^\/api\/growth\/history/, 'Weekly growth-lane snapshots and the week each rule first passed.'],
     [/^\/api\/growth\/[^/]+/, 'Growth-lane rules for one chain or app: stables, fees, TVL versus price, and the relative-return flag.'],
     [/^\/api\/growth$/, 'Filterable growth-lane screen across covered chains and apps.'],
-    [/^\/api\/spend\/check/, 'allow / deny / needs_approval for your proposed payment, which rule fired, and a signed decision receipt (no free teaser; pure rule check).'],
-    [/^\/api\/pay\/should-i-pay/, 'one verdict pay / dont_pay / ask_human from your spend policy + the seller reputation, with reasons and one signed receipt (no free teaser).'],
-    [/^\/api\/seller\/reputation/, '0-100 seller score, verdict, wash/self-dealing share, buyer count, concentration and wallet age from public Base USDC history, with a signed receipt (no free teaser).'],
+    [/^\/api\/spend\/check/, `allow / deny / needs_approval for your proposed payment, which rule fired, and a ${RECEIPT_PHRASE} (no free teaser; pure rule check).`],
+    [/^\/api\/pay\/should-i-pay/, `one verdict pay / dont_pay / ask_human from your spend policy + the seller reputation, with reasons and one ${RECEIPT_PHRASE} (no free teaser).`],
+    [/^\/api\/seller\/reputation/, `0-100 seller score, verdict, wash/self-dealing share, buyer count, concentration and wallet age from public Base USDC history, with a ${RECEIPT_PHRASE} (no free teaser).`],
     [/^\/api\/verdict\//, 'Token safety screen for the address in the URL: CLEAR, CAUTION, AVOID, or UNKNOWN, with the rule that fired, unknowns, sources, and freshness. Free GET /api/verdict/example shows that JSON shape only, not this token. A live ?sample=1 is score and verdict only.'],
     [/^\/api\/pass\/day/, 'One payment, 24h of every paid data endpoint and MCP tool (fair use 2000 calls).'],
     [/^\/api\/alerts\/subscribe/, 'New green dots pushed to your webhook for 30 days (the teaser is pull-only).'],
@@ -84,7 +85,7 @@ export function funnel(url, { passUsd = '1.00', passHours = 24, passCap = 2000, 
         freeTeaser: ORIGIN + TEASER_PATH,
         paidAdds: paidAdds(url),
         bestValue,
-        trust: { noChargeOnFailure: 'Payment is verified, then the data is built, then settled. If the data fails or settlement fails, nothing is charged and no data is returned.', safeRetry: 'Resend the same PAYMENT-SIGNATURE to the same URL within 15 minutes to get the same response again; it is not charged twice.', receipts: `Every paid call returns a signed receipt your agent can keep as an audit trail: body field "receipt" plus X-GW8-Receipt + X-GW8-Receipt-Signature headers (Ed25519). Public key: ${ORIGIN}${PUBKEY_PATH}. Free check: ${ORIGIN}${VERIFY_PATH}` },
+        trust: { noChargeOnFailure: 'Payment is verified, then the data is built, then settled. If the data fails or settlement fails, nothing is charged and no data is returned.', safeRetry: 'Resend the same PAYMENT-SIGNATURE to the same URL within 15 minutes to get the same response again; it is not charged twice.', receipts: `Every paid call returns a ${RECEIPT_PHRASE} your agent can keep as an audit trail: body field "receipt" plus X-GW8-Receipt + X-GW8-Receipt-Signature headers (Ed25519 when signing is enabled). Public key: ${ORIGIN}${PUBKEY_PATH}. Free check: ${ORIGIN}${VERIFY_PATH}` },
     };
     const headers = {
         'X-GW8-Free-Teaser': ORIGIN + TEASER_PATH,

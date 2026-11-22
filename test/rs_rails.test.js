@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 globalThis.fetch = async () => { throw new Error('offline test'); };
 const { buildRs, pctRanks, SECTORS, SECTOR_OF } = await import('../rs.js');
 const { PAIRS_MAP } = await import('../Signal.js');
-const { buildRails, validAmount } = await import('../rails.js');
+const { buildRails, validAmount, RAILS_OUTPUT_SCHEMA } = await import('../rails.js');
 
 const rows = (closes) => closes.map((c, i) => [1700000000 + i * 86400, c, c, c, c, 0, 0, 0]);
 
@@ -46,6 +46,17 @@ test('buildRails: failed fetch -> unavailable, never invented', () => {
   const d = buildRails(100, { gas: null, fee: { drops: 10, at: 'x' }, tick: null });
   for (const r of d.rails.filter(r => r.rail !== 'card')) { assert.equal(r.status, 'unavailable'); assert.equal(r.feeUsd, undefined); }
   assert.equal(d.recommended.rail, 'card');
+});
+
+test('RAILS_OUTPUT_SCHEMA describes recommended, sourceStatus, and asOf', () => {
+  const d = buildRails(100, {});
+  for (const key of ['recommended', 'sourceStatus', 'asOf']) {
+    assert.equal(typeof RAILS_OUTPUT_SCHEMA.properties[key].description, 'string', key);
+    assert.ok(RAILS_OUTPUT_SCHEMA.properties[key].description.trim(), key);
+    assert.ok(Object.hasOwn(d, key), key);
+  }
+  for (const key of RAILS_OUTPUT_SCHEMA.required) assert.ok(Object.hasOwn(d, key), key);
+  for (const key of Object.keys(d)) assert.ok(RAILS_OUTPUT_SCHEMA.properties[key], key);
 });
 
 test('validAmount', () => {

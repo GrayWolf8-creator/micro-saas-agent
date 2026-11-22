@@ -82,6 +82,102 @@ export function buildRails(amount, inp, now = Date.now()) {
   };
 }
 
+// JSON schema for the object buildRails returns. Descriptions only; buildRails is unchanged.
+const railId = { type: 'string', enum: ['base-usdc', 'xrpl-rlusd-xrp', 'tempo', 'arc-usdc', 'card'], description: 'Rail id: base-usdc, xrpl-rlusd-xrp, tempo, arc-usdc, or card.' };
+const sourceState = { type: 'string', enum: ['ok', 'unavailable'], description: 'ok when that live read succeeded, unavailable when it failed.' };
+export const RAILS_OUTPUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: true,
+  description: 'Payment-rail comparison for one USD amount: live fee and speed for Base USDC, XRPL, Tempo, and Arc, a static card estimate, the recommended rail, and which sources answered.',
+  required: ['asOf', 'amountUsd', 'rails', 'recommended', 'sourceStatus', 'notes', 'disclaimer'],
+  properties: {
+    asOf: { type: 'string', description: 'ISO time this comparison was built.' },
+    amountUsd: { type: 'number', description: 'USD amount the fees were estimated for.' },
+    rails: {
+      type: 'array',
+      description: 'One entry per rail, always base-usdc, xrpl-rlusd-xrp, tempo, arc-usdc, and card, in that order.',
+      items: {
+        type: 'object',
+        additionalProperties: true,
+        description: 'One payment rail. status is live, unavailable, or static-estimate. An unavailable rail omits the fee fields and includes reason.',
+        required: ['rail', 'status', 'source', 'protocols'],
+        properties: {
+          rail: railId,
+          status: { type: 'string', enum: ['live', 'unavailable', 'static-estimate'], description: 'live when the fee was computed from a successful read, unavailable when that read failed, static-estimate for the card reference rate.' },
+          feeUsd: { type: 'number', description: 'Estimated fee in USD for this amount. Omitted when status is unavailable.' },
+          feePct: { type: 'number', description: 'Estimated fee as a percent of amountUsd. Omitted when status is unavailable.' },
+          settlement: { type: 'string', description: 'Plain-language settlement time. Omitted when status is unavailable.' },
+          settlementSec: { type: 'number', description: 'Settlement time in seconds, used to pick the fastest rail. Omitted when status is unavailable.' },
+          inputs: {
+            type: 'object',
+            additionalProperties: true,
+            description: 'Live or static inputs behind the fee. The fields depend on the rail. Omitted when status is unavailable.',
+            properties: {
+              gasPriceGwei: { type: 'number', description: 'Gas price in gwei for base-usdc or arc-usdc.' },
+              gasUnits: { type: 'number', description: 'Gas units assumed for the transfer.' },
+              ethUsd: { type: 'number', description: 'ETH/USD price used for the Base fee.' },
+              openLedgerFeeDrops: { type: 'number', description: 'XRPL open ledger fee in drops.' },
+              xrpUsd: { type: 'number', description: 'XRP/USD price used for the XRPL fee.' },
+              gasPriceAttoUsd: { type: 'number', description: 'Tempo gas price in attodollars per gas.' },
+              pct: { type: 'number', description: 'Card percent rate in the static estimate.' },
+              fixedUsd: { type: 'number', description: 'Card fixed USD fee in the static estimate.' }
+            }
+          },
+          dataAt: { type: ['string', 'null'], description: 'ISO time of the live inputs. Null for the static card estimate. Omitted when status is unavailable.' },
+          source: { type: 'string', description: 'Where the fee inputs were read, or the citation for the static card rate.' },
+          note: { type: 'string', description: 'What this fee leaves out. Present on live rails.' },
+          reason: { type: 'string', description: 'Why this rail is unavailable. Present only when status is unavailable.' },
+          protocols: {
+            type: 'array',
+            description: 'Agent and payment protocols documented or claimed for this rail.',
+            items: {
+              type: 'object',
+              additionalProperties: true,
+              description: 'One protocol name, whether a primary source documents it, and that source when status is documented.',
+              required: ['name', 'status'],
+              properties: {
+                name: { type: 'string', description: 'Protocol name.' },
+                status: { type: 'string', enum: ['documented', 'unverified'], description: 'documented when a primary source says so; unverified when it is claimed or likely and not confirmed here.' },
+                source: { type: 'string', description: 'Primary-source URL. Present when status is documented.' }
+              }
+            }
+          }
+        }
+      }
+    },
+    recommended: {
+      type: 'object',
+      additionalProperties: true,
+      description: 'Lowest estimated fee for this amount, why that rail was picked, and which rail settles fastest.',
+      required: ['rail', 'why', 'fastest'],
+      properties: {
+        rail: { type: 'string', description: 'Rail with the lowest estimated fee among rails that have a fee.' },
+        why: { type: 'string', description: 'Why that rail was recommended, including when only the static card estimate was available.' },
+        fastest: { type: 'string', description: 'Rail with the shortest settlement time among rails that have a fee.' }
+      }
+    },
+    sourceStatus: {
+      type: 'object',
+      additionalProperties: true,
+      description: 'Whether each live input read succeeded.',
+      required: ['baseRpc', 'xrplFee', 'krakenTicker', 'tempoRpc', 'arcRpc'],
+      properties: {
+        baseRpc: { ...sourceState, description: 'Base gas-price read: ok or unavailable.' },
+        xrplFee: { ...sourceState, description: 'XRPL fee read: ok or unavailable.' },
+        krakenTicker: { ...sourceState, description: 'ETH/USD and XRP/USD ticker read: ok or unavailable.' },
+        tempoRpc: { ...sourceState, description: 'Tempo gas-price read: ok or unavailable.' },
+        arcRpc: { ...sourceState, description: 'Arc gas-price read: ok or unavailable.' }
+      }
+    },
+    notes: {
+      type: 'array',
+      description: 'Caveats: costs left out, how protocol labels are sourced, the static card rate, and the cache window.',
+      items: { type: 'string', description: 'One caveat about this fee comparison.' }
+    },
+    disclaimer: { type: 'string', description: 'Signal only, not financial advice.' }
+  }
+};
+
 export async function getRails(amount = 100) {
   if (!(cache && Date.now() - cache.t < TTL)) {
     if (!inflight) inflight = live().then(d => { if (d.gas || d.fee || d.tempo || d.arc) cache = { t: Date.now(), d }; return d; }).finally(() => { inflight = null; });

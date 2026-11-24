@@ -45,10 +45,11 @@ Every paid response carries a receipt (Ed25519-signed when signing is enabled; s
 
 **Use this family when** an agent is about to pay a seller and needs a yes/no/ask-human decision plus a record of that decision.
 
+Every decision response includes decisionReceipt or reputationReceipt plus X-GW8-Receipt and X-GW8-Receipt-Signature. Verify: POST /api/receipt/verify with {payload, signature, data?} → {valid, dataMatches}. Public key: GET /.well-known/gw8-receipt-key.
+
 ### POST /api/pay/should-i-pay · $0.02 · MCP `should_i_pay` (start here)
-Signing is off today, record unsigned, check enabled at GET /.well-known/gw8-receipt-key.
 **Use this when** your agent is about to pay an invoice, merchant or x402 seller and you want one answer: **pay / dont_pay / ask_human**.
-It runs the spend-policy check and the seller reputation check together. You pay once and get one audit record (a receipt header plus `decisionReceipt`).
+It runs the spend-policy check and the seller reputation check together. You pay once and get one signed audit record (`decisionReceipt` plus `X-GW8-Receipt` and `X-GW8-Receipt-Signature`).
 ```json
 {"payment": {"amount": "0.05", "currency": "USDC", "chain": "base", "recipientId": "0x1111111111111111111111111111111111111111", "merchantCategory": "data-api", "timestamp": "2026-10-21T15:30:00Z"},
  "policy": {"currency": "USDC", "perTxLimit": "1", "rollingCap": {"limit": "10", "spentSoFar": "2.40"}, "allowedChains": ["base"], "requireApprovalAbove": "0.50"},
@@ -59,19 +60,17 @@ Returns `{verdict, reasons:[{source, action, detail}], spend:{decision,...}, sel
 Rules (worst wins): spend deny or seller avoid → `dont_pay`. Spend needs_approval, seller caution/unknown (configurable), or recipientId ≠ the seller address scored → `ask_human`. Otherwise `pay`. Not charged if seller data is unavailable.
 
 ### POST /api/spend/check · $0.02 · MCP `check_spend_policy`
-Signing is off today, record unsigned, check enabled at GET /.well-known/gw8-receipt-key.
 **Use this when** you only need to check a payment against the buyer's rules: per-tx limit, rolling cap (you send `spentSoFar`), categories, allow/deny lists, hours + timezone, assets/chains, and the human-approval threshold.
 Body `{payment, policy}` (same shape as above). Returns `{decision: allow|deny|needs_approval, reasons, checks, remaining, decisionReceipt}`. Pure rules, no network, stateless.
 
 ### POST /api/seller/reputation · $0.01 · MCP `check_seller_reputation`
-Signing is off today, record unsigned, check enabled at GET /.well-known/gw8-receipt-key.
 **Use this when** you want to know if an x402 seller is real before paying it.
 Body `{"address": "0x…"}` (seller wallet on Base) and/or `{"endpoint": "https://…"}` (we read `payTo` from its unpaid 402), optional `lookbackDays` 1-90.
 Returns `{score 0-100, verdict: trusted|caution|avoid|unknown, components:{distinctBuyers, washShare, walletAge, concentration, volume30d}, reasons, flags, reputationReceipt}`.
 Data: public USDC transfers on Base (Alchemy Transfers API; keyless Blockscout fallback). Heuristic, not a guarantee. **Free first:** `GET /api/seller/reputation/status` → `{source, keyed, reachable, http_status}`. If `reachable` is false, paid calls return 503 and are not charged.
 
 ### Verify the record (free)
-POST /api/receipt/verify. Until signing is on, this confirms the record shape, not a signature.
+POST /api/receipt/verify with {payload, signature, data?} → {valid, dataMatches}. It verifies the Ed25519 signature. Public key: GET /.well-known/gw8-receipt-key.
 
 ## Featured: payment rails
 - **GET /api/rails?amount=100 · $0.002 · MCP `get_payment_rails`.** Use this when choosing how to move a USD amount: live fee and speed for Base USDC, XRPL, Tempo and Arc vs card, plus a recommended rail.

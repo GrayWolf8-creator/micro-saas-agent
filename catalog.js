@@ -4,9 +4,9 @@
 // are not a crypto feed. /api/rails keeps the payment-rails label that already ranks for that query.
 // Unfeatured routes keep working and stay in /openapi.json + /.well-known/x402.
 export const CATEGORIES = [
-    [/^\/api\/pay\/should-i-pay/, 'Payment decision: may this agent pay, plus an audit record'],
-    [/^\/api\/spend\/check/, 'Spend policy: agent payment rules check, plus an audit record'],
-    [/^\/api\/seller\/reputation/, 'Seller reputation: x402 seller risk check, plus an audit record'],
+    [/^\/api\/pay\/should-i-pay/, 'Payment decision: may this agent pay, plus a signed audit record'],
+    [/^\/api\/spend\/check/, 'Spend policy: agent payment rules check, plus a signed audit record'],
+    [/^\/api\/seller\/reputation/, 'Seller reputation: x402 seller risk check, plus a signed audit record'],
     [/^\/api\/(verdict-deep|honeypot-deep)\//, 'Deep honeypot: token safety, rug check, token security'],
     [/^\/api\/token-brief\//, 'Token brief: token safety plus price, trade check'],
     [/^\/api\/signals\//, 'Crypto bottom watch: research data, not financial advice'],

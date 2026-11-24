@@ -41,13 +41,14 @@ Every paid response carries a receipt (Ed25519-signed when signing is enabled; s
 - **GET /api/token-brief/{chain}/{address} · $0.02.** Token safety plus price: one token brief and trade check. Example: `GET /api/token-brief/base/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913?fresh=0`. `signal` is the $0.005 verdict plus `marketSnapshot` with price, 24h change, 24h volume, liquidity, and FDV.
 - **GET /api/signals/crypto-bottom · $0.01.** Research data, not financial advice. Latest bottom-watch tells for BTC, ETH, SOL, XRP, AAVE, HYPE, MON, CC, and the rest of that set, computed on demand from public candles and cached about 10 minutes. Example: `GET /api/signals/crypto-bottom?fresh=0`. Each coin has `tells_count` and `tier`: **NONE** under 2 tells, **EARLY_TELL** at 2 or more, **CONFIRMED** only when that coin has 2 or more tells and BTC itself has reclaimed its prior 30-day low. Tells: sweep-and-reclaim of the 30-day low, 2x volume, RSI turning up from oversold, 4h higher low, funding or liquidation flush.
 
-## Featured: agent payments (risk checks before paying)
+## May this agent pay, and here is the audit record
 
-Built for agent spending limits and approved-seller allowlists.
+**Use this family when** an agent is about to pay a seller and needs a yes/no/ask-human decision plus a record of that decision.
 
-### POST /api/pay/should-i-pay · $0.02 · MCP `should_i_pay`
+### POST /api/pay/should-i-pay · $0.02 · MCP `should_i_pay` (start here)
+Signing is off today, record unsigned, check enabled at GET /.well-known/gw8-receipt-key.
 **Use this when** your agent is about to pay an invoice, merchant or x402 seller and you want one answer: **pay / dont_pay / ask_human**.
-It runs the spend-policy check and the seller reputation check together. You pay once and get one receipt (Ed25519-signed when signing is enabled; see /.well-known/gw8-receipt-key `enabled`).
+It runs the spend-policy check and the seller reputation check together. You pay once and get one audit record (a receipt header plus `decisionReceipt`).
 ```json
 {"payment": {"amount": "0.05", "currency": "USDC", "chain": "base", "recipientId": "0x1111111111111111111111111111111111111111", "merchantCategory": "data-api", "timestamp": "2026-10-21T15:30:00Z"},
  "policy": {"currency": "USDC", "perTxLimit": "1", "rollingCap": {"limit": "10", "spentSoFar": "2.40"}, "allowedChains": ["base"], "requireApprovalAbove": "0.50"},
@@ -58,14 +59,19 @@ Returns `{verdict, reasons:[{source, action, detail}], spend:{decision,...}, sel
 Rules (worst wins): spend deny or seller avoid → `dont_pay`. Spend needs_approval, seller caution/unknown (configurable), or recipientId ≠ the seller address scored → `ask_human`. Otherwise `pay`. Not charged if seller data is unavailable.
 
 ### POST /api/spend/check · $0.02 · MCP `check_spend_policy`
+Signing is off today, record unsigned, check enabled at GET /.well-known/gw8-receipt-key.
 **Use this when** you only need to check a payment against the buyer's rules: per-tx limit, rolling cap (you send `spentSoFar`), categories, allow/deny lists, hours + timezone, assets/chains, and the human-approval threshold.
 Body `{payment, policy}` (same shape as above). Returns `{decision: allow|deny|needs_approval, reasons, checks, remaining, decisionReceipt}`. Pure rules, no network, stateless.
 
 ### POST /api/seller/reputation · $0.01 · MCP `check_seller_reputation`
+Signing is off today, record unsigned, check enabled at GET /.well-known/gw8-receipt-key.
 **Use this when** you want to know if an x402 seller is real before paying it.
 Body `{"address": "0x…"}` (seller wallet on Base) and/or `{"endpoint": "https://…"}` (we read `payTo` from its unpaid 402), optional `lookbackDays` 1-90.
 Returns `{score 0-100, verdict: trusted|caution|avoid|unknown, components:{distinctBuyers, washShare, walletAge, concentration, volume30d}, reasons, flags, reputationReceipt}`.
 Data: public USDC transfers on Base (Alchemy Transfers API; keyless Blockscout fallback). Heuristic, not a guarantee. **Free first:** `GET /api/seller/reputation/status` → `{source, keyed, reachable, http_status}`. If `reachable` is false, paid calls return 503 and are not charged.
+
+### Verify the record (free)
+POST /api/receipt/verify. Until signing is on, this confirms the record shape, not a signature.
 
 ## Featured: payment rails
 - **GET /api/rails?amount=100 · $0.002 · MCP `get_payment_rails`.** Use this when choosing how to move a USD amount: live fee and speed for Base USDC, XRPL, Tempo and Arc vs card, plus a recommended rail.
